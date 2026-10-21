@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import App from './App.tsx';
 import Admin from './Admin.tsx';
 import './styles.css';
+import './brand.css';
 
 function Router() {
   const [admin, setAdmin] = React.useState(() => window.location.hash === '#/admin' || /\/admin\/?$/.test(window.location.pathname));

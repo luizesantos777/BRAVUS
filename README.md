@@ -181,6 +181,7 @@ Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navega
 
 ## Estrutura
 
+- `src/Brand.tsx`, `src/brand.css`, `src/assets/bravus-brasil.webp`: marca BRAVUS Brasil e identidade visual em preto, dourado, verde e branco, seguindo a referência enviada pelo responsável. A imagem é incorporada ao build para funcionar também no GitHub Pages.
 - `src/App.tsx`, `src/styles.css`: interface do portal.
 - `src/domain.ts`: tipos e regras financeiras compartilhados.
 - `src/client.ts`: acesso à API e demonstração isolada.

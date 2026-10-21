@@ -2,16 +2,19 @@
   "name": "bravus",
   "private": true,
   "version": "0.1.0",
-  "description": "Gestão de clientes, tarefas e finanças para pequenos negócios.",
+  "description": "Portal do atendente BRAVUS: vendas, comissões, repasses e acesso por token individual.",
   "type": "module",
-  "engines": { "node": ">=22.18.0" },
+  "engines": { "node": ">=24.0.0" },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "dev:api": "node --env-file-if-exists=.env server/index.ts",
+    "start": "node --env-file-if-exists=.env server/index.ts",
+    "manage": "node --env-file-if-exists=.env server/manage.ts",
     "build": "tsc --noEmit && vite build",
     "build:pages": "npm run build && node scripts/build-pages.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/domain.test.ts",
+    "test": "node --test tests/domain.test.ts tests/api.test.ts",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {

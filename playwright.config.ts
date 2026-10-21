@@ -8,6 +8,7 @@ export default defineConfig({
   reporter: 'list',
   use: {
     baseURL: 'http://127.0.0.1:4173',
+    locale: 'pt-BR',
     trace: 'retain-on-failure',
     launchOptions: { executablePath: process.env.BRAVUS_CHROMIUM_PATH || undefined },
   },
@@ -16,7 +17,7 @@ export default defineConfig({
     { name: 'mobile', use: { browserName: 'chromium', viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } },
   ],
   webServer: {
-    command: 'npm run preview -- --host 127.0.0.1',
+    command: 'node tests/start-server.ts',
     url: 'http://127.0.0.1:4173',
     reuseExistingServer: false,
     timeout: 30_000,

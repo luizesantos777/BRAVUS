@@ -1,119 +1,111 @@
-export type TaskStatus = 'todo' | 'doing' | 'done';
-export type Priority = 'low' | 'medium' | 'high';
-export interface Client {
-  id: string;
-  name: string;
-  company: string;
-  email: string;
-  phone: string;
-  createdAt: string;
-}
-export interface Task {
-  id: string;
-  title: string;
-  clientId: string | null;
-  status: TaskStatus;
-  priority: Priority;
-  dueDate: string;
-  createdAt: string;
-}
-export interface Transaction {
-  id: string;
-  description: string;
-  clientId: string | null;
-  type: 'income' | 'expense';
-  amount: number;
-  date: string;
-  createdAt: string;
-}
-export interface AppData {
-  schemaVersion: 1;
-  clients: Client[];
-  tasks: Task[];
-  transactions: Transaction[];
-}
-export const STORAGE_KEY = 'bravus.data.v1';
-export const MAX_AMOUNT = 999_999_999_999;
-export const statusLabels: Record<TaskStatus, string> = { todo: 'A fazer', doing: 'Em andamento', done: 'Concluída' };
-export const priorityLabels: Record<Priority, string> = { low: 'Baixa', medium: 'Média', high: 'Alta' };
-export const emptyData = (): AppData => ({ schemaVersion: 1, clients: [], tasks: [], transactions: [] });
+export type Period = 'today' | 'yesterday' | 'week' | 'month' | 'all';
+export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
+export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
+export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
+export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
+export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; dailyGoalCents: number }
+export interface Checkout { id: string; name: string; feeBps: number }
+export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; goalCents: number; note: string; receiptId: string; createdAt: string }
+export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
+export interface Payout { id: string; amountCents: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
+export interface ReceiptInput { name: string; mime: string; base64: string }
+export interface SaleInput { amount: string; checkoutId: string; time: string; note: string; receipt: ReceiptInput | null }
+export interface SaleBatch { date: string; sales: SaleInput[] }
+export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; pendingGoalCents: number; debtCents: number; count: number }
+export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; todayGrossCents: number; today: string }
+export interface RankingEntry { id: string; name: string; grossCents: number; count: number; mine: boolean }
+export interface DemoData { version: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
+export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
+export const MAX_SALE_CENTS = 100_000_000;
+export const DEMO_KEY = 'bravus.attendant.demo.v1';
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
-export function today() {
-  const date = new Date();
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+export function percentageToBps(value: string): number {
+  if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error('Informe um percentual entre 0 e 100, com até duas casas decimais.');
+  const [whole, fraction = ''] = value.trim().replace(',', '.').split('.');
+  const bps = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
+  if (bps > 10000) throw new Error('O percentual não pode ultrapassar 100%.');
+  return bps;
 }
-export function dateLabel(value: string) {
-  return value ? new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'short' }).format(new Date(`${value}T12:00:00`)) : 'Sem prazo';
+export function businessToday(date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(date);
+  const part = (type: string) => parts.find(item => item.type === type)!.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
 }
-export function validDate(value: unknown): value is string {
-  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const date = new Date(`${value}T00:00:00Z`);
+export const businessTime = () => new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date());
+export function validDate(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T12:00:00Z`);
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value;
 }
+export const dateLabel = (value: string) => new Intl.DateTimeFormat('pt-BR').format(new Date(`${value}T12:00:00Z`));
 export function amountToCents(value: string): number {
-  const normalized = value.trim();
-  if (!/^\d+(?:[.,]\d{1,2})?$/.test(normalized)) throw new Error('Informe um valor como 1250,50, sem separador de milhares.');
+  let normalized = value.trim();
+  if (/^\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?$/.test(normalized)) normalized = normalized.replaceAll('.', '');
+  if (!/^\d+(?:[.,]\d{1,2})?$/.test(normalized)) throw new Error('Informe um valor válido, como 197,00.');
   const [whole, fraction = ''] = normalized.replace(',', '.').split('.');
   const cents = Number(whole) * 100 + Number(fraction.padEnd(2, '0'));
-  if (!Number.isSafeInteger(cents) || cents <= 0 || cents > MAX_AMOUNT) throw new Error('O valor deve ser maior que zero e menor que R$ 10 bilhões.');
+  if (!Number.isSafeInteger(cents) || cents <= 0 || cents > MAX_SALE_CENTS) throw new Error('O valor deve ser maior que zero e de até R$ 1.000.000,00.');
   return cents;
 }
-export function totals(data: AppData, month?: string) {
-  const transactions = month ? data.transactions.filter(item => item.date.startsWith(month)) : data.transactions;
-  const income = transactions.filter(item => item.type === 'income').reduce((sum, item) => sum + item.amount, 0);
-  const expense = transactions.filter(item => item.type === 'expense').reduce((sum, item) => sum + item.amount, 0);
-  return { income, expense, balance: income - expense };
+export function inPeriod(date: string, period: Period, today: string) {
+  if (period === 'all') return true;
+  if (period === 'today') return date === today;
+  if (period === 'month') return date.slice(0, 7) === today.slice(0, 7) && date <= today;
+  const start = new Date(`${today}T12:00:00Z`);
+  start.setUTCDate(start.getUTCDate() - (period === 'yesterday' ? 1 : 6));
+  const lower = start.toISOString().slice(0, 10);
+  return period === 'yesterday' ? date === lower : date >= lower && date <= today;
 }
-export function removeClient(data: AppData, id: string): AppData {
-  return {
-    ...data,
-    clients: data.clients.filter(client => client.id !== id),
-    tasks: data.tasks.map(task => task.clientId === id ? { ...task, clientId: null } : task),
-    transactions: data.transactions.map(item => item.clientId === id ? { ...item, clientId: null } : item),
-  };
-}
-
-function record(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-function text(value: unknown, max: number, required = false): value is string {
-  return typeof value === 'string' && value.length <= max && (!required || value.trim().length > 0);
-}
-function created(value: unknown): value is string {
-  return typeof value === 'string' && value.length <= 40 && Number.isFinite(Date.parse(value));
-}
-function fail(): never { throw new Error('Arquivo inválido. Escolha um backup BRAVUS válido, na versão 1.'); }
-/** Validate backups and local storage before use. Rebuild objects to drop unknown fields. */
-export function parseData(value: unknown): AppData {
-  if (!record(value) || value.schemaVersion !== 1) fail();
-  if (!Array.isArray(value.clients) || !Array.isArray(value.tasks) || !Array.isArray(value.transactions)) fail();
-  if ([value.clients, value.tasks, value.transactions].some(items => items.length > 10_000)) fail();
-  const ids = new Set<string>();
-  function identity(item: unknown): asserts item is Record<string, unknown> & { id: string; createdAt: string } {
-    if (!record(item) || !text(item.id, 100, true) || !created(item.createdAt) || ids.has(item.id)) fail();
-    ids.add(item.id);
+export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Payout[], period: Period, today: string): Finance {
+  const dates = new Set([...sales.map(sale => sale.date), ...costs.map(cost => cost.date)]);
+  let earned = 0, commissionCents = 0, pendingGoalCents = 0, debtCents = 0;
+  for (const date of dates) {
+    const daily = sales.filter(sale => sale.date === date);
+    const gross = daily.reduce((sum, sale) => sum + sale.amountCents, 0);
+    const goal = daily[0]?.goalCents ?? 20000;
+    const commission = daily.reduce((sum, sale) => sum + Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000), 0);
+    const cost = costs.filter(cost => cost.date === date).reduce((sum, cost) => sum + cost.adsCents + cost.withdrawalFeeCents, 0);
+    const credited = gross >= goal ? commission : 0;
+    earned += credited - cost;
+    if (inPeriod(date, period, today)) {
+      commissionCents += credited;
+      if (gross < goal) pendingGoalCents += commission;
+      debtCents += Math.max(0, cost - credited);
+    }
   }
-  const clients = value.clients.map((item: unknown): Client => {
-    identity(item);
-    if (!text(item.name, 120, true) || !text(item.company, 120) || !text(item.email, 160) || !text(item.phone, 40)) fail();
-    if (item.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(item.email)) fail();
-    return { id: item.id, name: item.name, company: item.company, email: item.email, phone: item.phone, createdAt: item.createdAt };
-  });
-  const clientIds = new Set(clients.map(item => item.id));
-  function clientLink(value: unknown): value is string | null { return value === null || (typeof value === 'string' && clientIds.has(value)); }
-  const tasks = value.tasks.map((item: unknown): Task => {
-    identity(item);
-    if (!text(item.title, 180, true) || !clientLink(item.clientId)) fail();
-    if (!['todo', 'doing', 'done'].includes(String(item.status)) || !['low', 'medium', 'high'].includes(String(item.priority))) fail();
-    if (item.dueDate !== '' && !validDate(item.dueDate)) fail();
-    return { id: item.id, title: item.title, clientId: item.clientId, status: item.status as TaskStatus, priority: item.priority as Priority, dueDate: item.dueDate as string, createdAt: item.createdAt };
-  });
-  const transactions = value.transactions.map((item: unknown): Transaction => {
-    identity(item);
-    if (!text(item.description, 180, true) || !clientLink(item.clientId) || !validDate(item.date)) fail();
-    if (item.type !== 'income' && item.type !== 'expense') fail();
-    if (typeof item.amount !== 'number' || !Number.isSafeInteger(item.amount) || item.amount <= 0 || item.amount > MAX_AMOUNT) fail();
-    return { id: item.id, description: item.description, clientId: item.clientId, type: item.type, amount: item.amount, date: item.date, createdAt: item.createdAt };
-  });
-  return { schemaVersion: 1, clients, tasks, transactions };
+  const filtered = sales.filter(sale => inPeriod(sale.date, period, today));
+  const filteredCosts = costs.filter(cost => inPeriod(cost.date, period, today));
+  const pendingPayoutCents = payouts.filter(payout => payout.status === 'pending').reduce((sum, payout) => sum + payout.amountCents, 0);
+  const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
+  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, pendingGoalCents, debtCents, count: filtered.length };
+}
+export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> {
+  if (!value || typeof value !== 'object') throw new Error('Dados de perfil inválidos.');
+  const source = value as Record<string, unknown>;
+  function field(name: string, max: number) {
+    if (typeof source[name] !== 'string' || source[name].length > max) throw new Error('Confira os dados do perfil.');
+    return source[name].trim();
+  }
+  const name = field('name', 120), email = field('email', 160), phone = field('phone', 40), pixType = field('pixType', 10) as PixType, pixKey = field('pixKey', 180), pixOwner = field('pixOwner', 120);
+  if (!name) throw new Error('Informe seu nome.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Informe um e-mail válido.');
+  if (!Object.hasOwn(pixLabels, pixType)) throw new Error('Selecione um tipo de chave PIX válido.');
+  if (pixType || pixKey || pixOwner) {
+    if (!pixType || !pixKey || !pixOwner) throw new Error('Preencha o tipo, a chave PIX e o nome do titular.');
+    const digits = pixKey.replace(/\D/g, '');
+    if (pixType === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(pixKey)) throw new Error('A chave PIX deve ser um e-mail válido.');
+    if (pixType === 'cpf' && (digits.length !== 11 || /^(\d)\1+$/.test(digits))) throw new Error('Informe um CPF com 11 dígitos.');
+    if (pixType === 'cnpj' && (digits.length !== 14 || /^(\d)\1+$/.test(digits))) throw new Error('Informe um CNPJ com 14 dígitos.');
+    if (pixType === 'phone' && ![10, 11, 12, 13].includes(digits.length)) throw new Error('Informe um telefone PIX válido, com DDD.');
+    if (pixType === 'random' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pixKey)) throw new Error('Informe uma chave aleatória PIX válida.');
+  }
+  return { name, email, phone, pixType, pixKey, pixOwner };
+}
+export function demoInitial(): DemoData {
+  return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000, dailyGoalCents: 20000 }, sales: [], payouts: [], costs: [], receipts: {} };
+}
+export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0 }, { id: 'pix', name: 'PIX manual', feeBps: 0 }];
+export function demoPortal(data: DemoData, period: Period): Portal {
+  const today = businessToday();
+  return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), todayGrossCents: data.sales.filter(sale => sale.date === today).reduce((sum, sale) => sum + sale.amountCents, 0), today };
 }

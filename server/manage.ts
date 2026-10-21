@@ -11,14 +11,14 @@ const cost = (input: string) => /^0([.,]0{1,2})?$/.test(input) ? 0 : amountToCen
 const store = new PortalStore(process.env.BRAVUS_DB_PATH ?? resolve('.bravus/portal.sqlite'));
 try {
   if (command === 'create-attendant') {
-    const name = flag('name'), commission = percent(flag('commission')), dailyGoal = amountToCents(flag('daily-goal', '200'));
+    const name = flag('name'), commission = percent(flag('commission'));
     const base = flag('base-url', process.env.BRAVUS_PUBLIC_URL ?? '');
     if (!base || !/^https?:\/\//.test(base)) throw new Error('Informe --base-url com o endereço do portal.');
     const output = resolve(flag('output', '.bravus/invites/' + Date.now() + '.json'));
     mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
     const file = openSync(output, 'wx', 0o600);
     try {
-      const { id, token } = store.createAttendant(name, commission, dailyGoal);
+      const { id, token } = store.createAttendant(name, commission);
       const url = new URL(base); url.hash = `/atendente/${token}`;
       writeFileSync(file, JSON.stringify({ attendantId: id, name, url: url.href }, null, 2));
       console.log(`Atendente criado. Convite privado salvo em ${output}. O token não é exibido nos logs.`);
@@ -32,7 +32,7 @@ try {
     catch (error) { unlinkSync(output); throw error; }
     console.log(`Backup consistente do banco salvo em ${output}. Proteja esse arquivo como os dados originais.`);
   } else if (command === 'list-attendants') {
-    console.log(JSON.stringify(store.db.prepare('SELECT id, name, commission_bps AS commissionBps, daily_goal_cents AS dailyGoalCents, active FROM attendants').all(), null, 2));
+    console.log(JSON.stringify(store.db.prepare('SELECT id, name, commission_bps AS commissionBps, active FROM attendants').all(), null, 2));
   } else if (command === 'set-costs') {
     store.setCosts(flag('attendant'), flag('date'), cost(flag('ads', '0')), cost(flag('withdrawal-fee', '0')));
     console.log('Custos diários atualizados.');

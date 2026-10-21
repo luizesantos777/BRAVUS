@@ -3,18 +3,18 @@ export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
 export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
-export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; dailyGoalCents: number }
+export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number }
 export interface Checkout { id: string; name: string; feeBps: number }
-export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; goalCents: number; note: string; receiptId: string; createdAt: string }
+export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
 export interface Payout { id: string; amountCents: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
 export interface ReceiptInput { name: string; mime: string; base64: string }
 export interface SaleInput { amount: string; checkoutId: string; time: string; note: string; receipt: ReceiptInput | null }
 export interface SaleBatch { date: string; sales: SaleInput[] }
-export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; pendingGoalCents: number; debtCents: number; count: number }
-export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; todayGrossCents: number; today: string }
+export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; debtCents: number; count: number }
+export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
 export interface RankingEntry { id: string; name: string; grossCents: number; count: number; mine: boolean }
-export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; dailyGoalCents: number; createdAt: string; salesCount: number; grossCents: number }
+export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[] }
 export interface Invitation { attendantId: string; name: string; token: string }
@@ -62,26 +62,22 @@ export function inPeriod(date: string, period: Period, today: string) {
 }
 export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Payout[], period: Period, today: string): Finance {
   const dates = new Set([...sales.map(sale => sale.date), ...costs.map(cost => cost.date)]);
-  let earned = 0, commissionCents = 0, pendingGoalCents = 0, debtCents = 0;
+  let earned = 0, commissionCents = 0, debtCents = 0;
   for (const date of dates) {
     const daily = sales.filter(sale => sale.date === date);
-    const gross = daily.reduce((sum, sale) => sum + sale.amountCents, 0);
-    const goal = daily[0]?.goalCents ?? 20000;
     const commission = daily.reduce((sum, sale) => sum + Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000), 0);
     const cost = costs.filter(cost => cost.date === date).reduce((sum, cost) => sum + cost.adsCents + cost.withdrawalFeeCents, 0);
-    const credited = gross >= goal ? commission : 0;
-    earned += credited - cost;
+    earned += commission - cost;
     if (inPeriod(date, period, today)) {
-      commissionCents += credited;
-      if (gross < goal) pendingGoalCents += commission;
-      debtCents += Math.max(0, cost - credited);
+      commissionCents += commission;
+      debtCents += Math.max(0, cost - commission);
     }
   }
   const filtered = sales.filter(sale => inPeriod(sale.date, period, today));
   const filteredCosts = costs.filter(cost => inPeriod(cost.date, period, today));
   const pendingPayoutCents = payouts.filter(payout => payout.status === 'pending').reduce((sum, payout) => sum + payout.amountCents, 0);
   const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
-  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, pendingGoalCents, debtCents, count: filtered.length };
+  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, debtCents, count: filtered.length };
 }
 export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> {
   if (!value || typeof value !== 'object') throw new Error('Dados de perfil inválidos.');
@@ -106,10 +102,10 @@ export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' 
   return { name, email, phone, pixType, pixKey, pixOwner };
 }
 export function demoInitial(): DemoData {
-  return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000, dailyGoalCents: 20000 }, sales: [], payouts: [], costs: [], receipts: {} };
+  return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000 }, sales: [], payouts: [], costs: [], receipts: {} };
 }
 export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0 }, { id: 'pix', name: 'PIX manual', feeBps: 0 }];
 export function demoPortal(data: DemoData, period: Period): Portal {
   const today = businessToday();
-  return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), todayGrossCents: data.sales.filter(sale => sale.date === today).reduce((sum, sale) => sum + sale.amountCents, 0), today };
+  return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), today };
 }

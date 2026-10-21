@@ -24,7 +24,7 @@ export class AdminClient {
     } finally { window.clearTimeout(timer); }
   }
   dashboard() { return this.request<AdminDashboard>('/dashboard'); }
-  createAttendant(name: string, commission: string, dailyGoal: string) { return this.request<Invitation>('/attendants', 'POST', { name, commission, dailyGoal }); }
+  createAttendant(name: string, commission: string) { return this.request<Invitation>('/attendants', 'POST', { name, commission }); }
   rotateToken(id: string) { return this.request<Invitation>(`/attendants/${id}/token`, 'POST'); }
   setActive(id: string, active: boolean) { return this.request(`/attendants/${id}`, 'PATCH', { active }); }
   costs(id: string, date: string) { return this.request<DailyCost>(`/attendants/${id}/costs?date=${encodeURIComponent(date)}`); }

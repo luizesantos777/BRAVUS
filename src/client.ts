@@ -21,7 +21,7 @@ export class PortalClient {
           const parsed = JSON.parse(saved) as DemoData;
           if (parsed.version !== 1 || !Array.isArray(parsed.sales) || !Array.isArray(parsed.payouts) || !Array.isArray(parsed.costs) || !parsed.receipts || typeof parsed.receipts !== 'object') throw new Error('Invalid demo storage');
           validateProfile(parsed.profile);
-          if (!parsed.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000 && Number.isSafeInteger(sale.goalCents) && sale.goalCents > 0)) throw new Error('Invalid sales');
+          if (!parsed.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000)) throw new Error('Invalid sales');
           this.demo = parsed;
         }
       } catch { this.storageError = true; }
@@ -65,7 +65,7 @@ export class PortalClient {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) throw new ApiError('Informe o horário de cada venda.');
       const amountCents = amountToCents(row.amount), receiptId = crypto.randomUUID();
       receipts[receiptId] = row.receipt;
-      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: Math.round(amountCents * checkout.feeBps / 10000), commissionBps: current.profile.commissionBps, goalCents: current.profile.dailyGoalCents, note: row.note.trim(), receiptId, createdAt: new Date().toISOString() };
+      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: Math.round(amountCents * checkout.feeBps / 10000), commissionBps: current.profile.commissionBps, note: row.note.trim(), receiptId, createdAt: new Date().toISOString() };
     });
     this.persist({ ...this.demo, receipts, sales: [...sales, ...this.demo.sales] });
     return { duplicate: false, count: sales.length };

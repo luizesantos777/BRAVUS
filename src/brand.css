@@ -76,12 +76,6 @@ body {
 .brand-sectors svg { color: var(--brand-gold); }
 
 .panel { box-shadow: 0 8px 24px #00000012; }
-.daily-goal { background: linear-gradient(110deg, #11170f, #10130f 75%); }
-.goal-heading h2 { font-size: 13px; letter-spacing: -.2px; font-weight: 700; }
-.goal-track { background: #20281c; border-color: #303c27; }
-.goal-track > div { background: linear-gradient(90deg, #a47816, var(--brand-gold)); }
-.daily-goal.reached .goal-track > div { background: linear-gradient(90deg, #076c32, #30a458); }
-.daily-goal.reached .goal-heading > span { color: #9bd7ac; background: #16331f; }
 .section-title > svg, .period-picker > svg:first-child { color: var(--brand-gold); }
 .metric { background: linear-gradient(145deg, #191e16, #131810); border-color: #2b3424; }
 .metric.balance { background: linear-gradient(135deg, #192619, #112115); border-color: #345234; }
@@ -147,9 +141,7 @@ input::placeholder { color: #8a957d; }
 .admin-message { background: #1e2819; border-color: #405333; color: #c3cfb3; text-align: left; }
 .admin-checkout, .admin-attendants td:last-child { border-color: #35442b; }
 
-@media (min-width: 1300px) {
-  .goal-heading h2 { font-size: 14px; }
-}
+
 
 @media (max-width: 600px) {
   .portal-header { height: 91px; margin-bottom: 20px; gap: 12px; }
@@ -168,7 +160,6 @@ input::placeholder { color: #8a957d; }
   .brand-sectors { gap: 10px; margin-top: 13px; }
   .brand-sectors > span { font-size: 7px; gap: 4px; }
   .brand-sectors svg { width: 11px; height: 11px; }
-  .goal-heading h2 { font-size: 11px; max-width: 160px; line-height: 1.6; }
   .admin-login { margin-top: 25px; }
   .admin-brand-image { width: 140px; height: 140px; }
   .admin-attendants tr { background: #172011; border-color: #35432b; }

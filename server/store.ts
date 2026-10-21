@@ -7,7 +7,7 @@ import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, 
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
-interface AttendantRow { id: string; name: string; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; daily_goal_cents: number }
+interface AttendantRow { id: string; name: string; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number }
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
 
@@ -34,19 +34,19 @@ export class PortalStore {
   }
   close() { this.db.close(); }
   adminDashboard(): AdminDashboard {
-    const rows = this.db.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.daily_goal_cents AS dailyGoalCents, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all();
+    const rows = this.db.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all();
     const attendants = rows.map(row => ({ ...row, active: row.active === 1 })) as unknown as AdminAttendant[];
     const payouts = this.db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
     return { attendants, payouts, checkouts: this.checkouts() };
   }
   adminCreateAttendant(input: unknown): Invitation {
     const data = this.adminFields(input);
-    if (typeof data.name !== 'string' || typeof data.commission !== 'string' || typeof data.dailyGoal !== 'string') invalid('Informe nome, comissão e meta diária.');
-    let commission: number, goal: number;
-    try { commission = percentageToBps(data.commission as string); goal = amountToCents(data.dailyGoal as string); }
+    if (typeof data.name !== 'string' || typeof data.commission !== 'string') invalid('Informe nome e comissão.');
+    let commission: number;
+    try { commission = percentageToBps(data.commission as string); }
     catch (error) { return invalid((error as Error).message); }
     const name = (data.name as string).trim();
-    const { id, token } = this.createAttendant(name, commission, goal);
+    const { id, token } = this.createAttendant(name, commission);
     return { attendantId: id, name, token };
   }
   private adminFields(input: unknown): Record<string, unknown> {
@@ -88,12 +88,13 @@ export class PortalStore {
     try { fee = percentageToBps(data.fee as string); } catch (error) { return invalid((error as Error).message); }
     this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ? WHERE id = ?').run((data.name as string).trim(), fee, id);
   }
-  createAttendant(name: string, commissionBps: number, dailyGoalCents = 20000, providedToken?: string) {
-    if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000 || !Number.isSafeInteger(dailyGoalCents) || dailyGoalCents <= 0) invalid('Nome, comissão e meta são obrigatórios e devem ser válidos.');
+  createAttendant(name: string, commissionBps: number, providedToken?: string) {
+    if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000) invalid('Nome e comissão são obrigatórios e devem ser válidos.');
     const token = providedToken ?? `atd_${randomBytes(32).toString('base64url')}`;
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) invalid('Token inválido.');
     const id = randomUUID();
-    this.db.prepare('INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, ?, ?)').run(id, tokenHash(token), name.trim(), commissionBps, dailyGoalCents, new Date().toISOString());
+    // Legacy goal columns stay in SQLite to preserve existing databases; they are no longer read or applied.
+    this.db.prepare('INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, tokenHash(token), name.trim(), commissionBps, new Date().toISOString());
     return { id, token };
   }
   authenticate(token: string): Authenticated {
@@ -103,17 +104,17 @@ export class PortalStore {
     return { id: String(row.id) };
   }
   profile(auth: Authenticated): Profile {
-    const row = this.db.prepare('SELECT id, name, email, phone, pix_type, pix_key, pix_owner, commission_bps, daily_goal_cents FROM attendants WHERE id = ?').get(auth.id) as unknown as AttendantRow;
+    const row = this.db.prepare('SELECT id, name, email, phone, pix_type, pix_key, pix_owner, commission_bps FROM attendants WHERE id = ?').get(auth.id) as unknown as AttendantRow;
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
-    return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, dailyGoalCents: row.daily_goal_cents };
+    return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps };
   }
   checkouts(): Checkout[] { return this.db.prepare('SELECT id, name, fee_bps AS feeBps FROM checkouts ORDER BY rowid').all() as unknown as Checkout[]; }
-  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, goal_cents AS goalCents, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
+  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
   costs(auth: Authenticated): DailyCost[] { return this.db.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id) as unknown as DailyCost[]; }
   payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }
   portal(auth: Authenticated, period: Period = 'today'): Portal {
     const profile = this.profile(auth), sales = this.sales(auth), costs = this.costs(auth), payouts = this.payouts(auth), today = businessToday();
-    return { profile, checkouts: this.checkouts(), sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), todayGrossCents: sales.filter(sale => sale.date === today).reduce((sum, sale) => sum + sale.amountCents, 0), today };
+    return { profile, checkouts: this.checkouts(), sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
   }
   saveProfile(auth: Authenticated, input: unknown): Profile {
     let fields: ReturnType<typeof validateProfile>;
@@ -160,7 +161,7 @@ export class PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID();
         this.db.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        this.db.prepare('INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, Math.round(row.amountCents * row.checkout.feeBps / 10000), profile.commissionBps, profile.dailyGoalCents, row.note, receiptId, createdAt);
+        this.db.prepare('INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, Math.round(row.amountCents * row.checkout.feeBps / 10000), profile.commissionBps, 0, row.note, receiptId, createdAt);
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }

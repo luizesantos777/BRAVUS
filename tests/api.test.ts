@@ -19,7 +19,7 @@ const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgo
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
 async function fixture(t: TestContext) {
   const store = new PortalStore(':memory:');
-  const a = store.createAttendant('Ana Teste', 1000, 20000, tokenA), b = store.createAttendant('Bruno Teste', 1000, 20000, tokenB);
+  const a = store.createAttendant('Ana Teste', 1000, tokenA), b = store.createAttendant('Bruno Teste', 1000, tokenB);
   const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -46,6 +46,20 @@ test('envio repetido não duplica vendas e alterações no mesmo envio são reje
   const repeated = await (await submit()).json(); assert.equal(repeated.duplicate, true);
   const changed = batch(); changed.sales[0].amount = '400,00'; assert.equal((await submit(changed)).status, 409);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
+});
+test('venda abaixo de R$ 200 libera comissão e repasse mesmo com meta antiga no banco', async t => {
+  const { call, submit, store, a } = await fixture(t);
+  store.db.prepare('UPDATE attendants SET daily_goal_cents = 20000 WHERE id = ?').run(a.id);
+  const small = batch(); small.sales[0].amount = '197,00';
+  assert.equal((await submit(small)).status, 200);
+  store.db.prepare('UPDATE sales SET goal_cents = 20000 WHERE attendant_id = ?').run(a.id);
+  const portal = await (await call('/api/portal')).json();
+  assert.equal(portal.finance.availableCents, 1970); assert.equal(portal.finance.commissionCents, 1970);
+  assert.equal(Object.hasOwn(portal.profile, 'dailyGoalCents'), false);
+  assert.equal(Object.hasOwn(portal.finance, 'pendingGoalCents'), false);
+  await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana' }) });
+  assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '19,70' }) })).status, 201);
+  assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 0);
 });
 test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são salvas', async t => {
   const { call, submit } = await fixture(t);
@@ -91,7 +105,7 @@ test('origens não autorizadas e requisições sem token são recusadas', async 
 test('banco persistente mantém dados no reinício e guarda somente hash do token', () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-sqlite-')), file = join(directory, 'portal.sqlite');
   try {
-    let store = new PortalStore(file); const account = store.createAttendant('Persistente', 1000, 20000, tokenA);
+    let store = new PortalStore(file); const account = store.createAttendant('Persistente', 1000, tokenA);
     store.recordSales({ id: account.id }, batch(), 'fixture_persistent_request');
     store.close();
     store = new PortalStore(file);
@@ -117,8 +131,8 @@ test('operador cria token e convite privados pelo comando de administração', (
 test('administração exige chave própria; criação, rotação e revogação preservam histórico', async t => {
   const { call, submit, a } = await fixture(t);
   assert.equal((await call('/api/admin/dashboard')).status, 401);
-  assert.equal((await call('/api/admin/attendants', tokenB, { method: 'POST', body: JSON.stringify({ name: 'Intruso', commission: '100', dailyGoal: '1' }) })).status, 401);
-  const created = await call('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Nova pessoa', commission: '29.99', dailyGoal: '200' }) });
+  assert.equal((await call('/api/admin/attendants', tokenB, { method: 'POST', body: JSON.stringify({ name: 'Intruso', commission: '100' }) })).status, 401);
+  const created = await call('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Nova pessoa', commission: '29.99' }) });
   assert.equal(created.status, 201);
   const invitation = await created.json();
   const portal = await (await call('/api/portal', invitation.token)).json();
@@ -146,7 +160,7 @@ test('administração valida custos e taxas; alterações não reescrevem vendas
   assert.equal((await update(`/api/admin/attendants/${a.id}/costs`, { date: businessToday(), ads: '5,00', withdrawalFee: '2' })).status, 200);
   assert.deepEqual(await (await call(`/api/admin/attendants/${a.id}/costs?date=${businessToday()}`, adminKey)).json(), { date: businessToday(), adsCents: 500, withdrawalFeeCents: 200 });
   assert.equal((await update(`/api/admin/attendants/${a.id}/costs`, { date: 'bad', ads: '-1', withdrawalFee: '0' })).status, 400);
-  assert.equal((await update('/api/admin/attendants', { name: 'Pessoa', commission: '101', dailyGoal: '200' })).status, 400);
+  assert.equal((await update('/api/admin/attendants', { name: 'Pessoa', commission: '101' })).status, 400);
   assert.equal((await update('/api/admin/checkouts/main', { name: 'Principal', fee: '3.5' }, 'PATCH')).status, 200);
   const data = await (await call('/api/portal')).json();
   assert.equal(data.finance.availableCents, 2300); assert.equal(data.sales[0].feeCents, 0);
@@ -175,7 +189,7 @@ test('chave administrativa persiste com permissão privada e backup contém vend
     const key = loadAdminKey(keyPath);
     assert.equal(loadAdminKey(keyPath), key); assert.equal(statSync(keyPath).mode & 0o777, 0o600);
     assert.throws(() => loadAdminKey(keyPath, 'short'));
-    const store = new PortalStore(database); store.createAttendant('Ana', 1000, 20000, tokenA);
+    const store = new PortalStore(database); store.createAttendant('Ana', 1000, tokenA);
     store.recordSales(store.authenticate(tokenA), batch(), 'fixture_backup_request_key');
     const logs = execFileSync(process.execPath, ['server/manage.ts', 'backup', '--output', output], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: database } });
     assert.equal(logs.includes(tokenA), false); assert.equal(statSync(output).mode & 0o777, 0o600);

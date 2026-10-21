@@ -1,6 +1,6 @@
 # BRAVUS — Portal do Atendente
 
-Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, meta diária, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
+Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
 
 ## O que está publicado
 
@@ -18,7 +18,7 @@ O arquivo `render.yaml` prepara interface, API e SQLite no mesmo servidor, com d
 2. Revise o serviço e o custo. Confirme a implantação somente se concordar com a contratação.
 3. Quando o serviço estiver disponível, abra o endereço HTTPS informado pelo Render e acrescente `/#/admin`.
 4. Na seção **Environment** do serviço no Render, obtenha a variável privada `BRAVUS_ADMIN_KEY`. Cole-a apenas no formulário de administração desse servidor. Não a envie no chat nem a publique no GitHub.
-5. Cadastre os atendentes, definindo a comissão e a meta de cada um. Copie e entregue cada link individual ao atendente correspondente.
+5. Cadastre os atendentes, definindo a comissão de cada um. Copie e entregue cada link individual ao atendente correspondente.
 
 O endereço do Render serve o sistema completo; não depende de recompilar o GitHub Pages. Novas versões no Render são implantadas manualmente, pois o blueprint deixa `autoDeploy: false`. O SQLite usa uma única instância com disco persistente, sem escalonamento horizontal. Faça backups privados regulares e mantenha uma cópia fora do disco da aplicação. A recuperação de um backup deve ser planejada antes de usar dados reais.
 
@@ -59,7 +59,7 @@ O Vite usa a porta 5173 e encaminha `/api` para a API na porta 3001. No ambiente
 Crie cada atendente no servidor que hospeda o banco. O percentual de comissão é obrigatório; os valores abaixo são **exemplos**, não a definição comercial do negócio.
 
 ```sh
-npm run manage -- create-attendant --name "Nome do atendente" --commission 10 --daily-goal 200 --base-url https://seu-portal.example
+npm run manage -- create-attendant --name "Nome do atendente" --commission 10 --base-url https://seu-portal.example
 ```
 
 O comando gera 32 bytes aleatórios para o token, salva somente o hash no banco e grava o link do atendente em um arquivo privado em `.bravus/invites/`. O token não aparece nos logs. O operador deve obter esse arquivo por um canal privado da hospedagem e entregar o link apenas ao atendente. Não publique os convites, o banco ou backups no GitHub. A API de criação de atendentes exige a chave administrativa.
@@ -95,9 +95,9 @@ Para cancelar uma solicitação pendente, use `--status cancelled`. Marcar um re
 ### Regras implementadas
 
 - Valores são armazenados em centavos inteiros. São aceitos `197,00`, `197.00` e `1.250,50`.
-- A comissão configurada por atendente incide sobre o bruto menos a taxa do checkout. O percentual e a meta ficam registrados nas vendas.
-- A meta é somada por dia, no fuso America/Sao_Paulo. O padrão de R$ 200 segue as capturas e pode ser definido ao criar o atendente.
-- Abaixo da meta, a comissão desse dia não entra no saldo. Custos ADS e a taxa diária de saque são descontados mesmo sem atingir a meta e podem gerar saldo negativo.
+- A comissão configurada por atendente incide sobre o bruto menos a taxa do checkout. O percentual fica registrado nas vendas.
+- Todas as vendas geram comissão, sem meta diária ou faturamento mínimo. O cálculo se aplica também às vendas já registradas. Os dias seguem o fuso America/Sao_Paulo.
+- Custos ADS e a taxa diária de saque são descontados normalmente e podem gerar saldo negativo.
 - Solicitações pendentes reservam o saldo; confirmar o pagamento não desconta o valor novamente. O saldo não permite solicitar um repasse maior que o disponível.
 - O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra apenas nome e volume de vendas de atendentes ativos, sem tokens ou PIX.
 - Cada venda exige um print PNG, JPEG ou WEBP de até 2 MB. Cada envio aceita até 10 vendas e 12 MB no total, de forma atômica.
@@ -155,7 +155,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/admin/checkouts/:id` | Chave administrativa | Definir nome e taxa do checkout |
 | `PATCH /api/admin/payouts/:id` | Chave administrativa | Confirmar pagamento ou cancelar solicitação |
 
-A criação recebe `{ "name": "Nome", "commission": "10", "dailyGoal": "200" }`. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5" }`. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
+A criação recebe `{ "name": "Nome", "commission": "10" }`. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5" }`. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
 
 ## GitHub Pages: atualizar a demonstração
 
@@ -173,7 +173,7 @@ npm run build
 BRAVUS_CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e
 ```
 
-Os testes cobrem regras financeiras, dias no fuso brasileiro, validação de PIX, isolamento entre tokens, comprovantes privados, idempotência, saldo de repasses e persistência após reiniciar o banco. O Playwright testa desktop e celular contra a API real com um banco temporário e tokens sintéticos, removidos ao encerrar o teste. Não são utilizados dados de atendentes reais.
+Os testes cobrem comissões sem faturamento mínimo, compatibilidade com registros antigos, regras financeiras, dias no fuso brasileiro, validação de PIX, isolamento entre tokens, comprovantes privados, idempotência, saldo de repasses e persistência após reiniciar o banco. O Playwright testa desktop e celular contra a API real com um banco temporário e tokens sintéticos, removidos ao encerrar o teste. Não são utilizados dados de atendentes reais.
 
 Também são verificados a autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
 
@@ -194,3 +194,5 @@ Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navega
 - `tests/`: testes de domínio, API e navegador.
 
 Os dados da antiga demonstração de gestão (`bravus.data.v1`) não são apagados nem migrados automaticamente. A nova demonstração usa uma chave separada; atendentes reais usam o banco no servidor.
+
+As colunas antigas de meta permanecem no SQLite para preservar a compatibilidade dos bancos existentes, mas não são lidas, expostas pela API ou usadas nos cálculos. Dados antigos da demonstração continuam na mesma chave do navegador e suas vendas passam a gerar comissão sem mínimo de faturamento.

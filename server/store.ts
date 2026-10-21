@@ -2,12 +2,12 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, DEFAULT_SALE_ALERT, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
-interface AttendantRow { id: string; name: string; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number }
+interface AttendantRow { id: string; name: string; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
 
@@ -33,6 +33,10 @@ export class PortalStore {
     `);
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const profileColumns = new Set(this.db.prepare('PRAGMA table_info(attendants)').all().map(column => column.name));
+      if (!profileColumns.has('photo_url')) this.db.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
+      if (!profileColumns.has('sale_alert_template')) this.db.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '✅ Venda de {valor} lançada com sucesso!'");
+      this.db.exec('CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), subscription TEXT NOT NULL)');
       const columns = new Set(this.db.prepare('PRAGMA table_info(checkouts)').all().map(column => column.name));
       if (!columns.has('fixed_fee_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN fixed_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fixed_fee_cents >= 0)');
       if (!columns.has('min_amount_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN min_amount_cents INTEGER NOT NULL DEFAULT 1 CHECK(min_amount_cents > 0)');
@@ -74,6 +78,7 @@ export class PortalStore {
     if (row.active !== 1) invalid('Reative o atendente antes de gerar um novo token.');
     const token = `atd_${randomBytes(32).toString('base64url')}`;
     this.db.prepare('UPDATE attendants SET token_hash = ? WHERE id = ?').run(tokenHash(token), id);
+    this.db.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id);
     return { attendantId: id, name: String(row.name), token };
   }
   setAttendantActive(id: string, input: unknown) {
@@ -81,6 +86,7 @@ export class PortalStore {
     if (typeof data.active !== 'boolean') invalid('Informe se o acesso deve ficar ativo ou revogado.');
     const result = this.db.prepare('UPDATE attendants SET active = ? WHERE id = ?').run(data.active ? 1 : 0, id);
     if (!result.changes) throw new PortalError(404, 'Atendente não encontrado.');
+    if (!data.active) this.db.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id);
   }
   adminSetCosts(id: string, input: unknown) {
     const data = this.adminFields(input);
@@ -126,9 +132,9 @@ export class PortalStore {
     return { id: String(row.id) };
   }
   profile(auth: Authenticated): Profile {
-    const row = this.db.prepare('SELECT id, name, email, phone, pix_type, pix_key, pix_owner, commission_bps FROM attendants WHERE id = ?').get(auth.id) as unknown as AttendantRow;
+    const row = this.db.prepare('SELECT id, name, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?').get(auth.id) as unknown as AttendantRow;
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
-    return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps };
+    return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
   checkouts(): Checkout[] { return this.db.prepare('SELECT id, name, fee_bps AS feeBps, fixed_fee_cents AS fixedFeeCents, min_amount_cents AS minAmountCents FROM checkouts ORDER BY rowid').all() as unknown as Checkout[]; }
   sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
@@ -141,7 +147,8 @@ export class PortalStore {
   saveProfile(auth: Authenticated, input: unknown): Profile {
     let fields: ReturnType<typeof validateProfile>;
     try { fields = validateProfile(input); } catch (error) { return invalid((error as Error).message); }
-    this.db.prepare('UPDATE attendants SET name = ?, email = ?, phone = ?, pix_type = ?, pix_key = ?, pix_owner = ? WHERE id = ?').run(fields.name, fields.email, fields.phone, fields.pixType, fields.pixKey, fields.pixOwner, auth.id);
+    const current = this.profile(auth);
+    this.db.prepare('UPDATE attendants SET name = ?, email = ?, phone = ?, pix_type = ?, pix_key = ?, pix_owner = ?, photo_url = ?, sale_alert_template = ? WHERE id = ?').run(fields.name, fields.email, fields.phone, fields.pixType, fields.pixKey, fields.pixOwner, fields.photoUrl ?? current.photoUrl, fields.saleAlertTemplate ?? current.saleAlertTemplate, auth.id);
     return this.profile(auth);
   }
   receiptInput(value: unknown): { name: string; mime: string; bytes: Buffer } {
@@ -197,10 +204,10 @@ export class PortalStore {
     return { mime: String(row.mime), bytes: row.bytes as Uint8Array };
   }
   ranking(auth: Authenticated, period: Period): RankingEntry[] {
-    const attendants = this.db.prepare('SELECT id, name FROM attendants WHERE active = 1').all();
+    const attendants = this.db.prepare('SELECT id, name, photo_url FROM attendants WHERE active = 1').all();
     return attendants.map(attendant => {
       const sales = this.sales({ id: String(attendant.id) }).filter(sale => inPeriod(sale.date, period, businessToday()));
-      return { id: String(attendant.id), name: String(attendant.name), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
+      return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
     }).filter(item => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name));
   }
   requestPayout(auth: Authenticated, input: unknown): Payout {

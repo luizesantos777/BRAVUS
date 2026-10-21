@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, demoCheckouts, inPeriod, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, demoCheckouts, detectPixType, inPeriod, percentageToBps, renderSaleAlert, validateAvatar, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
 const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z' });
@@ -54,4 +54,25 @@ test('perfil aceita somente os campos pessoais e valida chave e titular PIX', ()
   assert.throws(() => validateProfile({ ...fields, pixOwner: '' }));
   assert.throws(() => validateProfile({ ...fields, pixKey: 'invalid' }));
   assert.throws(() => validateProfile({ ...fields, pixType: '__proto__' }));
+});
+test('alerta personalizado substitui valor, quantidade e nome como texto literal', () => {
+  assert.match(renderSaleAlert('{nome}: {qtd} vendas, {valor}', 19700, 2, 'Ana $& {valor}'), /^Ana \$& \{valor\}: 2 vendas, R\$/);
+  const fields = { name: 'Ana', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '' };
+  assert.throws(() => validateProfile({ ...fields, saleAlertTemplate: '' }));
+  assert.throws(() => validateProfile({ ...fields, saleAlertTemplate: '{token}' }));
+  assert.throws(() => validateProfile({ ...fields, saleAlertTemplate: 'x'.repeat(241) }));
+  assert.equal(validateProfile({ ...fields, saleAlertTemplate: '{nome}: {valor}' }).saleAlertTemplate, '{nome}: {valor}');
+});
+test('fotos rejeitam SVG, URLs externas, conteúdo falso e excesso de tamanho', () => {
+  const valid = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=';
+  assert.equal(validateAvatar(valid), valid);
+  for (const value of ['https://example.com/photo.png', 'data:image/svg+xml;base64,PHN2Zz4=', 'data:image/png;base64,PHNjcmlwdD4=', valid + 'A'.repeat(400000)]) assert.throws(() => validateAvatar(value));
+});
+test('campo único de PIX identifica os tipos e mantém disponível a confirmação manual', () => {
+  assert.equal(detectPixType('ana@example.com'), 'email');
+  assert.equal(detectPixType('529.982.247-25'), 'cpf');
+  assert.equal(detectPixType('(11) 98765-4321'), 'phone');
+  assert.equal(detectPixType('11987654321'), 'phone');
+  assert.equal(detectPixType('12.345.678/0001-90'), 'cnpj');
+  assert.equal(detectPixType('c4870728-df71-4ef2-b073-98c118c5a683'), 'random');
 });

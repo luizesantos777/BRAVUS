@@ -6,6 +6,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { PortalError, PortalStore } from './store.ts';
 import { periodLabels } from '../src/domain.ts';
 import type { Period } from '../src/domain.ts';
+import type { SaleBatch } from '../src/domain.ts';
+import type { PushService } from './push.ts';
 
 const BODY_LIMIT = 12 * 1024 * 1024;
 const json = (response: ServerResponse, status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
@@ -21,7 +23,7 @@ function readJson(request: IncomingMessage): Promise<unknown> {
     request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
   });
 }
-export function createPortalServer(store: PortalStore, options: { staticDir?: string; allowedOrigins?: string[]; adminKey?: string } = {}) {
+export function createPortalServer(store: PortalStore, options: { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService } = {}) {
   const failedAuth = new Map<string, { count: number; started: number }>();
   const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
   return createServer(async (request, response) => {
@@ -38,7 +40,7 @@ export function createPortalServer(store: PortalStore, options: { staticDir?: st
         if (origin && !sameOrigin && !options.allowedOrigins?.includes(origin)) throw new PortalError(403, 'Origem não permitida para este portal.');
         if (origin) { response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Vary', 'Origin'); }
         if (request.method === 'OPTIONS') {
-          response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
+          response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
         }
         if (url.pathname === '/api/health' && request.method === 'GET') { store.db.prepare('SELECT 1').get(); json(response, 200, { status: 'ok' }); return; }
         const identity = request.socket.remoteAddress ?? 'unknown';
@@ -77,9 +79,20 @@ export function createPortalServer(store: PortalStore, options: { staticDir?: st
         const requestedPeriod = url.searchParams.get('period') ?? 'today';
         if (!Object.hasOwn(periodLabels, requestedPeriod)) throw new PortalError(400, 'Período inválido.');
         const period = requestedPeriod as Period;
-        if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, store.portal(auth, period));
+        if (url.pathname.startsWith('/api/push/')) {
+          if (!options.push) throw new PortalError(503, 'As notificações push ainda não estão disponíveis neste servidor.');
+          if (url.pathname === '/api/push/config' && request.method === 'GET') json(response, 200, options.push.config(auth));
+          else if (url.pathname === '/api/push/subscriptions' && request.method === 'POST') json(response, 201, options.push.subscribe(auth, await readJson(request)));
+          else if (url.pathname === '/api/push/subscriptions' && request.method === 'DELETE') json(response, 200, options.push.unsubscribe(auth, await readJson(request)));
+          else throw new PortalError(404, 'Recurso não encontrado.');
+        }
+        else if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, store.portal(auth, period));
         else if (url.pathname === '/api/profile' && request.method === 'PATCH') json(response, 200, store.saveProfile(auth, await readJson(request)));
-        else if (url.pathname === '/api/sales' && request.method === 'POST') json(response, 200, store.recordSales(auth, await readJson(request), String(request.headers['idempotency-key'] ?? '')));
+        else if (url.pathname === '/api/sales' && request.method === 'POST') {
+          const batch = await readJson(request), result = store.recordSales(auth, batch, String(request.headers['idempotency-key'] ?? ''));
+          if (!result.duplicate && options.push) await options.push.notifySale(auth, batch as SaleBatch).catch(() => undefined);
+          json(response, 200, result);
+        }
         else if (url.pathname === '/api/ranking' && request.method === 'GET') json(response, 200, store.ranking(auth, period));
         else if (url.pathname === '/api/payouts' && request.method === 'POST') json(response, 201, store.requestPayout(auth, await readJson(request)));
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {

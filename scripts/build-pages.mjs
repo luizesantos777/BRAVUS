@@ -20,4 +20,6 @@ html = html.replace('href="/favicon.svg"', `href="data:image/svg+xml;base64,${fa
 await mkdir(path.join(root, 'docs'), { recursive: true });
 await writeFile(path.join(root, 'docs/index.html'), html);
 await writeFile(path.join(root, 'docs/.nojekyll'), '');
+await writeFile(path.join(root, 'docs/notifications-worker.js'), await readFile(path.join(dist, 'notifications-worker.js')));
+await writeFile(path.join(root, 'docs/favicon.svg'), favicon);
 console.log('GitHub Pages build ready in docs/: self-contained HTML and .nojekyll.');

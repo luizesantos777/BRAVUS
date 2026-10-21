@@ -1,4 +1,4 @@
-import { amountToCents, businessToday, checkoutFee, DEMO_KEY, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateProfile, validDate } from './domain.ts';
+import { amountToCents, businessToday, checkoutFee, DEMO_KEY, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
 import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -20,6 +20,7 @@ export class PortalClient {
         if (saved) {
           const parsed = JSON.parse(saved) as DemoData;
           if (parsed.version !== 1 || !Array.isArray(parsed.sales) || !Array.isArray(parsed.payouts) || !Array.isArray(parsed.costs) || !parsed.receipts || typeof parsed.receipts !== 'object') throw new Error('Invalid demo storage');
+          parsed.profile = { ...demoInitial().profile, ...parsed.profile };
           validateProfile(parsed.profile);
           if (!parsed.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000)) throw new Error('Invalid sales');
           this.demo = parsed;
@@ -78,8 +79,11 @@ export class PortalClient {
   async ranking(period: Period): Promise<RankingEntry[]> {
     if (!this.isDemo) return this.request(`/ranking?period=${period}`);
     const sales = this.demo.sales.filter(sale => inPeriod(sale.date, period, businessToday()));
-    return sales.length ? [{ id: this.demo.profile.id, name: this.demo.profile.name, grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: true }] : [];
+    return sales.length ? [{ id: this.demo.profile.id, name: this.demo.profile.name, photoUrl: this.demo.profile.photoUrl, grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: true }] : [];
   }
+  pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }
+  subscribePush(subscription: PushSubscriptionJSON) { return this.request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) }); }
+  unsubscribePush(id: string) { return this.request('/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ id }) }); }
   async requestPayout(amount: string) {
     if (!this.isDemo) return this.request('/payouts', { method: 'POST', body: JSON.stringify({ amount }) });
     const current = demoPortal(this.demo, 'all'), amountCents = amountToCents(amount);
@@ -99,6 +103,19 @@ export class PortalClient {
       return URL.createObjectURL(await response.blob());
     } catch { throw new ApiError('Não foi possível abrir este comprovante.'); }
   }
+}
+export async function readAvatar(file: File): Promise<string> {
+  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || !file.size || file.size > 4 * 1024 * 1024) throw new ApiError('Escolha uma foto PNG, JPG ou WEBP de até 4 MB.');
+  let bitmap: ImageBitmap;
+  try { bitmap = await createImageBitmap(file); } catch { throw new ApiError('Não foi possível abrir essa foto. Escolha outra imagem.'); }
+  try {
+    const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
+    const context = canvas.getContext('2d');
+    if (!context) throw new ApiError('Não foi possível preparar a foto neste navegador.');
+    const size = Math.min(bitmap.width, bitmap.height);
+    context.drawImage(bitmap, (bitmap.width - size) / 2, (bitmap.height - size) / 2, size, size, 0, 0, 256, 256);
+    return validateAvatar(canvas.toDataURL('image/webp', .85));
+  } finally { bitmap.close(); }
 }
 export function readReceipt(file: File): Promise<ReceiptInput> {
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || !file.size || file.size > MAX_RECEIPT_BYTES) return Promise.reject(new ApiError('Use um print PNG, JPG ou WEBP de até 2 MB.'));

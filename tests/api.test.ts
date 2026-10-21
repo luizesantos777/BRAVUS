@@ -11,6 +11,9 @@ import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
 import { businessToday } from '../src/domain.ts';
 import { loadAdminKey } from '../server/admin-key.ts';
+import webpush from 'web-push';
+import { createECDH, randomBytes } from 'node:crypto';
+import { PushService, loadPushKeys } from '../server/push.ts';
 
 const tokenA = 'fixture_attendant_a_012345678901234567890';
 const tokenB = 'fixture_attendant_b_012345678901234567890';
@@ -20,13 +23,20 @@ const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checko
 async function fixture(t: TestContext) {
   const store = new PortalStore(':memory:');
   const a = store.createAttendant('Ana Teste', 1000, tokenA), b = store.createAttendant('Bruno Teste', 1000, tokenB);
-  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey });
+  const deliveries: { endpoint: string; payload: string }[] = [];
+  const push = new PushService(store, webpush.generateVAPIDKeys(), async (subscription, payload, options) => {
+    const request = webpush.generateRequestDetails(subscription, String(payload), options);
+    assert.equal(request.method, 'POST'); assert.ok(request.body instanceof Buffer); assert.equal(request.body.includes(Buffer.from(String(payload))), false);
+    deliveries.push({ endpoint: subscription.endpoint, payload: String(payload) });
+    return { statusCode: 201, body: '', headers: {} };
+  });
+  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey, push });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close(); resolve(); }); server.closeAllConnections(); }));
   const call = (path: string, token = tokenA, init: RequestInit = {}) => fetch(base + path, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers } });
   const submit = (payload: unknown = batch(), key = 'fixture_request_key_01', token = tokenA) => call('/api/sales', token, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(payload) });
-  return { store, a, b, call, submit };
+  return { store, a, b, call, submit, push, deliveries };
 }
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
   const { call, submit } = await fixture(t);
@@ -95,7 +105,7 @@ test('alterar perfil não muda comissão ou token e ranking não expõe PIX ou t
   const ranking = await (await call('/api/ranking', tokenB)).json();
   assert.equal(ranking[0].name, 'Ana Atualizada');
   assert.equal(JSON.stringify(ranking).includes('pix@example.com'), false);
-  assert.deepEqual(Object.keys(ranking[0]).sort(), ['count', 'grossCents', 'id', 'mine', 'name']);
+  assert.deepEqual(Object.keys(ranking[0]).sort(), ['count', 'grossCents', 'id', 'mine', 'name', 'photoUrl']);
 });
 test('repasse exige PIX e saldo; reserva é mantida quando o repasse é pago', async t => {
   const { call, submit, store } = await fixture(t); await submit();
@@ -123,9 +133,12 @@ test('banco persistente mantém dados no reinício e guarda somente hash do toke
   try {
     let store = new PortalStore(file); const account = store.createAttendant('Persistente', 1000, tokenA);
     store.recordSales({ id: account.id }, batch(), 'fixture_persistent_request');
+    store.saveProfile({ id: account.id }, { name: 'Persistente', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', photoUrl: `data:image/png;base64,${image.base64}`, saleAlertTemplate: '{nome}: {valor}' });
     store.close();
     store = new PortalStore(file);
-    assert.equal(store.portal(store.authenticate(tokenA)).sales.length, 1); store.close();
+    assert.equal(store.portal(store.authenticate(tokenA)).sales.length, 1);
+    assert.equal(store.profile(store.authenticate(tokenA)).saleAlertTemplate, '{nome}: {valor}');
+    assert.equal(store.profile(store.authenticate(tokenA)).photoUrl, `data:image/png;base64,${image.base64}`); store.close();
     assert.equal(readFileSync(file).includes(Buffer.from(tokenA)), false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -247,5 +260,65 @@ test('chave administrativa persiste com permissão privada e backup contém vend
     const copy = new PortalStore(output), auth = copy.authenticate(tokenA), sale = copy.sales(auth)[0];
     assert.equal(sale.amountCents, 30000); assert.ok(copy.receipt(auth, sale.receiptId).bytes.length > 0);
     copy.close(); store.close();
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('foto e alerta são salvos por atendente, persistem e a foto aparece no ranking', async t => {
+  const { call, submit, store, a } = await fixture(t);
+  const photoUrl = `data:image/png;base64,${image.base64}`;
+  const fields = { name: 'Ana Foto', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana', photoUrl, saleAlertTemplate: '{nome}: {qtd} venda(s) de {valor}' };
+  assert.equal((await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify(fields) })).status, 200);
+  assert.equal(store.profile({ id: a.id }).photoUrl, photoUrl);
+  const other = await (await call('/api/portal', tokenB)).json();
+  assert.equal(other.profile.photoUrl, '');
+  assert.equal(other.profile.saleAlertTemplate.includes('✅'), true);
+  await submit();
+  const ranking = await (await call('/api/ranking', tokenB)).json();
+  assert.equal(ranking[0].photoUrl, photoUrl); assert.equal(JSON.stringify(ranking).includes('ana@example.com'), false);
+  assert.equal((await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ ...fields, photoUrl: 'data:image/svg+xml;base64,PHN2Zz4=' }) })).status, 400);
+  assert.equal(store.profile({ id: a.id }).photoUrl, photoUrl);
+});
+
+function pushFixtureSubscription() {
+  const curve = createECDH('prime256v1'); curve.generateKeys();
+  return { endpoint: 'https://fcm.googleapis.com/fcm/send/fixture-device', keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+}
+test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
+  const { call, submit, deliveries, store, a, b } = await fixture(t), subscription = pushFixtureSubscription();
+  const registered = await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(subscription) });
+  assert.equal(registered.status, 201); const { id } = await registered.json();
+  const own = await (await call('/api/push/config')).json(), other = await (await call('/api/push/config', tokenB)).json();
+  assert.deepEqual(own.subscriptionIds, [id]); assert.deepEqual(other.subscriptionIds, []);
+  assert.equal(Object.hasOwn(own, 'privateKey'), false);
+  await call('/api/push/subscriptions', tokenB, { method: 'DELETE', body: JSON.stringify({ id }) });
+  assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 1);
+  assert.ok(JSON.parse(deliveries[0].payload).body.includes('300,00'));
+  await submit(); assert.equal(deliveries.length, 1);
+  await call('/api/push/subscriptions', tokenA, { method: 'DELETE', body: JSON.stringify({ id }) });
+  assert.deepEqual((await (await call('/api/push/config')).json()).subscriptionIds, []);
+  for (const endpoint of ['https://127.0.0.1/private', 'http://fcm.googleapis.com/x', 'https://fcm.googleapis.com.evil.example/x', [subscription.endpoint], null]) assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify({ ...subscription, endpoint }) })).status, 400);
+  assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify({ ...subscription, keys: { auth: [subscription.keys.auth], p256dh: subscription.keys.p256dh } }) })).status, 400);
+  assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(subscription) })).status, 201);
+  store.rotateToken(a.id);
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM push_subscriptions WHERE attendant_id = ?').get(a.id)?.count, 0);
+  assert.equal((await call('/api/push/config', tokenA)).status, 401);
+  assert.equal((await call('/api/push/subscriptions', tokenB, { method: 'POST', body: JSON.stringify(subscription) })).status, 201);
+  store.setAttendantActive(b.id, { active: false });
+  assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM push_subscriptions WHERE attendant_id = ?').get(b.id)?.count, 0);
+});
+test('push expirado é removido sem desfazer a venda; credenciais VAPID persistem de forma privada', async t => {
+  const { call, submit, push } = await fixture(t);
+  await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(pushFixtureSubscription()) });
+  push.sender = async () => { throw Object.assign(new Error('expired fixture'), { statusCode: 410 }); };
+  assert.equal((await submit()).status, 200);
+  assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
+  assert.deepEqual((await (await call('/api/push/config')).json()).subscriptionIds, []);
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-push-keys-')), file = join(directory, 'keys.json');
+  try {
+    const keys = loadPushKeys(file, {});
+    assert.deepEqual(loadPushKeys(file, {}), keys); assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: keys.privateKey }), keys);
+    assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey }));
+    assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: webpush.generateVAPIDKeys().privateKey }));
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -46,6 +46,22 @@ O portal do atendente não tem cadastro nem formulário para digitar tokens. O a
 
 Para um pagamento, confira o PIX apresentado, efetue a transferência no seu banco e só então registre a confirmação no BRAVUS. Cancelar uma solicitação pendente libera o saldo reservado. Essas operações exigem a chave administrativa; um token de atendente não tem permissão de administração.
 
+## Meus Dados e PIX
+
+A aba segue a referência fornecida com a identidade BRAVUS em preto, verde e dourado: notificações no aparelho, foto, nome/apelido, alerta de venda com prévia, chave PIX e titular. Para abrir diretamente, acrescente `?aba=perfil` antes do fragmento do link individual; na demonstração, use `https://luizesantos777.github.io/BRAVUS/?aba=perfil`.
+
+O atendente pode alterar seu apelido, foto e PIX sem modificar seu ID, comissão ou token. A foto aceita PNG, JPEG ou WEBP de até 4 MB e é recortada ao centro e reduzida para 256 × 256 antes do envio. O servidor valida formato e limite de 256 KB; SVG e endereços externos são recusados. A foto aparece no perfil e no ranking para os demais atendentes. PIX e titular permanecem privados.
+
+O texto do alerta admite `{valor}`, `{qtd}` e `{nome}`; a prévia se atualiza enquanto você escreve. O envio de um lote usa o total e a quantidade de vendas efetivamente salvas. O campo de PIX identifica o tipo e permite confirmá-lo, inclusive quando CPF e telefone têm o mesmo número de dígitos. **Salvar Alterações** persiste os dados na API; na demonstração, salva somente naquele navegador.
+
+### Notificações de venda
+
+O botão pede permissão ao navegador e ativa os alertas apenas naquele aparelho. O uso real exige HTTPS, navegador com suporte a Web Push e API hospedada. No iPhone, Web Push depende de um aplicativo web instalado na Tela de Início; esta versão não inclui um manifesto de instalação. O sistema mostra quando o modo atual não oferece notificações ou a permissão foi bloqueada. Na demonstração, somente os lançamentos de teste feitos naquele navegador exibem notificações locais; não há recebimento de vendas de terceiros.
+
+Na API, as inscrições pertencem ao atendente autenticado, com limite de cinco aparelhos. Cada lote novo salvo envia o alerta personalizado aos seus aparelhos, mesmo com a página fechada, conforme suporte e permissões do dispositivo. Uma repetição idempotente não dispara novamente. Erros de entrega não desfazem a venda; inscrições expiradas são removidas. Trocar o token ou revogar o acesso remove as inscrições, exigindo nova ativação pelos aparelhos autorizados.
+
+O servidor cria `push-keys.json` ao lado do banco, com permissão `600`, e reutiliza esse par de chaves VAPID ao reiniciar. Preserve esse arquivo em backup privado separado do SQLite. Também é possível configurar `BRAVUS_PUSH_PUBLIC_KEY` e `BRAVUS_PUSH_PRIVATE_KEY` nas variáveis privadas da hospedagem, sempre juntas e sem prefixo `VITE_`. Somente a chave pública é fornecida à interface. `BRAVUS_PUSH_SUBJECT` aceita o endereço HTTPS do responsável ou um contato `mailto:`; por padrão usa a URL deste repositório. As assinaturas e o conteúdo são enviados pelo protocolo Web Push criptografado aos provedores dos navegadores; a hospedagem precisa permitir essas conexões de saída. O proxy HTTPS do ambiente é respeitado quando configurado.
+
 Para desenvolvimento com recarga da interface, use dois terminais:
 
 ```sh
@@ -68,7 +84,7 @@ npm run manage -- create-attendant --name "Nome do atendente" --commission 10 --
 
 O comando gera 32 bytes aleatórios para o token, salva somente o hash no banco e grava o link do atendente em um arquivo privado em `.bravus/invites/`. O token não aparece nos logs. O operador deve obter esse arquivo por um canal privado da hospedagem e entregar o link apenas ao atendente. Não publique os convites, o banco ou backups no GitHub. A API de criação de atendentes exige a chave administrativa.
 
-O portal aceita links no formato `/#/atendente/<TOKEN_PRIVADO>` e `/atendente/<TOKEN_PRIVADO>`. No GitHub Pages, use o formato com `#`, preservando o caminho `/BRAVUS/`. A aba Meus Dados e PIX permite copiar o link do próprio atendente.
+O portal aceita links no formato `/#/atendente/<TOKEN_PRIVADO>` e `/atendente/<TOKEN_PRIVADO>`. No GitHub Pages, use o formato com `#`, preservando o caminho `/BRAVUS/`. O rodapé permite copiar o link do próprio atendente.
 
 Listar IDs e nomes, sem revelar os tokens:
 
@@ -107,7 +123,7 @@ Para cancelar uma solicitação pendente, use `--status cancelled`. Marcar um re
 - Todas as vendas geram comissão, sem meta diária ou faturamento mínimo. O cálculo se aplica também às vendas já registradas. Os dias seguem o fuso America/Sao_Paulo.
 - Custos ADS e a taxa diária de saque são descontados normalmente e podem gerar saldo negativo.
 - Solicitações pendentes reservam o saldo; confirmar o pagamento não desconta o valor novamente. O saldo não permite solicitar um repasse maior que o disponível.
-- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra apenas nome e volume de vendas de atendentes ativos, sem tokens ou PIX.
+- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas de atendentes ativos, sem tokens ou PIX.
 - Cada venda exige um print PNG, JPEG ou WEBP de até 2 MB. Cada envio aceita até 10 vendas e 12 MB no total, de forma atômica.
 - Um identificador de envio evita duplicar vendas em tentativas repetidas com o mesmo conteúdo.
 
@@ -131,7 +147,7 @@ O comando abaixo usa a API de backup online do SQLite e pode rodar com o servido
 npm run manage -- backup
 ```
 
-Para definir o destino, use `--output /caminho/privado/backup.sqlite`. Esse backup contém dados pessoais: mantenha-o fora dos diretórios públicos. A chave administrativa e os arquivos de convites devem ser preservados separadamente em um local privado. A chave administrativa não faz parte do banco.
+Para definir o destino, use `--output /caminho/privado/backup.sqlite`. Esse backup contém dados pessoais, fotos e inscrições de notificações: mantenha-o fora dos diretórios públicos. A chave administrativa, as chaves VAPID de notificações e os arquivos de convites devem ser preservados separadamente em um local privado. Essas chaves não fazem parte do banco.
 
 A opção mais simples é servir interface e API no mesmo servidor, usando o endereço da hospedagem nos convites. Para manter a interface no GitHub Pages e hospedar apenas a API em outro domínio:
 
@@ -149,7 +165,10 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | --- | --- | --- |
 | `GET /api/health` | Nenhuma | Verificar servidor e conexão SQLite |
 | `GET /api/portal?period=today` | Token do atendente | Perfil, vendas, custos, extrato e repasses próprios |
-| `PATCH /api/profile` | Token do atendente | Atualizar dados pessoais e PIX |
+| `PATCH /api/profile` | Token do atendente | Atualizar nome, foto, alerta de venda e PIX |
+| `GET /api/push/config` | Token do atendente | Chave VAPID pública e IDs de inscrições próprias |
+| `POST /api/push/subscriptions` | Token do atendente | Cadastrar inscrição Web Push do aparelho |
+| `DELETE /api/push/subscriptions` | Token do atendente | Remover inscrição própria pelo ID |
 | `POST /api/sales` | Token do atendente | Gravar lote atômico; requer `Idempotency-Key` |
 | `GET /api/receipts/:id` | Token do proprietário | Obter comprovante privado |
 | `GET /api/ranking?period=today` | Token do atendente | Ranking sem dados privados |
@@ -171,7 +190,7 @@ A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o
 npm run build:pages
 ```
 
-O comando gera `docs/index.html` com JavaScript, CSS e ícone incorporados, além de `.nojekyll`. O Pages usa a branch `main`, pasta `/docs`. Envie os arquivos gerados junto com o código. A geração estática não inclui SQLite, convites, comprovantes reais ou dados do navegador.
+O comando gera `docs/index.html` com JavaScript, CSS e ícone incorporados, além de `.nojekyll`, `notifications-worker.js` e `favicon.svg` para as notificações. O Pages usa a branch `main`, pasta `/docs`. Envie os arquivos gerados junto com o código. A geração estática não inclui SQLite, convites, comprovantes reais, inscrições ou dados do navegador. O service worker é registrado somente ao ativar notificações e não armazena tokens, PIX ou páginas privadas em cache.
 
 ## Testar
 
@@ -185,12 +204,15 @@ Os testes cobrem comissões sem faturamento mínimo, compatibilidade com registr
 
 Também são verificados todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
 
+O perfil tem cobertura de upload, prévia, persistência após recarregar, PIX, foto no ranking e mensagem personalizada. Os testes de navegador ativam/desativam notificações de demonstração e consultam os alertas locais do service worker, com permissão concedida no Chromium. Os testes da API validam inscrições por atendente, rejeição de endpoints externos arbitrários, criptografia real do payload e limpeza de inscrições expiradas; o transporte externo é substituído por uma função de teste. Isso não valida a entrega em aparelhos físicos pelos provedores.
+
 Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navegador distribuído pelo Playwright, instale com `npx playwright install chromium` e execute sem essa variável.
 
 ## Estrutura
 
 - `src/Brand.tsx`, `src/brand.css`, `src/assets/bravus-brasil.webp`: marca BRAVUS Brasil e identidade visual em preto, dourado, verde e branco, seguindo a referência enviada pelo responsável. A imagem é incorporada ao build para funcionar também no GitHub Pages.
 - `src/App.tsx`, `src/styles.css`: interface do portal.
+- `src/Profile.tsx`, `src/profile.css`, `src/notifications.ts`: perfil BRAVUS, foto, PIX, alerta e ativação de notificações.
 - `src/domain.ts`: tipos e regras financeiras compartilhados.
 - `src/client.ts`: acesso à API e demonstração isolada.
 - `src/Admin.tsx`, `src/admin-client.ts`: painel administrativo e cliente autenticado.
@@ -198,6 +220,7 @@ Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navega
 - `server/http.ts`, `server/index.ts`: API e servidor da interface.
 - `server/manage.ts`: administração dos atendentes, taxas, custos e repasses pelo operador.
 - `server/admin-key.ts`: criação e carregamento seguro da chave administrativa.
+- `server/push.ts`, `public/notifications-worker.js`: inscrições privadas e envio/recebimento de notificações Web Push.
 - `render.yaml`: implantação de interface e API com SQLite em disco persistente.
 - `tests/`: testes de domínio, API e navegador.
 

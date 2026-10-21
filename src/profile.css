@@ -1,0 +1,67 @@
+.profile-panel .section-title h2 { font-size: 14px; text-transform: none; letter-spacing: -.15px; }
+.profile-description { color: #a1ad94; font-size: 11px; line-height: 1.8; margin: 4px 0 20px; }
+.profile-notifications { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 13px; background: #172015; border: 1px solid #303e27; border-radius: 14px; padding: 18px; margin-bottom: 19px; }
+.notification-symbol { display: grid; place-items: center; width: 38px; height: 38px; background: #232e1d; color: #a3b38f; border: 1px solid #405033; border-radius: 11px; }
+.notification-copy > div { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; }
+.notification-copy h3 { font-size: 12px; line-height: 1.6; }
+.notification-badge { display: inline-block; color: #a9b49a; border: 1px solid #3c4932; border-radius: 20px; padding: 3px 8px; font-size: 9px; font-weight: 600; background: #25301e; }
+.notification-badge.enabled { color: #a3d2a3; border-color: #3a603b; background: #203e25; }
+.notification-copy > p { color: #a0b18f; font-size: 11px; line-height: 1.8; margin-top: 3px; }
+.notification-copy > .notification-note { color: #e6c874; margin-top: 8px; }
+.profile-notifications > .button { font-size: 11px; min-height: 34px; }
+.profile-photo-row { display: flex; align-items: center; gap: 16px; padding: 16px; border: 1px solid #303c27; background: #0b1009; border-radius: 13px; margin-bottom: 17px; }
+.profile-avatar { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 60px; height: 60px; overflow: hidden; border-radius: 50%; background: #1e3018; color: #d9b94f; font-size: 22px; font-weight: 700; }
+.profile-avatar > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.profile-photo-row .button { min-height: 31px; padding: 7px 12px; font-size: 11px; }
+.profile-photo-row p { color: #889b78; font-size: 10px; line-height: 1.7; margin-top: 8px; }
+.profile-remove-photo { color: #c5b67b; font-size: 10px; padding: 0; margin-top: 6px; text-decoration: underline; }
+.profile-field { display: block; font-size: 11px; font-weight: 700; color: #c2cdb6; margin-top: 16px; }
+.profile-field > input { display: block; width: 100%; height: 36px; padding: 9px 12px; margin-top: 6px; border-radius: 11px; }
+.profile-field > input::placeholder { color: #839475; font-size: 11px; }
+.profile-sale-alert { background: #121a0f; border: 1px solid #3c4a2a; border-radius: 12px; padding: 13px; margin: 16px 0; }
+.alert-heading { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 9px; }
+.alert-heading h3 { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #d0d8c5; }
+.alert-heading svg { color: #c3a74c; }
+.alert-heading > span { font-size: 9px; color: #859474; }
+.profile-sale-alert > input { width: 100%; height: 35px; font-size: 11px; font-weight: 600; }
+.profile-sale-alert > p { color: #8d9f7a; font-size: 9px; line-height: 1.9; margin-top: 7px; }
+.profile-sale-alert code { color: #dec97e; font-family: ui-monospace, monospace; font-weight: 600; }
+.sale-alert-preview { display: flex; align-items: flex-start; gap: 7px; padding: 10px 11px; border: 1px solid #526034; border-radius: 9px; background: #222c17; color: #d9c987; margin-top: 10px; font-size: 10px; line-height: 1.7; overflow-wrap: anywhere; }
+.sale-alert-preview > svg { margin-top: 2px; flex-shrink: 0; }
+.sale-alert-preview strong { font-weight: 600; }
+.profile-pix-type { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 8px; font-size: 9px; color: #90a17c; }
+.profile-pix-type > select { height: 27px; padding: 4px 8px; border-radius: 7px; font-size: 10px; }
+.profile-save-actions { display: flex; justify-content: flex-end; margin-top: 24px; }
+.profile-save-actions .button { min-width: 162px; min-height: 35px; }
+.avatar { padding: 0; overflow: hidden; }
+.avatar > .profile-avatar { width: 100%; height: 100%; font-size: 13px; }
+.ranking-avatar { width: 34px; height: 34px; font-size: 13px; }
+
+@media (max-width: 700px) {
+  .profile-notifications { grid-template-columns: 38px minmax(0, 1fr); padding: 15px; gap: 11px; }
+  .profile-notifications > .button { grid-column: 1 / -1; justify-self: stretch; margin-top: 4px; }
+  .profile-notifications > .notification-symbol { align-self: start; margin-top: 2px; }
+}
+@media (max-width: 600px) {
+  .profile-panel .section-title h2 { font-size: 12px; line-height: 1.7; }
+  .profile-panel .section-title { align-items: flex-start; gap: 7px; }
+  .profile-panel .section-title > svg { margin-top: 2px; width: 16px; }
+  .profile-description { font-size: 10px; margin-top: 6px; }
+  .notification-copy h3 { font-size: 11px; }
+  .notification-copy > p { font-size: 10px; margin-top: 6px; }
+  .profile-photo-row { padding: 14px 12px; gap: 12px; }
+  .profile-photo-row > .profile-avatar { width: 52px; height: 52px; font-size: 20px; }
+  .profile-photo-row p { font-size: 9px; max-width: 190px; }
+  .profile-photo-row .button { font-size: 10px; padding: 7px 9px; }
+  .profile-field { font-size: 10px; }
+  .profile-field > input { height: 38px; }
+  .profile-sale-alert { padding: 12px; }
+  .alert-heading { flex-wrap: wrap; gap: 5px; }
+  .alert-heading > span { margin-left: 20px; }
+  .profile-sale-alert > input { font-size: 10px; height: 37px; }
+  .profile-sale-alert > p { font-size: 9px; }
+  .sale-alert-preview { font-size: 10px; }
+  .profile-save-actions .button { width: 100%; min-height: 38px; }
+  .ranking-avatar { width: 29px; height: 29px; }
+  .ranking-row { gap: 8px; }
+}

@@ -3,7 +3,7 @@ export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
 export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
-export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number }
+export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number }
 export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
@@ -13,7 +13,7 @@ export interface SaleInput { amount: string; checkoutId: string; time: string; n
 export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; debtCents: number; count: number }
 export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
-export interface RankingEntry { id: string; name: string; grossCents: number; count: number; mine: boolean }
+export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
 export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[] }
@@ -22,6 +22,35 @@ export interface DemoData { version: 1; profile: Profile; sales: Sale[]; payouts
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEMO_KEY = 'bravus.attendant.demo.v1';
+export const DEFAULT_SALE_ALERT = '✅ Venda de {valor} lançada com sucesso!';
+export const MAX_AVATAR_BYTES = 256 * 1024;
+export function renderSaleAlert(template: string, amountCents: number, count: number, name: string): string {
+  const values: Record<string, string> = { valor: money(amountCents), qtd: String(count), nome: name };
+  return template.replace(/\{(valor|qtd|nome)\}/g, (_match, key: string) => values[key]);
+}
+export function detectPixType(value: string): PixType {
+  const key = value.trim(), digits = key.replace(/\D/g, '');
+  if (!key) return '';
+  if (key.includes('@')) return 'email';
+  if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(key)) return 'random';
+  if (key.startsWith('+') || /[()]/.test(key)) return 'phone';
+  if (digits.length === 14) return 'cnpj';
+  if (digits.length === 11 && !/^(\d)\1+$/.test(digits)) {
+    const check = (length: number) => { const sum = [...digits.slice(0, length)].reduce((total, digit, index) => total + Number(digit) * (length + 1 - index), 0); const mod = (sum * 10) % 11; return mod === 10 ? 0 : mod; };
+    if (check(9) === Number(digits[9]) && check(10) === Number(digits[10])) return 'cpf';
+  }
+  return 'phone';
+}
+export function validateAvatar(value: string): string {
+  if (!value) return '';
+  const match = value.match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$/);
+  if (!match || value.length > Math.ceil(MAX_AVATAR_BYTES / 3) * 4 + 40) throw new Error('Use uma foto PNG, JPG ou WEBP de até 256 KB após o ajuste.');
+  let bytes: string;
+  try { bytes = atob(match[2]); } catch { throw new Error('A foto de perfil é inválida.'); }
+  const valid = match[1] === 'png' && bytes.startsWith('\x89PNG\r\n\x1a\n') || match[1] === 'jpeg' && bytes.startsWith('\xff\xd8\xff') || match[1] === 'webp' && bytes.startsWith('RIFF') && bytes.slice(8, 12) === 'WEBP';
+  if (!valid || bytes.length > MAX_AVATAR_BYTES) throw new Error('A foto de perfil é inválida.');
+  return value;
+}
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 export function checkoutFee(amountCents: number, checkout: Checkout): number {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Informe um valor de venda válido.');
@@ -89,7 +118,7 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
   return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, debtCents, count: filtered.length };
 }
-export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> {
+export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> & Partial<Pick<Profile, 'photoUrl' | 'saleAlertTemplate'>> {
   if (!value || typeof value !== 'object') throw new Error('Dados de perfil inválidos.');
   const source = value as Record<string, unknown>;
   function field(name: string, max: number) {
@@ -109,10 +138,20 @@ export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' 
     if (pixType === 'phone' && ![10, 11, 12, 13].includes(digits.length)) throw new Error('Informe um telefone PIX válido, com DDD.');
     if (pixType === 'random' && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pixKey)) throw new Error('Informe uma chave aleatória PIX válida.');
   }
-  return { name, email, phone, pixType, pixKey, pixOwner };
+  const extra: Partial<Pick<Profile, 'photoUrl' | 'saleAlertTemplate'>> = {};
+  if (source.photoUrl !== undefined) {
+    if (typeof source.photoUrl !== 'string') throw new Error('A foto de perfil é inválida.');
+    extra.photoUrl = validateAvatar(source.photoUrl);
+  }
+  if (source.saleAlertTemplate !== undefined) {
+    if (typeof source.saleAlertTemplate !== 'string' || !source.saleAlertTemplate.trim() || source.saleAlertTemplate.length > 240) throw new Error('O alerta de venda deve ter de 1 a 240 caracteres.');
+    if (/\{(?!valor\}|qtd\}|nome\})[^}]*\}/.test(source.saleAlertTemplate)) throw new Error('Use {valor}, {qtd} e {nome} como variáveis do alerta.');
+    extra.saleAlertTemplate = source.saleAlertTemplate.trim();
+  }
+  return { name, email, phone, pixType, pixKey, pixOwner, ...extra };
 }
 export function demoInitial(): DemoData {
-  return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000 }, sales: [], payouts: [], costs: [], receipts: {} };
+  return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000, photoUrl: '', saleAlertTemplate: DEFAULT_SALE_ALERT }, sales: [], payouts: [], costs: [], receipts: {} };
 }
 export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0, fixedFeeCents: 0, minAmountCents: 1 }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }];
 export function demoPortal(data: DemoData, period: Period): Portal {

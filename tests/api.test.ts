@@ -10,15 +10,17 @@ import { join } from 'node:path';
 import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
 import { businessToday } from '../src/domain.ts';
+import { loadAdminKey } from '../server/admin-key.ts';
 
 const tokenA = 'fixture_attendant_a_012345678901234567890';
 const tokenB = 'fixture_attendant_b_012345678901234567890';
+const adminKey = 'fixture_admin_012345678901234567890123456789';
 const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
 async function fixture(t: TestContext) {
   const store = new PortalStore(':memory:');
   const a = store.createAttendant('Ana Teste', 1000, 20000, tokenA), b = store.createAttendant('Bruno Teste', 1000, 20000, tokenB);
-  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'] });
+  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close(); resolve(); }); server.closeAllConnections(); }));
@@ -109,5 +111,76 @@ test('operador cria token e convite privados pelo comando de administração', (
     const auth = store.authenticate(token);
     assert.equal(store.profile(auth).commissionBps, 2999);
     assert.equal(auth.id, invitation.attendantId); store.close();
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('administração exige chave própria; criação, rotação e revogação preservam histórico', async t => {
+  const { call, submit, a } = await fixture(t);
+  assert.equal((await call('/api/admin/dashboard')).status, 401);
+  assert.equal((await call('/api/admin/attendants', tokenB, { method: 'POST', body: JSON.stringify({ name: 'Intruso', commission: '100', dailyGoal: '1' }) })).status, 401);
+  const created = await call('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Nova pessoa', commission: '29.99', dailyGoal: '200' }) });
+  assert.equal(created.status, 201);
+  const invitation = await created.json();
+  const portal = await (await call('/api/portal', invitation.token)).json();
+  assert.equal(portal.profile.commissionBps, 2999);
+  await submit();
+  const rotated = await (await call(`/api/admin/attendants/${a.id}/token`, adminKey, { method: 'POST' })).json();
+  assert.equal((await call('/api/portal', tokenA)).status, 401);
+  assert.equal((await (await call('/api/portal', rotated.token)).json()).sales.length, 1);
+  assert.equal((await call(`/api/admin/attendants/${a.id}`, adminKey, { method: 'PATCH', body: JSON.stringify({ active: false }) })).status, 200);
+  assert.equal((await call('/api/portal', rotated.token)).status, 401);
+  assert.equal((await call(`/api/admin/attendants/${a.id}/token`, adminKey, { method: 'POST' })).status, 400);
+  await call(`/api/admin/attendants/${a.id}`, adminKey, { method: 'PATCH', body: JSON.stringify({ active: true }) });
+  assert.equal((await call('/api/portal', rotated.token)).status, 200);
+  const dashboardResponse = await call('/api/admin/dashboard', adminKey);
+  assert.equal(dashboardResponse.headers.get('cache-control'), 'no-store');
+  const dashboard = await dashboardResponse.json();
+  assert.equal(dashboard.attendants.length, 3);
+  assert.equal(JSON.stringify(dashboard).includes(rotated.token), false);
+  assert.equal(JSON.stringify(dashboard).includes('token_hash'), false);
+});
+
+test('administração valida custos e taxas; alterações não reescrevem vendas anteriores', async t => {
+  const { call, submit, a } = await fixture(t); await submit();
+  const update = (path: string, body: unknown, method = 'POST') => call(path, adminKey, { method, body: JSON.stringify(body) });
+  assert.equal((await update(`/api/admin/attendants/${a.id}/costs`, { date: businessToday(), ads: '5,00', withdrawalFee: '2' })).status, 200);
+  assert.deepEqual(await (await call(`/api/admin/attendants/${a.id}/costs?date=${businessToday()}`, adminKey)).json(), { date: businessToday(), adsCents: 500, withdrawalFeeCents: 200 });
+  assert.equal((await update(`/api/admin/attendants/${a.id}/costs`, { date: 'bad', ads: '-1', withdrawalFee: '0' })).status, 400);
+  assert.equal((await update('/api/admin/attendants', { name: 'Pessoa', commission: '101', dailyGoal: '200' })).status, 400);
+  assert.equal((await update('/api/admin/checkouts/main', { name: 'Principal', fee: '3.5' }, 'PATCH')).status, 200);
+  const data = await (await call('/api/portal')).json();
+  assert.equal(data.finance.availableCents, 2300); assert.equal(data.sales[0].feeCents, 0);
+  assert.equal(data.checkouts.find((item: { id: string }) => item.id === 'main').feeBps, 350);
+  assert.equal((await update('/api/admin/checkouts/main', { name: 'Principal', fee: '-1' }, 'PATCH')).status, 400);
+});
+
+test('administração confere destino PIX e confirma ou cancela repasse uma única vez', async t => {
+  const { call, submit } = await fixture(t); await submit();
+  await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'pix@example.com', pixOwner: 'Ana' }) });
+  const requested = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+  const dashboard = await (await call('/api/admin/dashboard', adminKey)).json();
+  assert.equal(dashboard.payouts[0].pixKey, 'pix@example.com');
+  const finish = (status: string) => call('/api/admin/payouts/' + requested.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Conferido' }) });
+  assert.equal((await finish('cancelled')).status, 200);
+  assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 3000);
+  assert.equal((await finish('paid')).status, 400);
+  const next = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+  assert.equal((await call('/api/admin/payouts/' + next.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'paid', note: 'Pagamento conferido' }) })).status, 200);
+  assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 1000);
+});
+
+test('chave administrativa persiste com permissão privada e backup contém vendas e comprovantes', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-backup-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'backup.sqlite'), keyPath = join(directory, 'admin.key');
+  try {
+    const key = loadAdminKey(keyPath);
+    assert.equal(loadAdminKey(keyPath), key); assert.equal(statSync(keyPath).mode & 0o777, 0o600);
+    assert.throws(() => loadAdminKey(keyPath, 'short'));
+    const store = new PortalStore(database); store.createAttendant('Ana', 1000, 20000, tokenA);
+    store.recordSales(store.authenticate(tokenA), batch(), 'fixture_backup_request_key');
+    const logs = execFileSync(process.execPath, ['server/manage.ts', 'backup', '--output', output], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: database } });
+    assert.equal(logs.includes(tokenA), false); assert.equal(statSync(output).mode & 0o777, 0o600);
+    const copy = new PortalStore(output), auth = copy.authenticate(tokenA), sale = copy.sales(auth)[0];
+    assert.equal(sale.amountCents, 30000); assert.ok(copy.receipt(auth, sale.receiptId).bytes.length > 0);
+    copy.close(); store.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

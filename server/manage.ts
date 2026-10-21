@@ -1,6 +1,7 @@
 import { resolve, dirname } from 'node:path';
 import { mkdirSync, openSync, writeFileSync, closeSync, unlinkSync } from 'node:fs';
 import { PortalStore } from './store.ts';
+import { backup } from 'node:sqlite';
 import { amountToCents, percentageToBps } from '../src/domain.ts';
 
 const [command, ...args] = process.argv.slice(2);
@@ -22,6 +23,14 @@ try {
       writeFileSync(file, JSON.stringify({ attendantId: id, name, url: url.href }, null, 2));
       console.log(`Atendente criado. Convite privado salvo em ${output}. O token não é exibido nos logs.`);
     } catch (error) { unlinkSync(output); throw error; } finally { closeSync(file); }
+  } else if (command === 'backup') {
+    const output = resolve(flag('output', '.bravus/backups/' + new Date().toISOString().replace(/[:.]/g, '-') + '.sqlite'));
+    if (!output.endsWith('.sqlite')) throw new Error('O backup deve usar a extensão .sqlite e um destino privado.');
+    mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
+    const file = openSync(output, 'wx', 0o600); closeSync(file);
+    try { await backup(store.db, output); }
+    catch (error) { unlinkSync(output); throw error; }
+    console.log(`Backup consistente do banco salvo em ${output}. Proteja esse arquivo como os dados originais.`);
   } else if (command === 'list-attendants') {
     console.log(JSON.stringify(store.db.prepare('SELECT id, name, commission_bps AS commissionBps, daily_goal_cents AS dailyGoalCents, active FROM attendants').all(), null, 2));
   } else if (command === 'set-costs') {
@@ -39,6 +48,6 @@ try {
     const result = store.db.prepare('UPDATE attendants SET active = 0 WHERE id = ?').run(flag('id'));
     if (!result.changes) throw new Error('Atendente não encontrado.');
     console.log('Acesso do atendente revogado; histórico preservado.');
-  } else throw new Error('Comandos: create-attendant, list-attendants, set-costs, set-checkout, mark-payout, revoke-attendant. Consulte o README.');
+  } else throw new Error('Comandos: create-attendant, list-attendants, set-costs, set-checkout, mark-payout, revoke-attendant, backup. Consulte o README.');
 } catch (error) { console.error((error as Error).message); process.exitCode = 1; }
 finally { store.close(); }

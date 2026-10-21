@@ -1,0 +1,25 @@
+# This blueprint uses a paid web service and persistent disk.
+# Review the price in Render before confirming deployment.
+services:
+  - type: web
+    name: bravus
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    numInstances: 1
+    autoDeploy: false
+    disk:
+      name: bravus-data
+      mountPath: /var/data/bravus
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: 24.19.0
+      - key: NODE_ENV
+        value: production
+      - key: BRAVUS_DB_PATH
+        value: /var/data/bravus/portal.sqlite
+      - key: BRAVUS_ADMIN_KEY
+        generateValue: true

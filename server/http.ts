@@ -2,6 +2,7 @@ import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { PortalError, PortalStore } from './store.ts';
 import { periodLabels } from '../src/domain.ts';
 import type { Period } from '../src/domain.ts';
@@ -20,8 +21,9 @@ function readJson(request: IncomingMessage): Promise<unknown> {
     request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
   });
 }
-export function createPortalServer(store: PortalStore, options: { staticDir?: string; allowedOrigins?: string[] } = {}) {
+export function createPortalServer(store: PortalStore, options: { staticDir?: string; allowedOrigins?: string[]; adminKey?: string } = {}) {
   const failedAuth = new Map<string, { count: number; started: number }>();
+  const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
   return createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -44,6 +46,31 @@ export function createPortalServer(store: PortalStore, options: { staticDir?: st
         for (const [key, value] of failedAuth) if (now - value.started > 60_000) failedAuth.delete(key);
         if ((failedAuth.get(identity)?.count ?? 0) >= 30) throw new PortalError(429, 'Muitas tentativas. Aguarde um minuto e tente novamente.');
         const authorization = request.headers.authorization ?? '';
+        if (url.pathname.startsWith('/api/admin/')) {
+          if (!adminHash) throw new PortalError(503, 'A administração ainda não foi configurada neste servidor.');
+          const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+          if (supplied.length < 32 || supplied.length > 256 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), adminHash)) {
+            const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
+            throw new PortalError(401, 'Chave administrativa inválida.');
+          }
+          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
+          if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') json(response, 200, store.adminDashboard());
+          else if (url.pathname === '/api/admin/attendants' && request.method === 'POST') json(response, 201, store.adminCreateAttendant(await readJson(request)));
+          else if (route?.[1] === 'attendants' && route[3] === 'token' && request.method === 'POST') json(response, 200, store.rotateToken(route[2]));
+          else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'GET') {
+            const date = url.searchParams.get('date') ?? '';
+            json(response, 200, store.adminCosts(route[2], date));
+          }
+          else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'POST') { store.adminSetCosts(route[2], await readJson(request)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'attendants' && !route[3] && request.method === 'PATCH') { store.setAttendantActive(route[2], await readJson(request)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { store.adminSetCheckout(route[2], await readJson(request)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'payouts' && !route[3] && request.method === 'PATCH') {
+            const input = await readJson(request) as { status?: unknown; note?: unknown } | null;
+            if (!input || typeof input.status !== 'string' || typeof input.note !== 'string') throw new PortalError(400, 'Informe o status e a observação do pagamento.');
+            store.markPayout(route[2], input.status as 'paid' | 'cancelled', input.note); json(response, 200, { saved: true });
+          } else throw new PortalError(404, 'Recurso administrativo não encontrado.');
+          return;
+        }
         let auth;
         try { auth = store.authenticate(authorization.startsWith('Bearer ') ? authorization.slice(7) : ''); }
         catch (error) { const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now }); throw error; }

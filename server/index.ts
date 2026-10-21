@@ -1,12 +1,19 @@
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { PortalStore } from './store.ts';
 import { createPortalServer } from './http.ts';
+import { loadAdminKey } from './admin-key.ts';
 
 const port = Number(process.env.PORT ?? '3001');
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT deve ser uma porta válida.');
-const store = new PortalStore(process.env.BRAVUS_DB_PATH ?? resolve('.bravus/portal.sqlite'));
+const databasePath = process.env.BRAVUS_DB_PATH ?? resolve('.bravus/portal.sqlite');
+const store = new PortalStore(databasePath);
+const adminKeyPath = process.env.BRAVUS_ADMIN_KEY_FILE ?? resolve(dirname(databasePath), 'admin.key');
+const adminKey = loadAdminKey(adminKeyPath, process.env.BRAVUS_ADMIN_KEY);
 const allowedOrigins = (process.env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(origin => origin.trim()).filter(Boolean);
-const server = createPortalServer(store, { staticDir: resolve('dist'), allowedOrigins });
-server.listen(port, '0.0.0.0', () => console.log(`BRAVUS API e interface iniciadas na porta ${port}.`));
+const server = createPortalServer(store, { staticDir: resolve('dist'), allowedOrigins, adminKey });
+server.listen(port, '0.0.0.0', () => {
+  console.log(`BRAVUS API e interface iniciadas na porta ${port}.`);
+  console.log(process.env.BRAVUS_ADMIN_KEY ? 'Administração configurada pela variável privada BRAVUS_ADMIN_KEY.' : `Chave administrativa privada disponível em ${adminKeyPath}. Seu valor não é exibido nos logs.`);
+});
 const close = () => server.close(() => { store.close(); process.exit(0); });
 process.on('SIGTERM', close); process.on('SIGINT', close);

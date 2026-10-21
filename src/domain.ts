@@ -14,6 +14,10 @@ export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; pendingGoalCents: number; debtCents: number; count: number }
 export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; todayGrossCents: number; today: string }
 export interface RankingEntry { id: string; name: string; grossCents: number; count: number; mine: boolean }
+export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; dailyGoalCents: number; createdAt: string; salesCount: number; grossCents: number }
+export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
+export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[] }
+export interface Invitation { attendantId: string; name: string; token: string }
 export interface DemoData { version: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;

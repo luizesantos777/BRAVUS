@@ -2,8 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, inPeriod, MAX_RECEIPT_BYTES, validateProfile, validDate } from '../src/domain.ts';
-import type { Checkout, DailyCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, inPeriod, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
@@ -33,6 +33,61 @@ export class PortalStore {
     `);
   }
   close() { this.db.close(); }
+  adminDashboard(): AdminDashboard {
+    const rows = this.db.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.daily_goal_cents AS dailyGoalCents, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all();
+    const attendants = rows.map(row => ({ ...row, active: row.active === 1 })) as unknown as AdminAttendant[];
+    const payouts = this.db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
+    return { attendants, payouts, checkouts: this.checkouts() };
+  }
+  adminCreateAttendant(input: unknown): Invitation {
+    const data = this.adminFields(input);
+    if (typeof data.name !== 'string' || typeof data.commission !== 'string' || typeof data.dailyGoal !== 'string') invalid('Informe nome, comissão e meta diária.');
+    let commission: number, goal: number;
+    try { commission = percentageToBps(data.commission as string); goal = amountToCents(data.dailyGoal as string); }
+    catch (error) { return invalid((error as Error).message); }
+    const name = (data.name as string).trim();
+    const { id, token } = this.createAttendant(name, commission, goal);
+    return { attendantId: id, name, token };
+  }
+  private adminFields(input: unknown): Record<string, unknown> {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid('Dados inválidos.');
+    return input as Record<string, unknown>;
+  }
+  rotateToken(id: string): Invitation {
+    const row = this.db.prepare('SELECT name, active FROM attendants WHERE id = ?').get(id);
+    if (!row) throw new PortalError(404, 'Atendente não encontrado.');
+    if (row.active !== 1) invalid('Reative o atendente antes de gerar um novo token.');
+    const token = `atd_${randomBytes(32).toString('base64url')}`;
+    this.db.prepare('UPDATE attendants SET token_hash = ? WHERE id = ?').run(tokenHash(token), id);
+    return { attendantId: id, name: String(row.name), token };
+  }
+  setAttendantActive(id: string, input: unknown) {
+    const data = this.adminFields(input);
+    if (typeof data.active !== 'boolean') invalid('Informe se o acesso deve ficar ativo ou revogado.');
+    const result = this.db.prepare('UPDATE attendants SET active = ? WHERE id = ?').run(data.active ? 1 : 0, id);
+    if (!result.changes) throw new PortalError(404, 'Atendente não encontrado.');
+  }
+  adminSetCosts(id: string, input: unknown) {
+    const data = this.adminFields(input);
+    if (!this.db.prepare('SELECT id FROM attendants WHERE id = ?').get(id)) throw new PortalError(404, 'Atendente não encontrado.');
+    if (typeof data.date !== 'string' || typeof data.ads !== 'string' || typeof data.withdrawalFee !== 'string') invalid('Informe data, custo ADS e taxa de saque.');
+    const amount = (value: string) => /^0+(?:[.,]0{1,2})?$/.test(value.trim()) ? 0 : amountToCents(value);
+    try { this.setCosts(id, data.date as string, amount(data.ads as string), amount(data.withdrawalFee as string)); }
+    catch (error) { if (error instanceof PortalError) throw error; invalid((error as Error).message); }
+  }
+  adminCosts(id: string, date: string): DailyCost {
+    if (!validDate(date)) invalid('Informe uma data válida.');
+    if (!this.db.prepare('SELECT id FROM attendants WHERE id = ?').get(id)) throw new PortalError(404, 'Atendente não encontrado.');
+    return this.costs({ id }).find(cost => cost.date === date) ?? { date, adsCents: 0, withdrawalFeeCents: 0 };
+  }
+  adminSetCheckout(id: string, input: unknown) {
+    const data = this.adminFields(input);
+    if (!this.db.prepare('SELECT id FROM checkouts WHERE id = ?').get(id)) throw new PortalError(404, 'Checkout não encontrado.');
+    if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
+    let fee: number;
+    try { fee = percentageToBps(data.fee as string); } catch (error) { return invalid((error as Error).message); }
+    this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ? WHERE id = ?').run((data.name as string).trim(), fee, id);
+  }
   createAttendant(name: string, commissionBps: number, dailyGoalCents = 20000, providedToken?: string) {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000 || !Number.isSafeInteger(dailyGoalCents) || dailyGoalCents <= 0) invalid('Nome, comissão e meta são obrigatórios e devem ser válidos.');
     const token = providedToken ?? `atd_${randomBytes(32).toString('base64url')}`;

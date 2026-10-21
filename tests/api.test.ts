@@ -70,11 +70,13 @@ test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são 
   const future = batch(); future.date = '2999-01-01'; assert.equal((await submit(future)).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 0);
 });
-test('alterar perfil não altera comissão e ranking não expõe PIX ou tokens', async t => {
+test('alterar perfil não muda comissão ou token e ranking não expõe PIX ou tokens', async t => {
   const { call, submit } = await fixture(t);
-  const fields = { name: 'Ana Atualizada', email: 'ana@example.com', phone: '', pixType: 'email', pixKey: 'pix@example.com', pixOwner: 'Ana', commissionBps: 10000 };
+  const fields = { name: 'Ana Atualizada', email: 'ana@example.com', phone: '', pixType: 'email', pixKey: 'pix@example.com', pixOwner: 'Ana', commissionBps: 10000, token: 'fixture_unauthorized_token_01234567890123456789' };
   const result = await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify(fields) });
   assert.equal(result.status, 200); assert.equal((await result.json()).commissionBps, 1000);
+  assert.equal((await call('/api/portal', fields.token)).status, 401);
+  assert.equal((await call('/api/portal', tokenA)).status, 200);
   await submit();
   const ranking = await (await call('/api/ranking', tokenB)).json();
   assert.equal(ranking[0].name, 'Ana Atualizada');
@@ -166,6 +168,20 @@ test('administração valida custos e taxas; alterações não reescrevem vendas
   assert.equal(data.finance.availableCents, 2300); assert.equal(data.sales[0].feeCents, 0);
   assert.equal(data.checkouts.find((item: { id: string }) => item.id === 'main').feeBps, 350);
   assert.equal((await update('/api/admin/checkouts/main', { name: 'Principal', fee: '-1' }, 'PATCH')).status, 400);
+});
+
+test('somente a administração define o token; tokens escolhidos exigem formato válido e são exclusivos', async t => {
+  const { call } = await fixture(t);
+  const chosen = 'fixture_owner_selected_012345678901234567890';
+  const create = (token: string, credential = adminKey) => call('/api/admin/attendants', credential, { method: 'POST', body: JSON.stringify({ name: 'Cadastro pelo responsável', commission: '10', token }) });
+  assert.equal((await create(chosen, tokenA)).status, 401);
+  assert.equal((await create('short_token')).status, 400);
+  const created = await create(chosen); assert.equal(created.status, 201);
+  const invitation = await created.json(); assert.equal(invitation.token, chosen);
+  assert.equal((await call('/api/portal', chosen)).status, 200);
+  assert.equal((await create(chosen)).status, 409);
+  const dashboard = await (await call('/api/admin/dashboard', adminKey)).json();
+  assert.equal(JSON.stringify(dashboard).includes(chosen), false);
 });
 
 test('administração confere destino PIX e confirma ou cancela repasse uma única vez', async t => {

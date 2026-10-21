@@ -46,7 +46,10 @@ export class PortalStore {
     try { commission = percentageToBps(data.commission as string); }
     catch (error) { return invalid((error as Error).message); }
     const name = (data.name as string).trim();
-    const { id, token } = this.createAttendant(name, commission);
+    if (data.token !== undefined && typeof data.token !== 'string') invalid('Informe um token válido.');
+    const chosenToken = typeof data.token === 'string' ? data.token.trim() : '';
+    if (chosenToken && !/^[A-Za-z0-9_-]{32,160}$/.test(chosenToken)) invalid('O token deve ter de 32 a 160 letras, números, hífen ou sublinhado.');
+    const { id, token } = this.createAttendant(name, commission, chosenToken || undefined);
     return { attendantId: id, name, token };
   }
   private adminFields(input: unknown): Record<string, unknown> {
@@ -92,6 +95,7 @@ export class PortalStore {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000) invalid('Nome e comissão são obrigatórios e devem ser válidos.');
     const token = providedToken ?? `atd_${randomBytes(32).toString('base64url')}`;
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) invalid('Token inválido.');
+    if (this.db.prepare('SELECT id FROM attendants WHERE token_hash = ?').get(tokenHash(token))) throw new PortalError(409, 'Esse token já está em uso. Defina outro token para este atendente.');
     const id = randomUUID();
     // Legacy goal columns stay in SQLite to preserve existing databases; they are no longer read or applied.
     this.db.prepare('INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, tokenHash(token), name.trim(), commissionBps, new Date().toISOString());

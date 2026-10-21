@@ -18,7 +18,7 @@ O arquivo `render.yaml` prepara interface, API e SQLite no mesmo servidor, com d
 2. Revise o serviço e o custo. Confirme a implantação somente se concordar com a contratação.
 3. Quando o serviço estiver disponível, abra o endereço HTTPS informado pelo Render e acrescente `/#/admin`.
 4. Na seção **Environment** do serviço no Render, obtenha a variável privada `BRAVUS_ADMIN_KEY`. Cole-a apenas no formulário de administração desse servidor. Não a envie no chat nem a publique no GitHub.
-5. Cadastre os atendentes, definindo a comissão de cada um. Copie e entregue cada link individual ao atendente correspondente.
+5. Cadastre os atendentes, definindo o nome, a comissão e o token de cada um. O token pode ser escolhido por você ou gerado pelo sistema. Copie e entregue cada link individual ao atendente correspondente; ele apenas abre esse link para entrar.
 
 O endereço do Render serve o sistema completo; não depende de recompilar o GitHub Pages. Novas versões no Render são implantadas manualmente, pois o blueprint deixa `autoDeploy: false`. O SQLite usa uma única instância com disco persistente, sem escalonamento horizontal. Faça backups privados regulares e mantenha uma cópia fora do disco da aplicação. A recuperação de um backup deve ser planejada antes de usar dados reais.
 
@@ -38,7 +38,9 @@ O servidor também gera `.bravus/admin.key`, com permissão de leitura restrita 
 
 ## Administrar pelo navegador
 
-O painel permite criar atendentes, gerar um novo token para o mesmo atendente, revogar ou reativar acessos, configurar taxas e custos diários e registrar pagamentos ou cancelamentos de repasses. O novo link individual aparece após a criação ou rotação; a lista de atendentes não revela tokens. A rotação invalida imediatamente o link anterior e preserva o histórico. Revogar bloqueia o acesso sem apagar vendas ou PIX; reativar volta a permitir o token mais recente.
+Somente a administração cadastra atendentes e define seus tokens. O painel permite criar atendentes com token escolhido pelo responsável ou gerado pelo sistema, gerar um novo token para o mesmo atendente, revogar ou reativar acessos, configurar taxas e custos diários e registrar pagamentos ou cancelamentos de repasses. O novo link individual aparece após a criação ou rotação; a lista de atendentes não revela tokens. A rotação invalida imediatamente o link anterior e preserva o histórico. Revogar bloqueia o acesso sem apagar vendas ou PIX; reativar volta a permitir o token mais recente.
+
+O portal do atendente não tem cadastro nem formulário para digitar tokens. O acesso é feito pelo link individual entregue pela administração. O atendente pode atualizar seus dados pessoais e PIX e registrar vendas, mas não criar contas ou alterar tokens.
 
 Para um pagamento, confira o PIX apresentado, efetue a transferência no seu banco e só então registre a confirmação no BRAVUS. Cancelar uma solicitação pendente libera o saldo reservado. Essas operações exigem a chave administrativa; um token de atendente não tem permissão de administração.
 
@@ -155,7 +157,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/admin/checkouts/:id` | Chave administrativa | Definir nome e taxa do checkout |
 | `PATCH /api/admin/payouts/:id` | Chave administrativa | Confirmar pagamento ou cancelar solicitação |
 
-A criação recebe `{ "name": "Nome", "commission": "10" }`. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5" }`. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
+A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5" }`. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
 
 ## GitHub Pages: atualizar a demonstração
 

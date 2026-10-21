@@ -59,9 +59,11 @@ test('demonstração reproduz a interface e tokens inválidos impedem envio', as
   await expect(page.getByRole('tab', { name: 'Lançar Vendas' })).toHaveAttribute('aria-selected', 'true');
   await page.screenshot({ path: info.outputPath('portal-demonstracao.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-  await page.getByRole('button', { name: 'Tenho meu token' }).click();
-  await page.getByLabel('Seu token de acesso').fill('invalid_attendant_token_0123456789');
-  await page.getByRole('button', { name: 'Acessar portal', exact: true }).click();
+  await page.getByRole('button', { name: 'Como acessar', exact: true }).click();
+  await expect(page.getByText('O cadastro do atendente e o token são definidos pela administração.', { exact: false })).toBeVisible();
+  await expect(page.getByLabel('Seu token de acesso')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Entendi' }).click();
+  await page.goto('/#/atendente/invalid_attendant_token_0123456789');
   await expect(page.getByRole('alert')).toContainText('Atendente não encontrado pelo token informado.');
   await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeDisabled();
   await page.screenshot({ path: info.outputPath('portal-token-invalido.png'), fullPage: true });
@@ -76,10 +78,13 @@ test('administrador cria atendente, configura custos, troca e revoga o token', a
   const name = `Nova pessoa ${info.project.name}`;
   await page.getByLabel('Nome do atendente', { exact: true }).fill(name);
   await page.getByLabel('Comissão (%)').fill('12,5');
+  const chosenToken = `fixture_owner_${info.project.name}_token_01234567890123456789`;
+  await page.getByLabel('Token do atendente (opcional)').fill(chosenToken);
   await page.getByRole('button', { name: 'Criar atendente e token' }).click();
   const invite = page.getByLabel('Link privado do atendente');
   await expect(invite).toBeVisible();
   const oldToken = new URL(await invite.inputValue()).hash.split('/').at(-1)!;
+  expect(oldToken).toBe(chosenToken);
   await page.getByRole('button', { name: 'Fechar janela' }).click();
   const row = page.getByRole('row').filter({ has: page.getByText(name, { exact: true }) });
   await expect(row).toContainText('12.5%');

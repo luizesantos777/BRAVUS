@@ -102,6 +102,8 @@ Para substituir um token preservando o mesmo atendente e histórico, use **Novo 
 
 ## Configurar taxas, custos e repasses
 
+A aba **Lançar Vendas** exibe a chave de recebimento do PIX manual fornecida pelo responsável, com botão **Copiar chave PIX**. O campo é somente leitura e também permite selecionar e copiar manualmente caso o navegador bloqueie a área de transferência. Essa chave se destina ao recebimento das vendas; o PIX do perfil do atendente continua sendo o destino dos seus repasses.
+
 O PIX manual aplica automaticamente **6,99% + R$ 1,69 por venda**, conforme a tabela fornecida, para vendas a partir de R$ 5,00. Todas as faixas informadas usam essa mesma tarifa. O percentual é arredondado para centavos em cada venda e a taxa fixa é adicionada a cada transação, inclusive em lotes. Exemplo: R$ 100,00 gera R$ 8,68 de taxa e R$ 91,32 líquidos.
 
 A tela mostra a tarifa, a taxa calculada e o líquido antes de enviar. O servidor recalcula usando a configuração do checkout e grava a taxa na venda; valores de taxa enviados pelo navegador não são usados. O extrato soma as taxas gravadas e o histórico mostra bruto, taxa e líquido.

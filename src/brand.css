@@ -96,6 +96,21 @@ body {
 .button.secondary { background: #10150e; color: #c6cebb; border-color: #34402b; }
 .button.secondary:hover { background: #222d1b; }
 .button.secondary > svg { color: #9fae8e; }
+.manual-pix-card { padding: 16px; margin-bottom: 19px; border: 1px solid #405331; border-radius: 12px; background: linear-gradient(120deg, #142317, #151b11); }
+.manual-pix-heading { display: flex; align-items: flex-start; gap: 10px; }
+.manual-pix-heading > svg { color: var(--brand-gold); flex-shrink: 0; margin-top: 2px; }
+.manual-pix-heading h3 { color: #e4d69d; font-size: 12px; line-height: 1.6; }
+.manual-pix-heading p { color: #a7b598; font-size: 11px; line-height: 1.7; margin-top: 3px; }
+.manual-pix-copy { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.manual-pix-copy input { flex: 1; width: 100%; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 12px; color: #edf0e6; background: #0d140d; border-color: #3d4d30; }
+.manual-pix-copy .button { flex-shrink: 0; min-height: 34px; }
+@media (max-width: 600px) {
+  .manual-pix-card { padding: 13px; }
+  .manual-pix-heading p { font-size: 10px; }
+  .manual-pix-copy { flex-direction: column; align-items: stretch; gap: 9px; }
+  .manual-pix-copy input { flex: auto; font-size: 10px; padding: 9px 7px; height: 36px; }
+  .manual-pix-copy .button { min-height: 36px; }
+}
 .skip-link { background: var(--brand-gold); color: #15190d; }
 button:focus-visible, a:focus-visible { outline-color: var(--brand-gold-light); }
 input:focus, select:focus, .period-picker:focus-within, .amount-input:focus-within { outline-color: var(--brand-gold); }

@@ -13,6 +13,7 @@ type Notice = { text: string; error?: boolean };
 type SaleRow = SaleInput & { id: string };
 const blankRow = (): SaleRow => ({ id: crypto.randomUUID(), amount: '', checkoutId: '', time: businessTime(), note: '', receipt: null });
 const tabs = [{ id: 'sales', label: 'Lançar Vendas', icon: Plus }, { id: 'ranking', label: 'Ranking', icon: Trophy }, { id: 'payouts', label: 'Repasses', icon: History }, { id: 'profile', label: 'Meus Dados e PIX', icon: UserRound }] as const;
+const MANUAL_PIX_KEY = 'd026e4d9-0a17-4ecf-b2fe-61e0ff386e6f';
 
 function Dialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -20,6 +21,19 @@ function Dialog({ title, close, children }: { title: string; close: () => void; 
   return <dialog ref={ref} className="dialog" aria-labelledby="dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}><header><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Fechar janela" onClick={close}><X size={19} /></button></header>{children}</dialog>;
 }
 function Empty({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) { return <div className="empty"><span>{icon}</span><h3>{title}</h3><p>{children}</p></div>; }
+function ManualPixCard({ notify }: { notify: (notice: Notice) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(MANUAL_PIX_KEY);
+      notify({ text: 'Chave PIX manual copiada!' });
+    } catch {
+      input.current?.focus(); input.current?.select();
+      notify({ text: 'A chave PIX foi selecionada. Use a opção Copiar do seu aparelho.' });
+    }
+  }
+  return <section className="manual-pix-card" aria-labelledby="manual-pix-title"><div className="manual-pix-heading"><KeyRound size={17} /><div><h3 id="manual-pix-title">PIX manual · Recebimento de vendas</h3><p>Use esta chave nos pagamentos das vendas por PIX manual.</p></div></div><div className="manual-pix-copy"><label className="sr-only" htmlFor="manual-pix-key">Chave PIX manual para receber vendas</label><input ref={input} id="manual-pix-key" type="text" value={MANUAL_PIX_KEY} readOnly spellCheck={false} onFocus={event => event.currentTarget.select()} /><button type="button" className="button primary" onClick={() => void copy()}><Copy size={14} />Copiar chave PIX</button></div></section>;
+}
 function SaleFeePreview({ row, checkout, index }: { row: SaleRow; checkout?: Checkout; index: number }) {
   if (!checkout) return null;
   let amounts: { fee: number; net: number } | null = null, error = '';
@@ -65,6 +79,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   }
   return <section className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
+    <ManualPixCard notify={notify} />
     <form onSubmit={submit}><fieldset disabled={busy || disabled}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />
       <p className="field-label sales-count">Vendas a Lançar ({rows.length})</p>

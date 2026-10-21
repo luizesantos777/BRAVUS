@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, inPeriod, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
@@ -23,7 +23,7 @@ export class PortalStore {
       PRAGMA busy_timeout = 5000;
       CREATE TABLE IF NOT EXISTS attendants (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, name TEXT NOT NULL, email TEXT NOT NULL DEFAULT '', phone TEXT NOT NULL DEFAULT '', pix_type TEXT NOT NULL DEFAULT '', pix_key TEXT NOT NULL DEFAULT '', pix_owner TEXT NOT NULL DEFAULT '', commission_bps INTEGER NOT NULL CHECK(commission_bps BETWEEN 0 AND 10000), daily_goal_cents INTEGER NOT NULL CHECK(daily_goal_cents > 0), active INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, fee_bps INTEGER NOT NULL CHECK(fee_bps BETWEEN 0 AND 10000));
-      INSERT OR IGNORE INTO checkouts VALUES ('main', 'Checkout principal', 0), ('pix', 'PIX manual', 0);
+      INSERT OR IGNORE INTO checkouts (id, name, fee_bps) VALUES ('main', 'Checkout principal', 0), ('pix', 'PIX manual', 0);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), request_key TEXT NOT NULL, payload_hash TEXT NOT NULL, UNIQUE(attendant_id, request_key));
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), batch_id TEXT NOT NULL REFERENCES batches(id), date TEXT NOT NULL, time TEXT NOT NULL, checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), fee_cents INTEGER NOT NULL, commission_bps INTEGER NOT NULL, goal_cents INTEGER NOT NULL, note TEXT NOT NULL, receipt_id TEXT NOT NULL REFERENCES receipts(id), created_at TEXT NOT NULL);
@@ -31,6 +31,18 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS costs (attendant_id TEXT NOT NULL REFERENCES attendants(id), date TEXT NOT NULL, ads_cents INTEGER NOT NULL CHECK(ads_cents >= 0), withdrawal_fee_cents INTEGER NOT NULL CHECK(withdrawal_fee_cents >= 0), PRIMARY KEY(attendant_id, date));
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const columns = new Set(this.db.prepare('PRAGMA table_info(checkouts)').all().map(column => column.name));
+      if (!columns.has('fixed_fee_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN fixed_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fixed_fee_cents >= 0)');
+      if (!columns.has('min_amount_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN min_amount_cents INTEGER NOT NULL DEFAULT 1 CHECK(min_amount_cents > 0)');
+      this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY)');
+      if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('manual-pix-tariff-v1')) {
+        this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run(MANUAL_PIX_TARIFF.feeBps, MANUAL_PIX_TARIFF.fixedFeeCents, MANUAL_PIX_TARIFF.minAmountCents, 'pix');
+        this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('manual-pix-tariff-v1');
+      }
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
   }
   close() { this.db.close(); }
   adminDashboard(): AdminDashboard {
@@ -85,11 +97,17 @@ export class PortalStore {
   }
   adminSetCheckout(id: string, input: unknown) {
     const data = this.adminFields(input);
-    if (!this.db.prepare('SELECT id FROM checkouts WHERE id = ?').get(id)) throw new PortalError(404, 'Checkout não encontrado.');
+    const current = this.checkouts().find(checkout => checkout.id === id);
+    if (!current) throw new PortalError(404, 'Checkout não encontrado.');
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
-    let fee: number;
-    try { fee = percentageToBps(data.fee as string); } catch (error) { return invalid((error as Error).message); }
-    this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ? WHERE id = ?').run((data.name as string).trim(), fee, id);
+    if (data.fixedFee !== undefined && typeof data.fixedFee !== 'string' || data.minimum !== undefined && typeof data.minimum !== 'string') invalid('Informe valores válidos para a taxa fixa e o mínimo por venda.');
+    let fee: number, fixedFee: number, minimum: number;
+    try {
+      fee = percentageToBps(data.fee as string);
+      fixedFee = data.fixedFee === undefined ? current.fixedFeeCents : /^0+(?:[.,]0{1,2})?$/.test((data.fixedFee as string).trim()) ? 0 : amountToCents(data.fixedFee as string);
+      minimum = data.minimum === undefined ? current.minAmountCents : amountToCents(data.minimum as string);
+    } catch (error) { return invalid((error as Error).message); }
+    this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, id);
   }
   createAttendant(name: string, commissionBps: number, providedToken?: string) {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000) invalid('Nome e comissão são obrigatórios e devem ser válidos.');
@@ -112,7 +130,7 @@ export class PortalStore {
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
     return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps };
   }
-  checkouts(): Checkout[] { return this.db.prepare('SELECT id, name, fee_bps AS feeBps FROM checkouts ORDER BY rowid').all() as unknown as Checkout[]; }
+  checkouts(): Checkout[] { return this.db.prepare('SELECT id, name, fee_bps AS feeBps, fixed_fee_cents AS fixedFeeCents, min_amount_cents AS minAmountCents FROM checkouts ORDER BY rowid').all() as unknown as Checkout[]; }
   sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
   costs(auth: Authenticated): DailyCost[] { return this.db.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id) as unknown as DailyCost[]; }
   payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }
@@ -150,7 +168,9 @@ export class PortalStore {
       if (!checkout) return invalid('Selecione um checkout válido para cada venda.');
       let amountCents: number;
       try { amountCents = amountToCents(row.amount); } catch (error) { return invalid((error as Error).message); }
-      return { amountCents, checkout, time: row.time, note: row.note.trim(), receipt: this.receiptInput(row.receipt) };
+      let feeCents: number;
+      try { feeCents = checkoutFee(amountCents, checkout); } catch (error) { return invalid((error as Error).message); }
+      return { amountCents, feeCents, checkout, time: row.time, note: row.note.trim(), receipt: this.receiptInput(row.receipt) };
     });
     const payloadHash = createHash('sha256').update(JSON.stringify(batch)).digest('hex');
     const existing = this.db.prepare('SELECT id, payload_hash FROM batches WHERE attendant_id = ? AND request_key = ?').get(auth.id, requestKey);
@@ -165,7 +185,7 @@ export class PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID();
         this.db.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        this.db.prepare('INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, Math.round(row.amountCents * row.checkout.feeBps / 10000), profile.commissionBps, 0, row.note, receiptId, createdAt);
+        this.db.prepare('INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt);
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }

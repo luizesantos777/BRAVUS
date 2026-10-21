@@ -61,6 +61,20 @@ test('venda abaixo de R$ 200 libera comissão e repasse mesmo com meta antiga no
   assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '19,70' }) })).status, 201);
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 0);
 });
+test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador', async t => {
+  const { call, submit } = await fixture(t);
+  const payload = batch();
+  payload.sales = [10, 10].map(amount => ({ ...payload.sales[0], amount: String(amount), checkoutId: 'pix', feeCents: 0, feeBps: 0, fixedFeeCents: 0 }));
+  assert.equal((await submit(payload)).status, 200);
+  const portal = await (await call('/api/portal')).json();
+  assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents), [239, 239]);
+  assert.equal(portal.finance.feeCents, 478); assert.equal(portal.finance.availableCents, 152);
+  assert.equal((await submit(payload)).status, 200);
+  assert.equal((await (await call('/api/portal')).json()).finance.feeCents, 478);
+  const invalid = batch(); invalid.sales[0].checkoutId = 'pix'; invalid.sales[0].amount = '4,99';
+  assert.equal((await submit(invalid, 'fixture_pix_below_minimum')).status, 400);
+  assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
+});
 test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são salvas', async t => {
   const { call, submit } = await fixture(t);
   const invalid = batch(); invalid.sales.push({ ...invalid.sales[0], amount: '-10' });
@@ -114,6 +128,27 @@ test('banco persistente mantém dados no reinício e guarda somente hash do toke
     assert.equal(store.portal(store.authenticate(tokenA)).sales.length, 1); store.close();
     assert.equal(readFileSync(file).includes(Buffer.from(tokenA)), false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+test('atualização do banco configura PIX uma vez e preserva taxas já registradas nas vendas', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-pix-upgrade-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Histórico', 1000, tokenA);
+    store.adminSetCheckout('pix', { name: 'PIX manual', fee: '0', fixedFee: '0' });
+    const payload = batch(); payload.sales[0].checkoutId = 'pix';
+    store.recordSales({ id: account.id }, payload, 'fixture_before_pix_upgrade');
+    store.db.exec('ALTER TABLE checkouts DROP COLUMN fixed_fee_cents; ALTER TABLE checkouts DROP COLUMN min_amount_cents; DROP TABLE schema_migrations;');
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.sales({ id: account.id })[0].feeCents, 0);
+    const pix = store.checkouts().find(checkout => checkout.id === 'pix')!;
+    assert.equal(pix.feeBps, 699); assert.equal(pix.fixedFeeCents, 169); assert.equal(pix.minAmountCents, 500);
+    store.recordSales({ id: account.id }, payload, 'fixture_after_pix_upgrade');
+    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 2266]);
+    store.adminSetCheckout('pix', { name: 'PIX manual', fee: '7', fixedFee: '2' });
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
+    assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.feeBps, 700);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('operador cria token e convite privados pelo comando de administração', () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-invite-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'invite.json');

@@ -1,4 +1,4 @@
-import { amountToCents, businessToday, DEMO_KEY, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateProfile, validDate } from './domain.ts';
+import { amountToCents, businessToday, checkoutFee, DEMO_KEY, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateProfile, validDate } from './domain.ts';
 import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -65,7 +65,7 @@ export class PortalClient {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) throw new ApiError('Informe o horário de cada venda.');
       const amountCents = amountToCents(row.amount), receiptId = crypto.randomUUID();
       receipts[receiptId] = row.receipt;
-      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: Math.round(amountCents * checkout.feeBps / 10000), commissionBps: current.profile.commissionBps, note: row.note.trim(), receiptId, createdAt: new Date().toISOString() };
+      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), commissionBps: current.profile.commissionBps, note: row.note.trim(), receiptId, createdAt: new Date().toISOString() };
     });
     this.persist({ ...this.demo, receipts, sales: [...sales, ...this.demo.sales] });
     return { duplicate: false, count: sales.length };

@@ -8,7 +8,9 @@ O GitHub Pages serve a interface estática, na pasta `docs/`. Sem uma API hosped
 
 A API Node.js + SQLite está implementada, com painel administrativo protegido e backup consistente. Ainda é necessário hospedá-la com armazenamento persistente e HTTPS para usar atendentes reais pela internet. GitHub Pages não executa essa API. Solicitar repasse registra uma solicitação para pagamento pela administração; confirmar o pagamento registra uma operação já feita no banco.
 
-## Publicar o sistema completo no Render
+O destino escolhido pelo responsável é **Vercel**, com a implantação adiada. Nessa etapa, a API deve ser adaptada ao ambiente e conectada a um banco persistente externo; o SQLite em disco local da implementação atual não é adequado a funções efêmeras.
+
+## Alternativa preparada anteriormente: Render
 
 [Abrir implantação do BRAVUS no Render](https://render.com/deploy?repo=https://github.com/luizesantos777/BRAVUS)
 
@@ -84,10 +86,14 @@ Para substituir um token preservando o mesmo atendente e histórico, use **Novo 
 
 ## Configurar taxas, custos e repasses
 
-Os checkouts iniciais são Checkout principal e PIX manual, ambos sem taxa configurada. Configure a taxa efetiva antes do uso real. Mudanças na taxa não alteram vendas antigas.
+O PIX manual aplica automaticamente **6,99% + R$ 1,69 por venda**, conforme a tabela fornecida, para vendas a partir de R$ 5,00. Todas as faixas informadas usam essa mesma tarifa. O percentual é arredondado para centavos em cada venda e a taxa fixa é adicionada a cada transação, inclusive em lotes. Exemplo: R$ 100,00 gera R$ 8,68 de taxa e R$ 91,32 líquidos.
+
+A tela mostra a tarifa, a taxa calculada e o líquido antes de enviar. O servidor recalcula usando a configuração do checkout e grava a taxa na venda; valores de taxa enviados pelo navegador não são usados. O extrato soma as taxas gravadas e o histórico mostra bruto, taxa e líquido.
+
+O Checkout principal permanece sem taxa até ser configurado pelo responsável. Taxas variáveis, fixas e mínimo por venda podem ser ajustados na administração. Mudanças se aplicam apenas aos próximos lançamentos; as vendas antigas mantêm seus valores.
 
 ```sh
-npm run manage -- set-checkout --id main --name "Checkout principal" --fee 3.5
+npm run manage -- set-checkout --id main --name "Checkout principal" --fee 3.5 --fixed-fee 0 --minimum 0.01
 npm run manage -- set-costs --attendant ID_DO_ATENDENTE --date 2026-10-21 --ads 20 --withdrawal-fee 2
 npm run manage -- mark-payout --id ID_DO_REPASSE --status paid --note "Pagamento conferido pela administração"
 ```
@@ -157,7 +163,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/admin/checkouts/:id` | Chave administrativa | Definir nome e taxa do checkout |
 | `PATCH /api/admin/payouts/:id` | Chave administrativa | Confirmar pagamento ou cancelar solicitação |
 
-A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5" }`. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
+A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5", "fixedFee": "0", "minimum": "0.01" }`; omitir `fixedFee` ou `minimum` preserva a configuração existente. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
 
 ## GitHub Pages: atualizar a demonstração
 
@@ -177,7 +183,7 @@ BRAVUS_CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e
 
 Os testes cobrem comissões sem faturamento mínimo, compatibilidade com registros antigos, regras financeiras, dias no fuso brasileiro, validação de PIX, isolamento entre tokens, comprovantes privados, idempotência, saldo de repasses e persistência após reiniciar o banco. O Playwright testa desktop e celular contra a API real com um banco temporário e tokens sintéticos, removidos ao encerrar o teste. Não são utilizados dados de atendentes reais.
 
-Também são verificados a autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
+Também são verificados todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
 
 Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navegador distribuído pelo Playwright, instale com `npx playwright install chromium` e execute sem essa variável.
 

@@ -39,7 +39,10 @@ try {
   } else if (command === 'set-checkout') {
     const id = flag('id'), name = flag('name'), fee = percent(flag('fee'));
     if (!/^[a-zA-Z0-9_-]{1,60}$/.test(id) || !name.trim() || name.length > 100) throw new Error('Informe ID e nome válidos.');
-    store.db.prepare('INSERT INTO checkouts VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, fee_bps=excluded.fee_bps').run(id, name.trim(), fee);
+    const current = store.checkouts().find(checkout => checkout.id === id);
+    const fixedFee = cost(flag('fixed-fee', String((current?.fixedFeeCents ?? 0) / 100)));
+    const minimum = amountToCents(flag('minimum', String((current?.minAmountCents ?? 1) / 100)));
+    store.db.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents) VALUES (?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, fee_bps=excluded.fee_bps, fixed_fee_cents=excluded.fixed_fee_cents, min_amount_cents=excluded.min_amount_cents').run(id, name.trim(), fee, fixedFee, minimum);
     console.log('Checkout atualizado. Novas taxas se aplicam apenas às próximas vendas.');
   } else if (command === 'mark-payout') {
     store.markPayout(flag('id'), flag('status') as 'paid' | 'cancelled', flag('note'));

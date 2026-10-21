@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { amountToCents, businessToday, calculateFinance, inPeriod, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, demoCheckouts, inPeriod, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
 const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z' });
@@ -11,6 +11,14 @@ test('valores brasileiros são convertidos em centavos inteiros', () => {
 test('percentuais mantêm duas casas decimais sem erro de ponto flutuante', () => {
   assert.equal(percentageToBps('29,99'), 2999); assert.equal(percentageToBps('0'), 0); assert.equal(percentageToBps('100'), 10000);
   for (const value of ['100.01', '-1', '', '10.001']) assert.throws(() => percentageToBps(value));
+});
+test('PIX manual aplica 6,99% mais R$ 1,69 em todas as faixas, arredondando cada venda em centavos', () => {
+  const pix = demoCheckouts.find(checkout => checkout.id === 'pix')!;
+  for (const [gross, fee] of [[500, 204], [1599, 281], [1600, 281], [1999, 309], [2000, 309], [19999, 1567], [20000, 1567], [29999, 2266], [30000, 2266], [10000, 868], [19700, 1546]]) assert.equal(checkoutFee(gross, pix), fee);
+  assert.equal(checkoutFee(1000, pix) + checkoutFee(1000, pix), 478);
+  assert.equal(checkoutFee(2000, pix), 309);
+  assert.throws(() => checkoutFee(499, pix), /valor mínimo/);
+  assert.equal(checkoutFee(10000, demoCheckouts.find(checkout => checkout.id === 'main')!), 0);
 });
 test('toda venda gera comissão, sem exigir faturamento mínimo ou aplicar metas antigas', () => {
   const legacy = { ...sale(19700), goalCents: 20000 };

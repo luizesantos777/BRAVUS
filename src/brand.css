@@ -140,6 +140,18 @@ input::placeholder { color: #8a957d; }
 .admin-stats strong { color: #eedba3; }
 .admin-message { background: #1e2819; border-color: #405333; color: #c3cfb3; text-align: left; }
 .admin-checkout, .admin-attendants td:last-child { border-color: #35442b; }
+.admin-checkout { grid-template-columns: minmax(140px, 1fr) repeat(3, minmax(90px, 110px)) auto; }
+.sale-fee-preview { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 9px 18px; padding: 11px 12px; background: #121c10; border: 1px solid #34452a; border-radius: 9px; color: #b1bf9f; font-size: 10px; line-height: 1.8; }
+.sale-fee-preview > span { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
+.sale-fee-preview strong { color: #e4cc85; font-variant-numeric: tabular-nums; }
+.sale-fee-preview i { width: 3px; height: 3px; margin: 0 5px; border-radius: 50%; background: #74845f; }
+.sale-fee-preview .fee-validation { color: #edb48b; }
+.history-panel .table-scroll table { min-width: 760px; }
+
+@media (max-width: 800px) {
+  .admin-checkout { grid-template-columns: 1fr 1fr; }
+  .admin-checkout > label:first-child, .admin-checkout > button { grid-column: 1 / -1; }
+}
 
 
 
@@ -160,6 +172,7 @@ input::placeholder { color: #8a957d; }
   .brand-sectors { gap: 10px; margin-top: 13px; }
   .brand-sectors > span { font-size: 7px; gap: 4px; }
   .brand-sectors svg { width: 11px; height: 11px; }
+  .sale-fee-preview { font-size: 10px; padding: 10px; }
   .admin-login { margin-top: 25px; }
   .admin-brand-image { width: 140px; height: 140px; }
   .admin-attendants tr { background: #172011; border-color: #35432b; }

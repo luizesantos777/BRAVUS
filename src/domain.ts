@@ -4,7 +4,7 @@ export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
 export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number }
-export interface Checkout { id: string; name: string; feeBps: number }
+export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number }
 export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
 export interface Payout { id: string; amountCents: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
@@ -23,6 +23,16 @@ export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEMO_KEY = 'bravus.attendant.demo.v1';
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
+export function checkoutFee(amountCents: number, checkout: Checkout): number {
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Informe um valor de venda válido.');
+  if (amountCents < checkout.minAmountCents) throw new Error(`${checkout.name}: valor mínimo de ${money(checkout.minAmountCents)} por venda.`);
+  return Math.floor((amountCents * checkout.feeBps + 5000) / 10000) + checkout.fixedFeeCents;
+}
+export function checkoutRateLabel(checkout: Checkout): string {
+  const percent = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(checkout.feeBps / 100);
+  return `${percent}% + ${money(checkout.fixedFeeCents)} por venda`;
+}
+export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500 };
 export function percentageToBps(value: string): number {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error('Informe um percentual entre 0 e 100, com até duas casas decimais.');
   const [whole, fraction = ''] = value.trim().replace(',', '.').split('.');
@@ -104,7 +114,7 @@ export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' 
 export function demoInitial(): DemoData {
   return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000 }, sales: [], payouts: [], costs: [], receipts: {} };
 }
-export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0 }, { id: 'pix', name: 'PIX manual', feeBps: 0 }];
+export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0, fixedFeeCents: 0, minAmountCents: 1 }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }];
 export function demoPortal(data: DemoData, period: Period): Portal {
   const today = businessToday();
   return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), today };

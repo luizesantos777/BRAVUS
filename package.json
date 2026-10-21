@@ -1,0 +1,30 @@
+{
+  "name": "bravus",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Gestão de clientes, tarefas e finanças para pequenos negócios.",
+  "type": "module",
+  "engines": { "node": ">=22.18.0" },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "build:pages": "npm run build && node scripts/build-pages.mjs",
+    "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/domain.test.ts",
+    "test:e2e": "npm run build && playwright test"
+  },
+  "dependencies": {
+    "lucide-react": "1.61.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@types/node": "26.6.5",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "8.3.5"
+  }
+}

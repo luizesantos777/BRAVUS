@@ -19,7 +19,7 @@ export class AdminClient {
     if (adminUnavailable) throw new ApiError('A administração estará disponível no endereço do servidor após a hospedagem da API.', 503);
     const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${this.base}/admin${path}`, { method, signal: controller.signal, headers: { Authorization: `Bearer ${this.key}`, ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+      const response = await fetch(`${this.base}/admin${path}`, { method, cache: 'no-store', signal: controller.signal, headers: { Authorization: `Bearer ${this.key}`, ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: payload === undefined ? undefined : JSON.stringify(payload) });
       if (!response.headers.get('content-type')?.includes('application/json')) throw new ApiError('A API administrativa está indisponível.', 503);
       const body = await response.json();
       if (!response.ok) throw new ApiError(body.error ?? 'Não foi possível concluir a solicitação.', response.status);
@@ -29,7 +29,7 @@ export class AdminClient {
       throw new ApiError('Não foi possível conectar à API. Verifique a conexão e tente novamente.', 503);
     } finally { window.clearTimeout(timer); }
   }
-  dashboard() { return this.request<AdminDashboard>('/dashboard', 'GET', undefined, 90_000); }
+  dashboard(refreshOnly = false) { return this.request<AdminDashboard>('/dashboard' + (refreshOnly ? '?refresh=1' : ''), 'GET', undefined, refreshOnly ? 20_000 : 90_000); }
   financial(start: string, end: string, attendantId = '') { return this.request<FinancialReport>('/reports/financial?' + new URLSearchParams({ start, end, attendantId })); }
   audit(start: string, end: string, action = '', page = 1) { return this.request<AuditPage>('/audit?' + new URLSearchParams({ start, end, action, page: String(page) })); }
   backups() { return this.request<BackupStatus>('/backups'); }

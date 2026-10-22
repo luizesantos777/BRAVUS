@@ -81,7 +81,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
       const count = rows.length; setRows([blankRow()]); key.current = crypto.randomUUID();
       const total = payload.sales.reduce((sum, row) => sum + amountToCents(row.amount), 0);
       const message = renderSaleAlert(portal.profile.saleAlertTemplate ?? DEFAULT_SALE_ALERT, total, count, portal.profile.name);
-      notify({ text: message + ' · Aguardando aprovação.' + (client.isDemo ? ' · Demonstração' : '') });
+      notify({ text: client.isDemo ? message + ' · Demonstração: salva somente neste navegador. Esta venda não foi enviada ao administrador.' : message + ' · Enviada à administração. Aguardando aprovação.' });
       void notifyDemoSale(client, message);
       await refresh();
     } catch (cause) { setError((cause as Error).message); }

@@ -4,7 +4,9 @@ import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sal
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
 export function currentToken() {
-  const match = window.location.hash.match(/^#\/atendente\/([A-Za-z0-9_-]{1,160})$/) ?? window.location.pathname.match(/\/atendente\/([A-Za-z0-9_-]{1,160})\/?$/);
+  const match = window.location.hash.match(/^#\/atendente\/([A-Za-z0-9_-]{1,160})\/?$/) ?? window.location.pathname.match(/\/atendente\/([A-Za-z0-9_-]{1,160})\/?$/);
+  // A malformed individual link must fail authentication, never silently save in the demo.
+  if (!match && (window.location.hash.startsWith('#/atendente/') || window.location.pathname.startsWith('/atendente/'))) return 'invalid_attendant_link';
   return match?.[1] ?? new URLSearchParams(window.location.search).get('token') ?? '';
 }
 export class PortalClient {

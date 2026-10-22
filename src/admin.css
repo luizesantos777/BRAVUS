@@ -93,3 +93,9 @@
   .backup-entry { align-items: flex-start; flex-direction: column; }
   .backup-entry > .button { width: 100%; }
 }
+.admin-live-status { color: #b8c4aa; font-size: 11px; line-height: 1.8; margin: -6px 0 16px; }
+.admin-pending-link { color: #e5c766; text-decoration: underline; font-size: 10px; padding: 8px 0 0; text-align: left; }
+.review-hidden-pending { display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 13px; margin-bottom: 18px; border: 1px solid #75602a; border-radius: 10px; color: #e5cd80; background: #252114; font-size: 11px; line-height: 1.8; }
+.admin-preview-notice .button { margin: 10px 0 0; }
+@media (max-width: 600px) { .review-hidden-pending { align-items: stretch; flex-direction: column; } }
+.review-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }

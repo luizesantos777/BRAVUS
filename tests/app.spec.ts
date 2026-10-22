@@ -6,6 +6,74 @@ import { gunzipSync } from 'node:zlib';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
 const iPhoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+test('venda de outro aparelho aparece na fila administrativa aberta sem atualizar manualmente', async ({ page, browser }, info) => {
+  const token = `fixture_${info.project.name}_live_01234567890123456789`, name = `Vendas ao vivo ${info.project.name}`;
+  await page.clock.install();
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByLabel('Filtrar por atendente').selectOption({ label: name });
+  await expect(page.getByText('Nenhuma venda nesta lista')).toBeVisible();
+  const personal = await browser.newContext({ locale: 'pt-BR' });
+  try {
+    const attendant = await personal.newPage(); await attendant.goto(`http://127.0.0.1:4173/#/atendente/${token}`);
+    await attendant.getByLabel('Valor bruto venda 1', { exact: true }).fill('100'); await attendant.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
+    await attendant.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
+    await attendant.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
+    await expect(attendant.locator('.pending-sales-notice')).toContainText('1 venda(s) em análise');
+    await page.bringToFront(); await page.clock.runFor(10_100);
+    const received = page.locator('.review-sale').filter({ hasText: name });
+    await expect(received).toHaveCount(1); await expect(received).toContainText('100,00'); await expect(received).toContainText('Em análise');
+    await received.getByRole('button', { name: 'Ver comprovante' }).click(); await expect(page.getByRole('img', { name: 'Comprovante enviado pelo atendente' })).toBeVisible();
+  } finally { await personal.close(); }
+});
+test('atualizar com filtro de aprovadas mostra aviso das pendentes e permite encontrar a venda enviada', async ({ page }, info) => {
+  const admin = { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' }, token = `fixture_${info.project.name}_filters_01234567890123456789`, name = `Fila com filtros ${info.project.name}`;
+  await page.request.post('/api/admin/attendants', { headers: admin, data: { name, token } });
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789'); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByLabel('Situação da venda').selectOption('approved'); await page.getByLabel('Filtrar por atendente').selectOption({ label: name });
+  await expect(page.getByText('Nenhuma venda nesta lista')).toBeVisible();
+  const headers = { Authorization: `Bearer ${token}` }, portal = await (await page.request.get('/api/portal', { headers })).json();
+  const sent = await page.request.post('/api/sales', { headers: { ...headers, 'Idempotency-Key': `fixture_filtered_${info.project.name}` }, data: { date: portal.today, sales: [{ amount: '147', checkoutId: 'main', time: '12:00', note: 'Recebimento com filtro ativo', receipt: { name: image.name, mime: image.mimeType, base64: image.buffer.toString('base64') } }] } });
+  expect(sent.status()).toBe(200);
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
+  await expect(page.locator('.review-hidden-pending')).toContainText('filtros atuais podem ocultar');
+  await page.getByRole('button', { name: 'Ver todas em análise', exact: true }).click();
+  await expect(page.getByLabel('Situação da venda')).toHaveValue('pending'); await expect(page.getByLabel('Filtrar por atendente')).toHaveValue('');
+  await expect(page.locator('.review-sale').filter({ hasText: name })).toContainText('147,00');
+  await page.locator('.review-sale').filter({ hasText: name }).getByRole('button', { name: 'Aprovar venda', exact: true }).click();
+  await page.getByLabel('Observação da aprovação (opcional)').fill('Conferindo o comprovante');
+  await page.clock.install(); await page.clock.runFor(10_100);
+  await expect(page.getByLabel('Observação da aprovação (opcional)')).toHaveValue('Conferindo o comprovante');
+  await page.getByRole('button', { name: 'Fechar janela', exact: true }).click();
+  await page.getByRole('button', { name: 'Ver todas as vendas recebidas', exact: true }).click();
+  await expect(page.getByLabel('Situação da venda')).toHaveValue('all'); await expect(page.getByLabel('Filtrar por atendente')).toHaveValue('');
+  await expect(page.locator('.review-sale').filter({ hasText: name })).toContainText('147,00');
+});
+test('falha ao consultar a fila não é mostrada como lista vazia e a atualização automática recupera', async ({ page }) => {
+  let fail = true;
+  await page.clock.install();
+  await page.route('**/api/admin/sales?*', route => fail ? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Falha temporária ao consultar as vendas.' }) }) : route.continue());
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789'); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await expect(page.getByRole('alert')).toContainText('Falha temporária'); await expect(page.getByText('Nenhuma venda nesta lista')).toHaveCount(0);
+  fail = false; await page.clock.runFor(10_100);
+  await expect(page.getByText('Falha temporária ao consultar as vendas.')).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Aprovação de vendas' })).toBeVisible();
+  let refreshes = 0; page.on('request', request => { if (request.url().includes('/admin/dashboard?refresh=1')) refreshes++; });
+  await page.evaluate(() => Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }));
+  await page.clock.runFor(30_000); expect(refreshes).toBe(0);
+  await page.evaluate(() => { Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' }); document.dispatchEvent(new Event('visibilitychange')); });
+  await expect.poll(() => refreshes).toBeGreaterThan(0);
+});
+test('link individual com barra final mantém o atendente; link malformado não vira demonstração', async ({ page }, info) => {
+  const token = `fixture_${info.project.name}_other_01234567890123456789`;
+  await page.goto(`/#/atendente/${token}/`);
+  await expect(page.locator('.access-status')).toHaveText('Acesso individual');
+  await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeEnabled();
+  await page.goto(`/#/atendente/${token}/invalid`);
+  await expect(page.getByRole('alert')).toContainText('Atendente não encontrado');
+  await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeDisabled();
+  await expect(page.getByText('Você está na demonstração.')).toHaveCount(0);
+});
 test('admin consulta fechamento, exporta CSV, confere alterações e baixa backup privado', async ({ page }, info) => {
   const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_controls_01234567890123456789`;
   const headers = { Authorization: `Bearer ${adminKey}` }, personal = { Authorization: `Bearer ${token}` };

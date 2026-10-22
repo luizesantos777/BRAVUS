@@ -214,6 +214,8 @@ test('relatórios, histórico e backups exigem administrador; cron exige segredo
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, today = businessToday();
   const call = (path: string, key = '', init: RequestInit = {}) => fetch(base + path, { ...init, headers: { Authorization: 'Bearer ' + key, ...init.headers } });
   for (const path of ['/api/admin/audit', `/api/admin/reports/financial?start=${today}&end=${today}`, `/api/admin/reports/financial.csv?start=${today}&end=${today}`, '/api/admin/backups']) for (const key of ['', token]) assert.equal((await call(path, key)).status, 401);
+  assert.equal((await call('/api/admin/dashboard?refresh=1', adminKey)).status, 200);
+  assert.equal((await backups.status()).records.length, 0);
   assert.equal((await call('/api/cron/backups')).status, 401); assert.equal((await call('/api/cron/backups', adminKey)).status, 401);
   assert.equal((await call('/api/cron/backups', cronSecret)).status, 200); assert.equal((await call('/api/cron/backups', cronSecret)).status, 200);
   const status = await (await call('/api/admin/backups', adminKey)).json(); assert.equal(status.records.length, 1);

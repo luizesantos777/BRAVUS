@@ -1024,7 +1024,7 @@ function createPortalHandler(store, options = {}) {
           }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
           if (url.pathname === "/api/admin/dashboard" && request.method === "GET") {
-            if (options.backups) await options.backups.run("daily").catch(() => void 0);
+            if (options.backups && url.searchParams.get("refresh") !== "1") await options.backups.run("daily").catch(() => void 0);
             json(response, 200, await store.adminDashboard());
           } else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
           else if (route?.[1] === "sales" && !route[3] && request.method === "PATCH") json(response, 200, await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor));

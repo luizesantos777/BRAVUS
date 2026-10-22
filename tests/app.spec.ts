@@ -382,3 +382,16 @@ test('taxa de saque aparece apenas quando o administrador confirma o repasse pag
   await expect(page.locator('.metric').nth(1)).toContainText('11,00');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
+
+test('admin informa como conectar o banco quando a API da Vercel aguarda configuração', async ({ page }) => {
+  await page.route('**/api/health', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ status: 'configuration_required' }) }));
+  await page.goto('/#/admin');
+  await expect(page.getByText('Conexão do banco pendente', { exact: true })).toBeVisible();
+  await page.getByText('Configurar minha API na Vercel', { exact: true }).click();
+  await expect(page.locator('.api-status')).toContainText('TURSO_DATABASE_URL');
+  await expect(page.locator('.api-status')).toContainText('TURSO_AUTH_TOKEN');
+  await expect(page.locator('.api-status')).toContainText('BRAVUS_ADMIN_KEY');
+  await expect(page.getByLabel('Chave administrativa')).toHaveValue('');
+  await expect(page.getByLabel('Chave administrativa')).toHaveAttribute('type', 'password');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

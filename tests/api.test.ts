@@ -21,10 +21,10 @@ const adminKey = 'fixture_admin_012345678901234567890123456789';
 const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
 async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSales = true } = {}) {
-  const store = new PortalStore(':memory:');
+  const store = await PortalStore.open(':memory:');
   // General authorization and payout scenarios use an explicit fee-free checkout.
-  if (!defaultCheckoutRates) store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null });
-  const a = store.createAttendant('Ana Teste', 1000, tokenA), b = store.createAttendant('Bruno Teste', 1000, tokenB);
+  if (!defaultCheckoutRates) (await store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null }));
+  const a = (await store.createAttendant('Ana Teste', 1000, tokenA)), b = (await store.createAttendant('Bruno Teste', 1000, tokenB));
   const deliveries: { endpoint: string; payload: string }[] = [];
   const push = new PushService(store, webpush.generateVAPIDKeys(), async (subscription, payload, options) => {
     const request = webpush.generateRequestDetails(subscription, String(payload), options);
@@ -39,7 +39,7 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
   const call = (path: string, token = tokenA, init: RequestInit = {}) => fetch(base + path, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers } });
   const submit = async (payload: unknown = batch(), key = 'fixture_request_key_01', token = tokenA) => {
     const response = await call('/api/sales', token, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(payload) });
-    if (response.ok && approveSales) for (const sale of store.sales(store.authenticate(token))) if (sale.status === 'pending') store.reviewSale(sale.id, { status: 'approved', note: 'Aprovação explícita do cenário de teste.' });
+    if (response.ok && approveSales) for (const sale of (await store.sales((await store.authenticate(token))))) if (sale.status === 'pending') (await store.reviewSale(sale.id, { status: 'approved', note: 'Aprovação explícita do cenário de teste.' }));
     return response;
   };
   return { store, a, b, call, submit, push, deliveries };
@@ -140,7 +140,7 @@ test('repasse exige PIX e saldo; reserva é mantida quando o repasse é pago', a
   const response = await payout('20'); assert.equal(response.status, 201);
   const registered = await response.json();
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 1000);
-  store.markPayout(registered.id, 'paid', 'Pagamento confirmado');
+  (await store.markPayout(registered.id, 'paid', 'Pagamento confirmado'));
   const summary = await (await call('/api/portal')).json();
   assert.equal(summary.finance.availableCents, 1000); assert.equal(summary.finance.paidPayoutCents, 2000);
   assert.equal((await payout('11')).status, 400);
@@ -152,67 +152,67 @@ test('origens não autorizadas e requisições sem token são recusadas', async 
   const allowed = await call('/api/portal', tokenA, { headers: { Origin: 'https://portal.example' } });
   assert.equal(allowed.status, 200); assert.equal(allowed.headers.get('access-control-allow-origin'), 'https://portal.example');
 });
-test('banco persistente mantém dados no reinício e guarda somente hash do token', () => {
+test('banco persistente mantém dados no reinício e guarda somente hash do token', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-sqlite-')), file = join(directory, 'portal.sqlite');
   try {
-    let store = new PortalStore(file); const account = store.createAttendant('Persistente', 1000, tokenA);
-    store.recordSales({ id: account.id }, batch(), 'fixture_persistent_request');
-    store.saveProfile({ id: account.id }, { name: 'Persistente', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', photoUrl: `data:image/png;base64,${image.base64}`, saleAlertTemplate: '{nome}: {valor}' });
+    let store = await PortalStore.open(file); const account = (await store.createAttendant('Persistente', 1000, tokenA));
+    (await store.recordSales({ id: account.id }, batch(), 'fixture_persistent_request'));
+    (await store.saveProfile({ id: account.id }, { name: 'Persistente', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', photoUrl: `data:image/png;base64,${image.base64}`, saleAlertTemplate: '{nome}: {valor}' }));
     store.close();
-    store = new PortalStore(file);
-    assert.equal(store.portal(store.authenticate(tokenA)).sales.length, 1);
-    assert.equal(store.profile(store.authenticate(tokenA)).saleAlertTemplate, '{nome}: {valor}');
-    assert.equal(store.profile(store.authenticate(tokenA)).photoUrl, `data:image/png;base64,${image.base64}`); store.close();
+    store = await PortalStore.open(file);
+    assert.equal((await store.portal((await store.authenticate(tokenA)))).sales.length, 1);
+    assert.equal((await store.profile((await store.authenticate(tokenA)))).saleAlertTemplate, '{nome}: {valor}');
+    assert.equal((await store.profile((await store.authenticate(tokenA)))).photoUrl, `data:image/png;base64,${image.base64}`); store.close();
     assert.equal(readFileSync(file).includes(Buffer.from(tokenA)), false);
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
-test('atualização do banco configura PIX uma vez e preserva taxas já registradas nas vendas', () => {
+test('atualização do banco configura PIX uma vez e preserva taxas já registradas nas vendas', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-pix-upgrade-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Histórico', 1000, tokenA);
-    store.adminSetCheckout('pix', { name: 'PIX manual', fee: '0', fixedFee: '0' });
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico', 1000, tokenA));
+    (await store.adminSetCheckout('pix', { name: 'PIX manual', fee: '0', fixedFee: '0' }));
     const payload = batch(); payload.sales[0].checkoutId = 'pix';
-    store.recordSales({ id: account.id }, payload, 'fixture_before_pix_upgrade');
+    (await store.recordSales({ id: account.id }, payload, 'fixture_before_pix_upgrade'));
     store.db.exec('ALTER TABLE checkouts DROP COLUMN fixed_fee_cents; ALTER TABLE checkouts DROP COLUMN min_amount_cents; DROP TABLE schema_migrations;');
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.sales({ id: account.id })[0].feeCents, 0);
-    const pix = store.checkouts().find(checkout => checkout.id === 'pix')!;
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.sales({ id: account.id }))[0].feeCents, 0);
+    const pix = (await store.checkouts()).find(checkout => checkout.id === 'pix')!;
     assert.equal(pix.feeBps, 699); assert.equal(pix.fixedFeeCents, 169); assert.equal(pix.minAmountCents, 500);
-    store.recordSales({ id: account.id }, payload, 'fixture_after_pix_upgrade');
-    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 2266]);
-    store.adminSetCheckout('pix', { name: 'PIX manual', fee: '7', fixedFee: '2' });
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
-    assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.feeBps, 700);
+    (await store.recordSales({ id: account.id }, payload, 'fixture_after_pix_upgrade'));
+    assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 2266]);
+    (await store.adminSetCheckout('pix', { name: 'PIX manual', fee: '7', fixedFee: '2' }));
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
+    assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.feeBps, 700);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
-test('atualização do checkout preserva vendas antigas e mantém faixas ajustadas após reiniciar', () => {
+test('atualização do checkout preserva vendas antigas e mantém faixas ajustadas após reiniciar', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-upgrade-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Histórico checkout', 1000, tokenA);
-    store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null });
-    store.recordSales({ id: account.id }, batch(), 'fixture_before_checkout_upgrade');
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico checkout', 1000, tokenA));
+    (await store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null }));
+    (await store.recordSales({ id: account.id }, batch(), 'fixture_before_checkout_upgrade'));
     store.db.exec("ALTER TABLE checkouts DROP COLUMN tier_above_cents; ALTER TABLE checkouts DROP COLUMN tier_fee_bps; ALTER TABLE checkouts DROP COLUMN tier_fixed_fee_cents; DELETE FROM schema_migrations WHERE id = 'checkout-pix-tiered-tariff-v1';");
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.sales({ id: account.id })[0].feeCents, 0);
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.sales({ id: account.id }))[0].feeCents, 0);
     const payload = batch(); payload.sales = ['100', '1000'].map(amount => ({ ...payload.sales[0], amount }));
-    store.recordSales({ id: account.id }, payload, 'fixture_after_checkout_upgrade');
-    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
-    store.adminSetCheckout('main', { name: 'Checkout principal', fee: '16', fixedFee: '2', higherTier: { aboveAmount: '400', fee: '28', fixedFee: '3' } });
-    store.close(); store = new PortalStore(file);
-    const checkout = store.checkouts().find(item => item.id === 'main')!;
+    (await store.recordSales({ id: account.id }, payload, 'fixture_after_checkout_upgrade'));
+    assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
+    (await store.adminSetCheckout('main', { name: 'Checkout principal', fee: '16', fixedFee: '2', higherTier: { aboveAmount: '400', fee: '28', fixedFee: '3' } }));
+    store.close(); store = await PortalStore.open(file);
+    const checkout = (await store.checkouts()).find(item => item.id === 'main')!;
     assert.equal(checkout.feeBps, 1600); assert.equal(checkout.fixedFeeCents, 200);
     assert.deepEqual(checkout.higherTier, { aboveAmountCents: 40000, feeBps: 2800, fixedFeeCents: 300 });
-    assert.equal(store.checkouts().find(item => item.id === 'pix')!.feeBps, 699);
+    assert.equal((await store.checkouts()).find(item => item.id === 'pix')!.feeBps, 699);
     const logs = execFileSync(process.execPath, ['server/manage.ts', 'set-checkout', '--id', 'main', '--name', 'Checkout principal', '--fee', '15', '--fixed-fee', '1.99', '--above', '400', '--above-fee', '25', '--above-fixed-fee', '1.99'], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: file } });
     assert.equal(logs.includes(tokenA), false);
-    assert.deepEqual(store.checkouts().find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 40000, feeBps: 2500, fixedFeeCents: 199 });
-    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
+    assert.deepEqual((await store.checkouts()).find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 40000, feeBps: 2500, fixedFeeCents: 199 });
+    assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
-test('operador cria token e convite privados pelo comando de administração', () => {
+test('operador cria token e convite privados pelo comando de administração', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-invite-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'invite.json');
   try {
     const logs = execFileSync(process.execPath, ['server/manage.ts', 'create-attendant', '--name', 'Atendente de teste', '--commission', '29.99', '--base-url', 'https://portal.example', '--output', output], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: database } });
@@ -220,9 +220,9 @@ test('operador cria token e convite privados pelo comando de administração', (
     const token = new URL(invitation.url).hash.split('/').at(-1)!;
     assert.ok(token.length >= 43); assert.equal(logs.includes(token), false);
     assert.equal(statSync(output).mode & 0o777, 0o600);
-    const store = new PortalStore(database);
-    const auth = store.authenticate(token);
-    assert.equal(store.profile(auth).commissionBps, 2999);
+    const store = await PortalStore.open(database);
+    const auth = (await store.authenticate(token));
+    assert.equal((await store.profile(auth)).commissionBps, 2999);
     assert.equal(auth.id, invitation.attendantId); store.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -296,18 +296,18 @@ test('administração confere destino PIX e confirma ou cancela repasse uma úni
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 1000);
 });
 
-test('chave administrativa persiste com permissão privada e backup contém vendas e comprovantes', () => {
+test('chave administrativa persiste com permissão privada e backup contém vendas e comprovantes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-backup-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'backup.sqlite'), keyPath = join(directory, 'admin.key');
   try {
     const key = loadAdminKey(keyPath);
     assert.equal(loadAdminKey(keyPath), key); assert.equal(statSync(keyPath).mode & 0o777, 0o600);
     assert.throws(() => loadAdminKey(keyPath, 'short'));
-    const store = new PortalStore(database); store.createAttendant('Ana', 1000, tokenA);
-    store.recordSales(store.authenticate(tokenA), batch(), 'fixture_backup_request_key');
+    const store = await PortalStore.open(database); (await store.createAttendant('Ana', 1000, tokenA));
+    (await store.recordSales((await store.authenticate(tokenA)), batch(), 'fixture_backup_request_key'));
     const logs = execFileSync(process.execPath, ['server/manage.ts', 'backup', '--output', output], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: database } });
     assert.equal(logs.includes(tokenA), false); assert.equal(statSync(output).mode & 0o777, 0o600);
-    const copy = new PortalStore(output), auth = copy.authenticate(tokenA), sale = copy.sales(auth)[0];
-    assert.equal(sale.amountCents, 30000); assert.ok(copy.receipt(auth, sale.receiptId).bytes.length > 0);
+    const copy = await PortalStore.open(output), auth = await copy.authenticate(tokenA), sale = (await copy.sales(auth))[0];
+    assert.equal(sale.amountCents, 30000); assert.ok((await copy.receipt(auth, sale.receiptId)).bytes.length > 0);
     copy.close(); store.close();
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });
@@ -317,7 +317,7 @@ test('foto e alerta são salvos por atendente, persistem e a foto aparece no ran
   const photoUrl = `data:image/png;base64,${image.base64}`;
   const fields = { name: 'Ana Foto', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana', photoUrl, saleAlertTemplate: '{nome}: {qtd} venda(s) de {valor}' };
   assert.equal((await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify(fields) })).status, 200);
-  assert.equal(store.profile({ id: a.id }).photoUrl, photoUrl);
+  assert.equal((await store.profile({ id: a.id })).photoUrl, photoUrl);
   const other = await (await call('/api/portal', tokenB)).json();
   assert.equal(other.profile.photoUrl, '');
   assert.equal(other.profile.saleAlertTemplate.includes('✅'), true);
@@ -325,7 +325,7 @@ test('foto e alerta são salvos por atendente, persistem e a foto aparece no ran
   const ranking = await (await call('/api/ranking', tokenB)).json();
   assert.equal(ranking[0].photoUrl, photoUrl); assert.equal(JSON.stringify(ranking).includes('ana@example.com'), false);
   assert.equal((await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ ...fields, photoUrl: 'data:image/svg+xml;base64,PHN2Zz4=' }) })).status, 400);
-  assert.equal(store.profile({ id: a.id }).photoUrl, photoUrl);
+  assert.equal((await store.profile({ id: a.id })).photoUrl, photoUrl);
 });
 
 function pushFixtureSubscription() {
@@ -348,11 +348,11 @@ test('push é autenticado e isolado, criptografa o alerta e não repete envio id
   for (const endpoint of ['https://127.0.0.1/private', 'http://fcm.googleapis.com/x', 'https://fcm.googleapis.com.evil.example/x', [subscription.endpoint], null]) assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify({ ...subscription, endpoint }) })).status, 400);
   assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify({ ...subscription, keys: { auth: [subscription.keys.auth], p256dh: subscription.keys.p256dh } }) })).status, 400);
   assert.equal((await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(subscription) })).status, 201);
-  store.rotateToken(a.id);
+  (await store.rotateToken(a.id));
   assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM push_subscriptions WHERE attendant_id = ?').get(a.id)?.count, 0);
   assert.equal((await call('/api/push/config', tokenA)).status, 401);
   assert.equal((await call('/api/push/subscriptions', tokenB, { method: 'POST', body: JSON.stringify(subscription) })).status, 201);
-  store.setAttendantActive(b.id, { active: false });
+  (await store.setAttendantActive(b.id, { active: false }));
   assert.equal(store.db.prepare('SELECT COUNT(*) AS count FROM push_subscriptions WHERE attendant_id = ?').get(b.id)?.count, 0);
 });
 test('push expirado é removido sem desfazer a venda; credenciais VAPID persistem de forma privada', async t => {
@@ -415,38 +415,38 @@ test('fila administrativa pagina, filtra por atendente e não expõe tokens', as
   assert.equal((await call('/api/admin/sales?status=invalid', adminKey)).status, 400);
   assert.equal((await call('/api/admin/sales?page=0', adminKey)).status, 400);
 });
-test('migração mantém vendas anteriores aprovadas e persiste decisões e novos lançamentos pendentes', () => {
+test('migração mantém vendas anteriores aprovadas e persiste decisões e novos lançamentos pendentes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-sale-review-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Histórico revisão', 1000, tokenA);
-    store.recordSales({ id: account.id }, batch(), 'fixture_legacy_sale_before_review');
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico revisão', 1000, tokenA));
+    (await store.recordSales({ id: account.id }, batch(), 'fixture_legacy_sale_before_review'));
     store.db.exec('DROP INDEX sales_status_created; ALTER TABLE sales DROP COLUMN status; ALTER TABLE sales DROP COLUMN review_note; ALTER TABLE sales DROP COLUMN reviewed_at;');
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.sales({ id: account.id })[0].status, 'approved');
-    store.recordSales({ id: account.id }, batch(), 'fixture_sale_after_review_migration');
-    const pending = store.sales({ id: account.id }).find(sale => sale.status === 'pending')!;
-    store.reviewSale(pending.id, { status: 'rejected', note: 'Print ilegível' });
-    store.close(); store = new PortalStore(file);
-    const reviewed = store.sales({ id: account.id }).find(sale => sale.id === pending.id)!;
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.sales({ id: account.id }))[0].status, 'approved');
+    (await store.recordSales({ id: account.id }, batch(), 'fixture_sale_after_review_migration'));
+    const pending = (await store.sales({ id: account.id })).find(sale => sale.status === 'pending')!;
+    (await store.reviewSale(pending.id, { status: 'rejected', note: 'Print ilegível' }));
+    store.close(); store = await PortalStore.open(file);
+    const reviewed = (await store.sales({ id: account.id })).find(sale => sale.id === pending.id)!;
     assert.equal(reviewed.status, 'rejected'); assert.equal(reviewed.reviewNote, 'Print ilegível'); assert.ok(reviewed.reviewedAt);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000', () => {
+test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-limit-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Histórico limite', 1000, tokenA);
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico limite', 1000, tokenA));
     store.db.exec("UPDATE checkouts SET max_amount_cents = NULL, tier_above_cents = 100000, tier_fee_bps = 2500, tier_fixed_fee_cents = 199 WHERE id = 'main'; DELETE FROM schema_migrations WHERE id = 'checkout-maximum-1000-v1';");
     const payload = batch(); payload.sales[0].amount = '1000,01';
-    store.recordSales({ id: account.id }, payload, 'fixture_sale_before_maximum');
-    const sale = store.sales({ id: account.id })[0]; store.reviewSale(sale.id, { status: 'approved', note: 'Histórico' });
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.sales({ id: account.id })[0].feeCents, 25199);
-    assert.equal(store.sales({ id: account.id })[0].status, 'approved');
-    assert.equal(store.checkouts().find(item => item.id === 'main')!.higherTier, null);
-    assert.throws(() => store!.recordSales({ id: account.id }, payload, 'fixture_sale_after_maximum'), /valor máximo/);
+    (await store.recordSales({ id: account.id }, payload, 'fixture_sale_before_maximum'));
+    const sale = (await store.sales({ id: account.id }))[0]; (await store.reviewSale(sale.id, { status: 'approved', note: 'Histórico' }));
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.sales({ id: account.id }))[0].feeCents, 25199);
+    assert.equal((await store.sales({ id: account.id }))[0].status, 'approved');
+    assert.equal((await store.checkouts()).find(item => item.id === 'main')!.higherTier, null);
+    await assert.rejects(async () => (await store!.recordSales({ id: account.id }, payload, 'fixture_sale_after_maximum')), /valor máximo/);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -488,88 +488,88 @@ test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte s
   assert.equal((await finish(second.id, 'paid')).status, 400);
 });
 
-test('migração mantém regras e saques históricos e aplica 50% apenas aos próximos lançamentos', () => {
+test('migração mantém regras e saques históricos e aplica 50% apenas aos próximos lançamentos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-earnings-upgrade-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Histórico financeiro', 1000, tokenA), auth = { id: account.id };
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico financeiro', 1000, tokenA)), auth = { id: account.id };
     const payload = batch(); payload.sales[0].amount = '100';
-    store.recordSales(auth, payload, 'fixture_legacy_earnings_sale');
-    const sale = store.sales(auth)[0]; store.reviewSale(sale.id, { status: 'approved', note: '' });
-    store.saveProfile(auth, { name: 'Histórico', email: '', phone: '', pixType: 'email', pixKey: 'legacy@example.com', pixOwner: 'Histórico' });
+    (await store.recordSales(auth, payload, 'fixture_legacy_earnings_sale'));
+    const sale = (await store.sales(auth))[0]; (await store.reviewSale(sale.id, { status: 'approved', note: '' }));
+    (await store.saveProfile(auth, { name: 'Histórico', email: '', phone: '', pixType: 'email', pixKey: 'legacy@example.com', pixOwner: 'Histórico' }));
     store.db.exec("UPDATE sales SET commission_mode = 'net-share'");
-    const historical = store.requestPayout(auth, { amount: '8' });
+    const historical = (await store.requestPayout(auth, { amount: '8' }));
     store.db.exec('ALTER TABLE sales DROP COLUMN commission_mode; ALTER TABLE sales DROP COLUMN attendant_fee_cents; ALTER TABLE payouts DROP COLUMN withdrawal_fee_cents;');
     store.db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('attendant-gross-share-50-v1');
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.profile(auth).commissionBps, 5000);
-    assert.equal(store.sales(auth)[0].commissionBps, 1000); assert.equal(store.sales(auth)[0].commissionMode, 'net-share');
-    assert.equal(store.payouts(auth)[0].id, historical.id); assert.equal(store.payouts(auth)[0].withdrawalFeeCents, 0);
-    assert.equal(store.portal(auth).finance.availableCents, 30);
-    store.recordSales(auth, payload, 'fixture_new_earnings_sale');
-    const next = store.sales(auth).find(item => item.id !== sale.id)!; store.reviewSale(next.id, { status: 'approved', note: '' });
-    assert.equal(store.portal(auth).finance.availableCents, 4180);
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.profile(auth)).commissionBps, 5000);
+    assert.equal((await store.sales(auth))[0].commissionBps, 1000); assert.equal((await store.sales(auth))[0].commissionMode, 'net-share');
+    assert.equal((await store.payouts(auth))[0].id, historical.id); assert.equal((await store.payouts(auth))[0].withdrawalFeeCents, 0);
+    assert.equal((await store.portal(auth)).finance.availableCents, 30);
+    (await store.recordSales(auth, payload, 'fixture_new_earnings_sale'));
+    const next = (await store.sales(auth)).find(item => item.id !== sale.id)!; (await store.reviewSale(next.id, { status: 'approved', note: '' }));
+    assert.equal((await store.portal(auth)).finance.availableCents, 4180);
     // Restarting never resets a later administrative override or changes stored sale snapshots.
     store.db.prepare('UPDATE attendants SET commission_bps = 6000 WHERE id = ?').run(account.id);
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.profile(auth).commissionBps, 6000); assert.equal(store.portal(auth).finance.availableCents, 4180);
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.profile(auth)).commissionBps, 6000); assert.equal((await store.portal(auth)).finance.availableCents, 4180);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('migração remove tarifas antecipadas de pedidos em análise sem alterar repasses já pagos', () => {
+test('migração remove tarifas antecipadas de pedidos em análise sem alterar repasses já pagos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-payout-fee-upgrade-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Repasse de teste', 5000, tokenA), auth = { id: account.id };
-    store.recordSales(auth, batch(), 'fixture_payout_fee_migration');
-    store.reviewSale(store.sales(auth)[0].id, { status: 'approved', note: '' });
-    store.saveProfile(auth, { name: 'Repasse de teste', email: '', phone: '', pixType: 'email', pixKey: 'payout@example.com', pixOwner: 'Teste' });
-    const paid = store.requestPayout(auth, { amount: '10' }); store.markPayout(paid.id, 'paid', 'Pagamento sintético');
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Repasse de teste', 5000, tokenA)), auth = { id: account.id };
+    (await store.recordSales(auth, batch(), 'fixture_payout_fee_migration'));
+    (await store.reviewSale((await store.sales(auth))[0].id, { status: 'approved', note: '' }));
+    (await store.saveProfile(auth, { name: 'Repasse de teste', email: '', phone: '', pixType: 'email', pixKey: 'payout@example.com', pixOwner: 'Teste' }));
+    const paid = (await store.requestPayout(auth, { amount: '10' })); (await store.markPayout(paid.id, 'paid', 'Pagamento sintético'));
     store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id = ?').run(paid.id);
-    const pending = store.requestPayout(auth, { amount: '10' });
-    const cancelled = store.requestPayout(auth, { amount: '10' }); store.markPayout(cancelled.id, 'cancelled', 'Cancelamento sintético');
+    const pending = (await store.requestPayout(auth, { amount: '10' }));
+    const cancelled = (await store.requestPayout(auth, { amount: '10' })); (await store.markPayout(cancelled.id, 'cancelled', 'Cancelamento sintético'));
     store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id IN (?, ?)').run(pending.id, cancelled.id);
     store.db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('payout-fee-on-payment-v1');
-    const paidAt = store.payouts(auth).find(item => item.id === paid.id)!.paidAt, balance = store.portal(auth).finance.availableCents;
-    store.close(); store = new PortalStore(file);
-    const payouts = store.payouts(auth);
+    const paidAt = (await store.payouts(auth)).find(item => item.id === paid.id)!.paidAt, balance = (await store.portal(auth)).finance.availableCents;
+    store.close(); store = await PortalStore.open(file);
+    const payouts = (await store.payouts(auth));
     assert.equal(payouts.find(item => item.id === pending.id)!.withdrawalFeeCents, 0);
     assert.equal(payouts.find(item => item.id === cancelled.id)!.withdrawalFeeCents, 0);
     assert.equal(payouts.find(item => item.id === paid.id)!.withdrawalFeeCents, 500);
     assert.equal(payouts.find(item => item.id === paid.id)!.paidAt, paidAt);
-    assert.equal(store.portal(auth).finance.availableCents, balance);
-    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 500);
-    store.markPayout(pending.id, 'paid', 'Pagamento posterior');
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 750);
-    assert.equal(store.portal(auth).finance.availableCents, balance);
+    assert.equal((await store.portal(auth)).finance.availableCents, balance);
+    assert.equal((await store.portal(auth)).finance.withdrawalFeeCents, 500);
+    (await store.markPayout(pending.id, 'paid', 'Pagamento posterior'));
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.portal(auth)).finance.withdrawalFeeCents, 750);
+    assert.equal((await store.portal(auth)).finance.availableCents, balance);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('migração mantém taxas inteiras históricas e salva o rateio das próximas vendas e repasses', () => {
+test('migração mantém taxas inteiras históricas e salva o rateio das próximas vendas e repasses', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-gateway-share-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
-    store = new PortalStore(file); const account = store.createAttendant('Rateio gateway', 5000, tokenA), auth = { id: account.id };
+    store = await PortalStore.open(file); const account = (await store.createAttendant('Rateio gateway', 5000, tokenA)), auth = { id: account.id };
     const payload = batch(); payload.sales[0].amount = '100';
-    store.recordSales(auth, payload, 'fixture_gateway_before_share');
-    const historical = store.sales(auth)[0]; store.reviewSale(historical.id, { status: 'approved', note: '' });
+    (await store.recordSales(auth, payload, 'fixture_gateway_before_share'));
+    const historical = (await store.sales(auth))[0]; (await store.reviewSale(historical.id, { status: 'approved', note: '' }));
     store.db.exec('UPDATE sales SET attendant_fee_cents = fee_cents');
-    store.saveProfile(auth, { name: 'Rateio gateway', email: '', phone: '', pixType: 'email', pixKey: 'share@example.com', pixOwner: 'Teste' });
-    const payout = store.requestPayout(auth, { amount: '30' }); store.markPayout(payout.id, 'paid', 'Repasse histórico sintético');
+    (await store.saveProfile(auth, { name: 'Rateio gateway', email: '', phone: '', pixType: 'email', pixKey: 'share@example.com', pixOwner: 'Teste' }));
+    const payout = (await store.requestPayout(auth, { amount: '30' })); (await store.markPayout(payout.id, 'paid', 'Repasse histórico sintético'));
     store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id = ?').run(payout.id);
     store.db.exec('ALTER TABLE sales DROP COLUMN attendant_fee_cents; ALTER TABLE payouts DROP COLUMN gateway_fee_cents;');
-    store.close(); store = new PortalStore(file);
-    assert.equal(store.sales(auth)[0].attendantFeeCents, null); assert.equal(store.portal(auth).finance.availableCents, 301);
-    assert.equal(store.payouts(auth)[0].withdrawalFeeCents, 500); assert.equal(store.payouts(auth)[0].gatewayFeeCents, 500);
-    store.recordSales(auth, payload, 'fixture_gateway_after_share');
-    const next = store.sales(auth).find(item => item.id !== historical.id)!;
-    assert.equal(next.attendantFeeCents, 850); store.reviewSale(next.id, { status: 'approved', note: '' });
-    assert.equal(store.portal(auth).finance.availableCents, 4451);
-    store.adminSetCheckout('main', { name: 'Nova tarifa', fee: '20' });
-    store.close(); store = new PortalStore(file);
-    const saved = store.sales(auth).find(item => item.id === next.id)!;
+    store.close(); store = await PortalStore.open(file);
+    assert.equal((await store.sales(auth))[0].attendantFeeCents, null); assert.equal((await store.portal(auth)).finance.availableCents, 301);
+    assert.equal((await store.payouts(auth))[0].withdrawalFeeCents, 500); assert.equal((await store.payouts(auth))[0].gatewayFeeCents, 500);
+    (await store.recordSales(auth, payload, 'fixture_gateway_after_share'));
+    const next = (await store.sales(auth)).find(item => item.id !== historical.id)!;
+    assert.equal(next.attendantFeeCents, 850); (await store.reviewSale(next.id, { status: 'approved', note: '' }));
+    assert.equal((await store.portal(auth)).finance.availableCents, 4451);
+    (await store.adminSetCheckout('main', { name: 'Nova tarifa', fee: '20' }));
+    store.close(); store = await PortalStore.open(file);
+    const saved = (await store.sales(auth)).find(item => item.id === next.id)!;
     assert.equal(saved.feeCents, 1699); assert.equal(saved.attendantFeeCents, 850);
-    assert.equal(store.portal(auth).finance.availableCents, 4451);
+    assert.equal((await store.portal(auth)).finance.availableCents, 4451);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });

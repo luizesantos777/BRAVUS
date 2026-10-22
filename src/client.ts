@@ -32,6 +32,7 @@ export class PortalClient {
     const abort = new AbortController(), timeout = window.setTimeout(() => abort.abort(), 20_000);
     try {
       const response = await fetch(`${this.base}${path}`, { ...init, signal: abort.signal, headers: { Authorization: `Bearer ${this.token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers } });
+      if (response.status === 413) throw new ApiError('O envio excede o limite da hospedagem. Envie menos vendas ou prints menores por vez.', 413);
       if (!response.headers.get('content-type')?.includes('application/json')) throw new ApiError('O serviço de atendentes está indisponível. Tente novamente em instantes.', 503);
       const body = await response.json();
       if (!response.ok) throw new ApiError(body.error ?? 'Não foi possível concluir a solicitação.', response.status);

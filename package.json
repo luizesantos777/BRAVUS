@@ -2,24 +2,26 @@
   "name": "bravus",
   "private": true,
   "version": "0.1.0",
-  "description": "Portal do atendente BRAVUS: vendas, comissões, repasses e acesso por token individual.",
+  "description": "Portal do atendente BRAVUS: vendas, comiss\u00f5es, repasses e acesso por token individual.",
   "type": "module",
   "engines": {
-    "node": ">=24.0.0"
+    "node": "24.x"
   },
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
     "dev:api": "node --env-file-if-exists=.env server/index.ts",
     "start": "node --env-file-if-exists=.env server/index.ts",
     "manage": "node --env-file-if-exists=.env server/manage.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && npm run build:api",
     "build:pages": "npm run build && node scripts/build-pages.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
-    "test": "node --test tests/domain.test.ts tests/api.test.ts",
-    "test:e2e": "npm run build && playwright test"
+    "test": "npm run build:api && node --test tests/domain.test.ts tests/api.test.ts tests/cloud.test.ts",
+    "test:e2e": "npm run build && playwright test",
+    "build:api": "node scripts/build-api.mjs"
   },
   "dependencies": {
+    "@libsql/client": "0.18.0",
     "lucide-react": "1.61.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
@@ -31,6 +33,7 @@
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
     "@types/web-push": "3.6.4",
+    "esbuild": "0.28.2",
     "typescript": "7.0.2",
     "vite": "8.3.5"
   }

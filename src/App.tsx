@@ -75,7 +75,8 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
         checkoutFee(amountToCents(row.amount), checkout);
       }
       const payload = { date, sales: rows.map(({ id: _id, ...row }) => row) };
-      if (new Blob([JSON.stringify(payload)]).size > 12 * 1024 * 1024) throw new Error('O envio excede 12 MB. Envie menos vendas por vez.');
+      const limit = portal.maxRequestBytes ?? 12 * 1024 * 1024;
+      if (new Blob([JSON.stringify(payload)]).size > limit) throw new Error(`O envio excede ${Math.floor(limit / 1024 / 1024)} MB. Envie menos vendas ou prints menores por vez.`);
       setBusy(true); await client.saveSales(payload, key.current);
       const count = rows.length; setRows([blankRow()]); key.current = crypto.randomUUID();
       const total = payload.sales.reduce((sum, row) => sum + amountToCents(row.amount), 0);

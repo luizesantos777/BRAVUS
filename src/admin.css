@@ -49,3 +49,4 @@
   .admin-preview-notice { font-size: 10px; }
   .pending-sales-notice { font-size: 10px; }
 }
+.api-status{display:flex;align-items:flex-start;gap:9px;margin:17px 0;padding:13px;border:1px solid #53603c;border-radius:10px;background:#192214;color:#ccd6bd;font-size:11px;line-height:1.8}.api-status>svg{flex-shrink:0;margin-top:3px}.api-status.ready{color:#afd79f;border-color:#38642c}.api-status.setup,.api-status.unavailable{border-color:#65562e;color:#e7cf86}.api-status p{margin:6px 0;color:#b4bea6}.api-status summary{cursor:pointer;margin-top:10px;font-weight:700}.api-status ol{padding-left:18px;margin:10px 0}.api-status li{margin-bottom:8px}.api-status code{font-size:10px;overflow-wrap:anywhere}.api-status a{display:inline-flex;align-items:center;gap:7px;color:#e7c35b;margin-top:7px}

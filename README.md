@@ -2,13 +2,34 @@
 
 Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
 
-## O que está publicado
+## Vercel: interface e API real
 
-O GitHub Pages serve a interface estática, na pasta `docs/`. Sem uma API hospedada, a página inicial funciona como **demonstração identificada**, com dados de exemplo no navegador. Os tokens reais dependem do servidor e do banco de dados; não são autenticados por uma lista pública de tokens ou pelo localStorage.
+O endereço do site é **https://bravus-omega.vercel.app/**. O repositório inclui uma função Node.js 24 em `api/index.mjs`, gerada a partir de `server/vercel.ts`, e o roteamento `/api/*` em `vercel.json`. A função usa **Turso/libSQL como banco persistente externo**. Não grava dados em `/tmp` nem usa o disco efêmero da Vercel.
 
-A API Node.js + SQLite está implementada, com painel administrativo protegido e backup consistente. Ainda é necessário hospedá-la com armazenamento persistente e HTTPS para usar atendentes reais pela internet. GitHub Pages não executa essa API. Solicitar repasse registra uma solicitação para pagamento pela administração; confirmar o pagamento registra uma operação já feita no banco.
+**A API só fica operacional depois que as credenciais forem configuradas na conta Vercel.** Sem conexão do banco ou chave administrativa, responde 503 com JSON e não cria um banco temporário. Não há credenciais de Turso ou de administração da Vercel neste ambiente de desenvolvimento; publicar código não cria, por si só, um banco na conta do responsável.
 
-O frontend foi hospedado pelo responsável em **https://bravus-omega.vercel.app/** na Vercel. A disponibilidade da API e do banco nesse endereço precisa ser verificada separadamente. Nessa etapa, a API deve ser adaptada ao ambiente e conectada a um banco persistente externo; o SQLite em disco local da implementação atual não é adequado a funções efêmeras.
+### Ativar o banco e a API na sua conta
+
+1. No [projeto BRAVUS na Vercel](https://vercel.com/bravus5/bravus/stores), abra **Storage**, crie ou conecte um banco **Turso** dedicado ao BRAVUS. Se não aparecer na lista, use a [integração Turso](https://vercel.com/marketplace/turso) ou o [painel Turso](https://app.turso.tech/) e conecte o banco ao projeto.
+2. Em **Settings → Environment Variables**, configure para **Production**:
+
+   | Variável privada | Origem |
+   | --- | --- |
+   | `TURSO_DATABASE_URL` | Endereço `libsql://...` fornecido pelo banco |
+   | `TURSO_AUTH_TOKEN` | Token privado do banco, fornecido pela integração |
+   | `BRAVUS_ADMIN_KEY` | Sua chave administrativa privada, de 32 a 256 caracteres, sem espaços no começo ou no fim |
+
+3. Faça **Redeploy**. O banco e as tabelas são inicializados automaticamente na primeira conexão, com migrações transacionais. Não é criado nenhum atendente nem venda de exemplo no banco real.
+4. Abra **https://bravus-omega.vercel.app/api/health**. A resposta `{"status":"ok"}` confirma que a API consultou o banco. Se responder `configuration_required`, faltam variáveis; se responder `unavailable`, confira a conexão e as credenciais no painel da hospedagem. Nenhum erro público revela chaves.
+5. Abra **https://bravus-omega.vercel.app/#/admin**, entre com `BRAVUS_ADMIN_KEY` e cadastre seus atendentes. O painel mostra a situação da API e instruções de conexão antes do login. Entregue a cada atendente apenas seu link individual.
+
+As variáveis ficam somente no servidor; nunca use prefixo `VITE_` para segredos, não as envie no chat e não as publique no Git. Para este modelo, deixe `VITE_API_URL` sem configurar: o site acessa sua API no mesmo endereço. Preview precisa de suas próprias variáveis e de um banco separado para não alterar dados de produção.
+
+A API conserva atendentes, hashes dos tokens, vendas, fotos, comprovantes, ADS, aprovação e repasses entre execuções e deploys. As regras de dinheiro são as mesmas do portal: 50% de participação por padrão, taxas do gateway divididas em 50%, limite de R$ 1.000 no checkout e taxa de saque dividida somente quando o administrador confirma o pagamento. Solicitar repasse não executa PIX; a administração registra um pagamento feito no banco.
+
+Na Vercel, cada envio tem limite de **4 MB de JSON**, respeitando o limite da plataforma. O portal informa esse limite e pede menos vendas ou prints menores quando necessário; cada print continua limitado a 2 MB. O servidor Node local aceita 12 MB. Na Vercel, Web Push é opcional: configure também um par estável `BRAVUS_PUSH_PUBLIC_KEY` / `BRAVUS_PUSH_PRIVATE_KEY` e `BRAVUS_PUSH_SUBJECT` para ativá-lo; sem esse par, as vendas continuam funcionando e notificações push ficam indisponíveis.
+
+O GitHub Pages continua sendo uma interface estática de demonstração, em `docs/`. Tokens reais dependem de uma API: não são autenticados por listas públicas nem por localStorage.
 
 ## Alternativa preparada anteriormente: Render
 
@@ -54,7 +75,7 @@ Novas vendas entram **Em análise**. Apenas as aprovadas entram no faturamento c
 
 Na aba **Custos ADS**, selecione o atendente e a data, confira os valores carregados e salve o custo de anúncios e eventuais ajustes adicionais de taxas. O gateway cobra R$ 5 por saque, divididos em R$ 2,50 para o atendente e R$ 2,50 para a BRAVUS, somente quando a administração confirma o pagamento. Não lance essa tarifa novamente aqui. O lançamento substitui o valor anterior para esse atendente e data, sem somá-lo novamente. O histórico mostra os últimos 100 registros e permite carregar um dia para edição; outros dias podem ser consultados pelos filtros. O custo entra no saldo desse atendente e pode gerar saldo negativo mesmo com vendas aguardando aprovação.
 
-O link público `https://luizesantos777.github.io/BRAVUS/#/admin` oferece **Ver painel de demonstração**, sem pedir a chave real. Essa prévia usa somente dados de exemplo do navegador e não autentica usuários reais nem faz chamadas administrativas à API. Ao abri-la pela primeira vez sem vendas de demonstração, são criados exemplos identificados e comprovantes marcados **SEM TRANSAÇÃO REAL**. Aprovações e ADS da prévia refletem no portal de demonstração do mesmo navegador. Cadastro de contas, tokens, configuração de tarifas e pagamentos reais continuam exclusivos do painel autenticado na API hospedada. O frontend também está na Vercel; a prévia não substitui uma API conectada ao banco persistente.
+O link público `https://luizesantos777.github.io/BRAVUS/#/admin` oferece **Ver painel de demonstração**, sem pedir a chave real. Essa prévia usa somente dados de exemplo do navegador e não autentica usuários reais nem faz chamadas administrativas à API. Ao abri-la pela primeira vez sem vendas de demonstração, são criados exemplos identificados e comprovantes marcados **SEM TRANSAÇÃO REAL**. Aprovações e ADS da prévia refletem no portal de demonstração do mesmo navegador. Cadastro de contas, tokens, configuração de tarifas e pagamentos reais continuam exclusivos do painel autenticado na API hospedada. Na Vercel, a API real usa Turso após a configuração das variáveis acima; a prévia continua separada dos dados reais.
 
 ## Meus Dados e PIX
 
@@ -147,7 +168,7 @@ Para cancelar uma solicitação pendente, use `--status cancelled`. Marcar um re
 - Custos ADS e ajustes adicionais de taxas são descontados do saldo e podem gerar saldo negativo. A taxa automática de saque não deve ser lançada novamente nos custos diários.
 - A taxa de **R$ 5,00 do gateway é dividida em R$ 2,50 para cada parte e cobrada somente quando a administração efetua o repasse e confirma o pagamento**. Solicitar reserva o total para análise, com taxa zero e sem cobrança antecipada no extrato. Se solicitar R$ 41,50, a prévia informa **R$ 39,00 no PIX** após o futuro pagamento; a BRAVUS assume os outros R$ 2,50. Confirmar o pagamento grava a tarifa uma única vez, mantendo o desconto total de R$ 41,50 já reservado; cancelar libera o total sem tarifa. O extrato do atendente registra sua metade de R$ 2,50 na data do pagamento em São Paulo, mesmo que o pedido seja de outro dia. A tela do administrador distingue PIX previsto e pago. Pedidos até R$ 2,50 são recusados, pois não cobrem o PIX líquido; pedidos antigos pequenos podem ser cancelados. Repasses já pagos mantêm suas tarifas históricas e não são cobrados novamente. O atendente não pode definir a tarifa ou confirmar pagamentos.
 - O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas aprovadas de atendentes ativos, sem tokens ou PIX.
-- Cada venda exige um print PNG, JPEG ou WEBP de até 2 MB. Cada envio aceita até 10 vendas e 12 MB no total, de forma atômica.
+- Cada venda exige um print PNG, JPEG ou WEBP de até 2 MB. Cada envio aceita até 10 vendas de forma atômica, com até 12 MB de JSON no servidor local ou 4 MB na Vercel.
 - Um identificador de envio evita duplicar vendas em tentativas repetidas com o mesmo conteúdo.
 
 ## Hospedar para uso real
@@ -258,3 +279,16 @@ Os dados da antiga demonstração de gestão (`bravus.data.v1`) não são apagad
 A coluna `sales.commission_mode` identifica a fórmula histórica (`net-share`) ou a nova (`gross-share-less-fees`). `sales.attendant_fee_cents` guarda a metade da taxa atribuída ao atendente; nulo preserva a regra histórica. `payouts.gateway_fee_cents` guarda a taxa total efetiva do saque; `payouts.withdrawal_fee_cents` guarda somente a parcela do atendente: zero em pedidos pendentes ou cancelados e R$ 2,50 ao confirmar novos pagamentos. Repasses anteriores conservam o desconto histórico, inclusive R$ 5 integrais. A migração `payout-fee-on-payment-v1` zera tarifas antecipadas dos pedidos ainda não pagos e preserva os repasses já pagos. Migrações são transacionais e idempotentes.
 
 As colunas antigas de meta permanecem no SQLite para preservar a compatibilidade dos bancos existentes, mas não são lidas, expostas pela API ou usadas nos cálculos. Dados antigos da demonstração continuam na mesma chave do navegador e suas vendas antigas permanecem aprovadas e geram comissão sem mínimo de faturamento; novos lançamentos aguardam a aprovação administrativa.
+
+## Implementação da conexão persistente
+
+- `server/database.ts`: contrato assíncrono de SQL para os dois ambientes.
+- `server/sqlite-database.ts`: SQLite local, com fila para isolar transações durante operações assíncronas.
+- `server/turso-database.ts`: cliente libSQL HTTP com transações de escrita e conversão de BLOBs.
+- `server/store.ts`: uma única implementação das regras de autorização, vendas e saldos para ambos os bancos.
+- `server/vercel.ts`: handler serverless, cache de conexão por instância, configuração por variáveis privadas e ausência de fallback para armazenamento efêmero.
+- `scripts/build-api.mjs`: gera o artefato JavaScript da função; nenhum segredo é incluído no build.
+
+As reservas de repasses e a verificação de idempotência dos lançamentos ocorrem dentro da mesma transação que a gravação. Instâncias diferentes compartilham o banco, e decisões concorrentes não liberam saldo nem cobram tarifa duas vezes. Tabelas e migrações são inicializadas sob transação de escrita para evitar corridas em cold starts. O backup local `npm run manage -- backup` é exclusivo de SQLite em disco; para Turso, mantenha cópias e a recuperação pelo provedor. Dados de demonstração nunca são importados automaticamente para o banco real.
+
+Os testes em `tests/cloud.test.ts` usam libSQL com um banco temporário para verificar a mesma API da Vercel, persistência entre instâncias, comprovantes binários, inicialização concorrente, idempotência e proteção contra reserva/pagamento duplicado. Também verificam 503 sem configuração e o artefato JavaScript implantado. Não usam credenciais reais nem bancos de produção.

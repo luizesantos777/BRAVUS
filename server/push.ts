@@ -35,11 +35,11 @@ export class PushService {
   keys: VapidKeys;
   sender: typeof webpush.sendNotification;
   constructor(store: PortalStore, keys: VapidKeys, sender = webpush.sendNotification) { this.store = store; this.keys = keys; this.sender = sender; }
-  config(auth: Authenticated) {
-    const subscriptionIds = this.store.db.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE attendant_id = ?').all(auth.id).map(row => String(row.endpoint_hash));
+  async config(auth: Authenticated) {
+    const subscriptionIds = (await this.store.sql.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE attendant_id = ?').all(auth.id)).map(row => String(row.endpoint_hash));
     return { publicKey: this.keys.publicKey, subscriptionIds };
   }
-  subscribe(auth: Authenticated, input: unknown) {
+  async subscribe(auth: Authenticated, input: unknown) {
     if (!input || typeof input !== 'object') throw new PortalError(400, 'Inscrição de notificações inválida.');
     const data = input as PushSubscription;
     try {
@@ -51,29 +51,29 @@ export class PushService {
       ECDH.convertKey(Buffer.from(data.keys.p256dh, 'base64url'), 'prime256v1');
     } catch { throw new PortalError(400, 'Use uma inscrição válida do serviço de notificações do navegador.'); }
     const id = createHash('sha256').update(data.endpoint).digest('hex');
-    const exists = this.store.db.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').get(id, auth.id);
-    if (!exists && this.config(auth).subscriptionIds.length >= 5) throw new PortalError(400, 'O limite é de cinco aparelhos por atendente.');
+    const exists = (await this.store.sql.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').get(id, auth.id));
+    if (!exists && (await this.config(auth)).subscriptionIds.length >= 5) throw new PortalError(400, 'O limite é de cinco aparelhos por atendente.');
     const safe = { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
-    this.store.db.prepare('INSERT INTO push_subscriptions VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET attendant_id = excluded.attendant_id, subscription = excluded.subscription').run(id, auth.id, JSON.stringify(safe));
+    (await this.store.sql.prepare('INSERT INTO push_subscriptions VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET attendant_id = excluded.attendant_id, subscription = excluded.subscription').run(id, auth.id, JSON.stringify(safe)));
     return { id };
   }
-  unsubscribe(auth: Authenticated, input: unknown) {
+  async unsubscribe(auth: Authenticated, input: unknown) {
     const id = (input as { id?: unknown } | null)?.id;
     if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new PortalError(400, 'Inscrição inválida.');
-    this.store.db.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(id, auth.id);
+    (await this.store.sql.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(id, auth.id));
     return { saved: true };
   }
   async notifySale(auth: Authenticated, batch: SaleBatch) {
-    const active = this.store.db.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id);
+    const active = (await this.store.sql.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id));
     if (!active) return;
-    const profile = this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
+    const profile = (await this.store.profile(auth)), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
     const payload = JSON.stringify({ title: 'BRAVUS Brasil · Venda registrada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
-    const rows = this.store.db.prepare('SELECT endpoint_hash, subscription FROM push_subscriptions WHERE attendant_id = ?').all(auth.id);
+    const rows = (await this.store.sql.prepare('SELECT endpoint_hash, subscription FROM push_subscriptions WHERE attendant_id = ?').all(auth.id));
     await Promise.allSettled(rows.map(async row => {
       try {
         await this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? 'https://github.com/luizesantos777/BRAVUS' }, TTL: 600, timeout: 5000, ...(process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {}) });
       } catch (error) {
-        if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) this.store.db.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(row.endpoint_hash, auth.id);
+        if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) (await this.store.sql.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(String(row.endpoint_hash), auth.id));
         // A push delivery failure never changes an already committed sale or exposes subscription credentials.
       }
     }));

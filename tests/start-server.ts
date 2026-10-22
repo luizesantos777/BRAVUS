@@ -5,11 +5,11 @@ import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'bravus-browser-'));
-const store = new PortalStore(join(directory, 'portal.sqlite'));
+const store = await PortalStore.open(join(directory, 'portal.sqlite'));
 for (const platform of ['desktop', 'mobile']) {
-  store.createAttendant(`Atendente ${platform}`, 5000, `fixture_${platform}_primary_01234567890123456789`);
-  store.createAttendant(`Revisão ${platform}`, 5000, `fixture_${platform}_review_01234567890123456789`);
-  store.createAttendant(`Outro ${platform}`, 5000, `fixture_${platform}_other_01234567890123456789`);
+  (await store.createAttendant(`Atendente ${platform}`, 5000, `fixture_${platform}_primary_01234567890123456789`));
+  (await store.createAttendant(`Revisão ${platform}`, 5000, `fixture_${platform}_review_01234567890123456789`));
+  (await store.createAttendant(`Outro ${platform}`, 5000, `fixture_${platform}_other_01234567890123456789`));
 }
 const server = createPortalServer(store, { staticDir: resolve('dist'), adminKey: 'fixture_browser_admin_012345678901234567890123456789' });
 server.listen(4173, '127.0.0.1', () => console.log('Servidor temporário dos testes do portal disponível.'));

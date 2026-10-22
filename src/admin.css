@@ -1,4 +1,4 @@
-.admin-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.admin-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .admin-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .admin-preview-notice { margin: 0 0 22px; padding: 13px 16px; border: 1px solid #60502a; border-radius: 12px; color: #e5cd80; background: #252114; font-size: 11px; line-height: 1.8; }
 .admin-demo-entry { width: 100%; margin-top: 15px; }
@@ -50,3 +50,46 @@
   .pending-sales-notice { font-size: 10px; }
 }
 .api-status{display:flex;align-items:flex-start;gap:9px;margin:17px 0;padding:13px;border:1px solid #53603c;border-radius:10px;background:#192214;color:#ccd6bd;font-size:11px;line-height:1.8}.api-status>svg{flex-shrink:0;margin-top:3px}.api-status.ready{color:#afd79f;border-color:#38642c}.api-status.setup,.api-status.unavailable{border-color:#65562e;color:#e7cf86}.api-status p{margin:6px 0;color:#b4bea6}.api-status summary{cursor:pointer;margin-top:10px;font-weight:700}.api-status ol{padding-left:18px;margin:10px 0}.api-status li{margin-bottom:8px}.api-status code{font-size:10px;overflow-wrap:anywhere}.api-status a{display:inline-flex;align-items:center;gap:7px;color:#e7c35b;margin-top:7px}
+.controls-filter { margin: 20px 0; }
+.controls-filter > .button { margin-top: 12px; }
+.financial-metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 18px 0; }
+.financial-metrics > div { padding: 16px; border: 1px solid #35452a; border-radius: 12px; background: #11190e; }
+.financial-metrics span { display: block; color: #a7b497; font-size: 11px; line-height: 1.6; }
+.financial-metrics strong { display: block; margin-top: 8px; font-size: 20px; color: #e7eddf; overflow-wrap: anywhere; }
+.financial-metrics .profit { border-color: #8f7628; background: #242511; }
+.financial-metrics .profit strong { color: #f0ca4b; }
+.financial-explanation, .backup-status { padding: 16px; border: 1px solid #4b5d36; border-radius: 12px; background: #172015; margin: 18px 0; font-size: 12px; color: #b8c4aa; line-height: 1.8; }
+.financial-explanation p + p { margin-top: 9px; }
+.financial-table { min-width: 1000px; }
+.financial-table caption { text-align: left; font-weight: 700; padding: 12px 0; color: #e2e8d9; }
+.financial-table tfoot { color: #efce61; font-weight: 700; }
+.financial-breakdown { display: grid; gap: 8px; font-size: 12px; margin: 20px 0 0; }
+.financial-breakdown > div { display: flex; justify-content: space-between; gap: 15px; }
+.financial-breakdown dt { color: #a7b497; }
+.financial-breakdown dd { margin: 0; text-align: right; }
+.audit-list, .backup-list { display: grid; gap: 12px; margin-top: 16px; }
+.audit-entry, .backup-entry { padding: 16px; border: 1px solid #35452a; border-radius: 12px; background: #10170d; min-width: 0; }
+.audit-heading { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.audit-heading strong, .backup-entry strong { font-size: 13px; }
+.audit-heading time, .audit-entry > p, .backup-entry p, .backup-entry small { font-size: 11px; color: #a1b08f; line-height: 1.8; }
+.audit-entry > p { margin: 5px 0 10px; overflow-wrap: anywhere; }
+.audit-entry summary { color: #e5c766; font-size: 12px; cursor: pointer; }
+.audit-entry dl { font-size: 12px; }
+.audit-entry dl > div { padding: 9px 0; border-top: 1px solid #303d26; }
+.audit-entry dt { color: #a1b08f; margin-bottom: 5px; }
+.audit-entry dd { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; overflow-wrap: anywhere; }
+.controls-pagination { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin-top: 18px; font-size: 11px; }
+.backup-status { display: flex; align-items: flex-start; gap: 12px; border-color: #8f7628; }
+.backup-status > svg { flex-shrink: 0; color: #e5c766; margin-top: 3px; }
+.backup-status.ready { border-color: #4b6b36; }
+.backup-status strong { color: #e2e8d9; }
+.backup-entry { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.backup-entry .payout-badge { margin-top: 8px; }
+.backup-entry small { margin-left: 10px; }
+@media (max-width: 700px) {
+  .financial-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+  .financial-metrics > div { padding: 12px; }
+  .financial-metrics strong { font-size: 17px; }
+  .backup-entry { align-items: flex-start; flex-direction: column; }
+  .backup-entry > .button { width: 100%; }
+}

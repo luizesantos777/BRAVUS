@@ -1,9 +1,73 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { createECDH, randomBytes } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { gunzipSync } from 'node:zlib';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
 const iPhoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+test('admin consulta fechamento, exporta CSV, confere alterações e baixa backup privado', async ({ page }, info) => {
+  const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_controls_01234567890123456789`;
+  const headers = { Authorization: `Bearer ${adminKey}` }, personal = { Authorization: `Bearer ${token}` };
+  const portal = await (await page.request.get('/api/portal', { headers: personal })).json(), id = portal.profile.id;
+  await page.request.post('/api/sales', { headers: { ...personal, 'Idempotency-Key': `fixture_controls_${info.project.name}` }, data: { date: portal.today, sales: [{ amount: '100', checkoutId: 'main', time: '12:00', note: '', receipt: { name: image.name, mime: image.mimeType, base64: image.buffer.toString('base64') } }] } });
+  const sale = (await (await page.request.get('/api/portal', { headers: personal })).json()).sales[0];
+  await page.request.patch('/api/admin/sales/' + sale.id, { headers, data: { status: 'approved', note: 'Conferido' } });
+  await page.request.patch('/api/profile', { headers: personal, data: { name: `Gestão ${info.project.name}`, email: '', phone: '', pixType: 'email', pixKey: `${info.project.name}@example.com`, pixOwner: 'Pessoa de teste' } });
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByRole('button', { name: 'Custos ADS', exact: true }).click();
+  await page.getByLabel('Atendente', { exact: true }).selectOption(id);
+  await expect(page.getByLabel('Custo ADS (R$)')).toBeEnabled(); await page.getByLabel('Custo ADS (R$)').fill('10');
+  await page.getByRole('button', { name: 'Salvar custos do dia' }).click(); await expect(page.getByText('Custos diários salvos.')).toBeVisible();
+  const payout = await (await page.request.post('/api/payouts', { headers: personal, data: { amount: '20' } })).json();
+  await page.request.patch('/api/admin/payouts/' + payout.id, { headers, data: { status: 'paid', note: 'Pagamento conferido' } });
+  await page.getByRole('button', { name: 'Fechamento', exact: true }).click();
+  await page.getByLabel('Atendente do relatório').selectOption(id); await page.getByRole('button', { name: 'Consultar fechamento' }).click();
+  await expect(page.locator('.financial-table tbody tr')).toHaveCount(1);
+  await expect(page.locator('.financial-metrics .profit')).toContainText('39,01');
+  await expect(page.locator('.financial-explanation')).toContainText('50,51');
+  await expect(page.locator('.financial-metrics > div').filter({ hasText: 'Comissões após descontos' })).toContainText('29,00');
+  const csvPromise = page.waitForEvent('download'); await page.getByRole('button', { name: 'Exportar CSV' }).click();
+  const csvDownload = await csvPromise, csvPath = info.outputPath('fechamento.csv'); await csvDownload.saveAs(csvPath);
+  const csv = readFileSync(csvPath, 'utf8'); expect(csv).toContain(`Gestão ${info.project.name}`); expect(csv).toContain('39,01'); expect(csv).not.toContain(token); expect(csv).not.toContain(adminKey); expect(csv).not.toContain('@example.com');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('fechamento-financeiro.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Histórico', exact: true }).click();
+  await page.getByLabel('Tipo de alteração').selectOption('costs.updated'); await page.getByRole('button', { name: 'Consultar histórico' }).click();
+  const entry = page.locator('.audit-entry').filter({ hasText: `Gestão ${info.project.name}` }); await expect(entry).toHaveCount(1); await entry.locator('summary').click();
+  await expect(entry).toContainText('Administrador'); await expect(entry).toContainText('10,00'); await expect(entry).not.toContainText(token);
+  await page.screenshot({ path: info.outputPath('historico-alteracoes.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Backups', exact: true }).click(); await expect(page.getByText('Armazenamento privado conectado')).toBeVisible();
+  if (info.project.name === 'desktop') { await page.getByRole('button', { name: 'Criar cópia agora' }).click(); await expect(page.getByText('Cópia criada e recuperação verificada.')).toBeVisible(); }
+  await expect(page.locator('.backup-entry').first()).toContainText('Verificada');
+  const backupPromise = page.waitForEvent('download'); await page.locator('.backup-entry').first().getByRole('button', { name: /^Baixar backup/ }).click();
+  const backup = await backupPromise, backupPath = info.outputPath('backup.json.gz'); await backup.saveAs(backupPath);
+  expect(JSON.parse(gunzipSync(readFileSync(backupPath)).toString()).format).toBe('bravus-backup');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('backups-privados.png'), fullPage: true });
+});
+test('backups ainda sem Blob mostram a configuração pendente e impedem criar uma cópia inexistente', async ({ page }) => {
+  await page.route('**/api/admin/backups', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ configured: false, destination: 'unconfigured', scheduled: false, automatic: 'Aguardando armazenamento privado', retentionDays: 30, records: [] }) }));
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789'); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByRole('button', { name: 'Backups', exact: true }).click();
+  await expect(page.getByText('Conectar armazenamento privado')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Criar cópia agora' })).toBeDisabled(); await expect(page.locator('.backup-status')).toContainText('Private');
+  await expect(page.getByText('Nenhuma cópia criada ainda.')).toBeVisible();
+});
+test('falha no backup exibe o erro e atualiza a lista preservando a cópia válida', async ({ page }) => {
+  let failed = false;
+  await page.route('**/api/admin/backups', route => {
+    if (route.request().method() === 'POST') { failed = true; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'Não foi possível criar e verificar esta cópia.' }) }); }
+    return route.fulfill({ contentType: 'application/json', body: JSON.stringify({ configured: true, destination: 'private-blob', scheduled: false, automatic: 'Uma cópia por dia ao abrir o painel', retentionDays: 30, records: [
+      ...(failed ? [{ id: 'manual-failed', kind: 'manual', status: 'failed', startedAt: new Date().toISOString(), verifiedAt: null, sizeBytes: 0, error: 'A cópia não passou na verificação.' }] : []),
+      { id: 'daily-2026-01-10', kind: 'daily', status: 'verified', startedAt: '2026-01-10T12:00:00Z', verifiedAt: '2026-01-10T12:00:01Z', sizeBytes: 1024, error: '' },
+    ] }) });
+  });
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789'); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByRole('button', { name: 'Backups', exact: true }).click(); await page.getByRole('button', { name: 'Criar cópia agora' }).click();
+  await expect(page.getByRole('alert')).toContainText('Não foi possível criar e verificar');
+  await expect(page.locator('.backup-entry')).toHaveCount(2); await expect(page.locator('.backup-entry').first()).toContainText('Falha'); await expect(page.locator('.backup-entry').last()).toContainText('Verificada');
+});
 test('iPhone no navegador recebe instruções e instalação abre o painel administrativo sem expor a chave', async ({ page }, info) => {
   const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_ios_notify_01234567890123456789`;
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));

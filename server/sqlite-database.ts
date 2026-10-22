@@ -38,8 +38,8 @@ export function openSqliteDatabase(filename: string): SqlDatabase {
       };
     },
     exec: sql => locked(() => direct.exec(sql)),
-    transaction: work => locked(async () => {
-      native.exec('BEGIN IMMEDIATE');
+    transaction: (work, mode = 'write') => locked(async () => {
+      native.exec(mode === 'read' ? 'BEGIN' : 'BEGIN IMMEDIATE');
       try { const result = await work(direct); native.exec('COMMIT'); return result; }
       catch (error) { native.exec('ROLLBACK'); throw error; }
     }),

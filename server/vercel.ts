@@ -4,6 +4,7 @@ import { PortalStore } from './store.ts';
 import { loadAdminKey } from './admin-key.ts';
 import { loadDatabasePushKeys, PushService } from './push.ts';
 import type { TursoConnection } from './database.ts';
+import { BackupService, privateBlob } from './backups.ts';
 
 const BODY_LIMIT = 4 * 1024 * 1024;
 type Environment = Record<string, string | undefined>;
@@ -46,7 +47,8 @@ export function createVercelHandler(options: Options = {}) {
     try {
       const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT });
+      const backups = new BackupService(store, env.BLOB_READ_WRITE_TOKEN ? privateBlob(env.BLOB_READ_WRITE_TOKEN) : null, (env.CRON_SECRET?.length ?? 0) >= 32);
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 
@@ -55,7 +57,7 @@ export function createVercelHandler(options: Options = {}) {
       const url = new URL(request.url ?? '/', 'http://localhost');
       const routed = url.searchParams.get('__bravus_path');
       if (routed !== null) {
-        if (!/^[a-zA-Z0-9_/-]+$/.test(routed)) {
+        if (!/^[a-zA-Z0-9_/-]+(?:\.csv)?$/.test(routed)) {
           response.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify({ error: 'Recurso não encontrado.' })); return;
         }
         url.pathname = '/api/' + routed; url.searchParams.delete('__bravus_path');

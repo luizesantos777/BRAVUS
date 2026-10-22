@@ -11,7 +11,7 @@ export interface SqlDatabase {
   readonly native?: DatabaseSync;
   prepare(sql: string): SqlStatement;
   exec(sql: string): Promise<void>;
-  transaction<T>(work: (connection: SqlDatabase) => Promise<T>): Promise<T>;
+  transaction<T>(work: (connection: SqlDatabase) => Promise<T>, mode?: 'read' | 'write'): Promise<T>;
   close(): void;
 }
 export interface TursoConnection { url: string; authToken: string }

@@ -3,11 +3,16 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, resolve, sep } from 'node:path';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { PortalError, PortalStore } from './store.ts';
 import { periodLabels } from '../src/domain.ts';
 import type { Period } from '../src/domain.ts';
 import type { SaleBatch } from '../src/domain.ts';
 import type { PushService } from './push.ts';
+import type { BackupService } from './backups.ts';
+import { readAudit, readFinancialReport } from './admin-controls.ts';
+import { financialCsv } from '../src/admin-domain.ts';
 
 const BODY_LIMIT = 12 * 1024 * 1024;
 const json = (response: ServerResponse, status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
@@ -31,7 +36,7 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
     request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
   });
 }
-export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number }
+export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string }
 export function createPortalHandler(store: PortalStore, options: PortalHttpOptions = {}) {
   const failedAuth = new Map<string, { count: number; started: number }>();
   const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
@@ -57,12 +62,40 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         for (const [key, value] of failedAuth) if (now - value.started > 60_000) failedAuth.delete(key);
         if ((failedAuth.get(identity)?.count ?? 0) >= 30) throw new PortalError(429, 'Muitas tentativas. Aguarde um minuto e tente novamente.');
         const authorization = request.headers.authorization ?? '';
+        if (url.pathname === '/api/cron/backups') {
+          const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
+          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest())) throw new PortalError(401, 'Acesso não autorizado.');
+          if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
+          if (!options.backups) throw new PortalError(503, 'Backups ainda não configurados.');
+          json(response, 200, await options.backups.run('daily')); return;
+        }
         if (url.pathname.startsWith('/api/admin/')) {
           if (!adminHash) throw new PortalError(503, 'A administração ainda não foi configurada neste servidor.');
           const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
           if (supplied.length < 32 || supplied.length > 256 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), adminHash)) {
             const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
             throw new PortalError(401, 'Chave administrativa inválida.');
+          }
+          const actor = { id: adminHash.toString('hex'), name: 'Administrador' };
+          if (url.pathname === '/api/admin/audit' && request.method === 'GET') { json(response, 200, await readAudit(store, url.searchParams)); return; }
+          if (/^\/api\/admin\/reports\/financial(?:\.csv)?$/.test(url.pathname) && request.method === 'GET') {
+            const report = await readFinancialReport(store, url.searchParams.get('start') ?? '', url.searchParams.get('end') ?? '', url.searchParams.get('attendantId') ?? '');
+            if (url.pathname.endsWith('.csv')) { response.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="bravus-fechamento-${report.start}-${report.end}.csv"`, 'Cache-Control': 'private, no-store' }); response.end(financialCsv(report)); }
+            else json(response, 200, report);
+            return;
+          }
+          if (url.pathname.startsWith('/api/admin/backups')) {
+            if (!options.backups) throw new PortalError(503, 'Backups ainda não configurados.');
+            if (url.pathname === '/api/admin/backups' && request.method === 'GET') json(response, 200, await options.backups.status());
+            else if (url.pathname === '/api/admin/backups' && request.method === 'POST') json(response, 201, await options.backups.run('manual'));
+            else if (/^\/api\/admin\/backups\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
+              const id = url.pathname.split('/').at(-1)!, privateUrl = await options.backups.downloadUrl(id);
+              if (privateUrl) { response.writeHead(302, { Location: privateUrl, 'Cache-Control': 'private, no-store' }); response.end(); return; }
+              const bytes = await options.backups.download(id);
+              response.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="bravus-backup-${id}.json.gz"`, 'Cache-Control': 'private, no-store' });
+              await pipeline(Readable.from([bytes]), response);
+            } else throw new PortalError(404, 'Cópia não encontrada.');
+            return;
           }
           if (url.pathname.startsWith('/api/admin/push/')) {
             if (!options.push) throw new PortalError(503, 'As notificações push ainda não estão disponíveis neste servidor.');
@@ -74,26 +107,29 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
             return;
           }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
-          if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') json(response, 200, (await store.adminDashboard()));
+          if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') {
+            if (options.backups) await options.backups.run('daily').catch(() => undefined);
+            json(response, 200, (await store.adminDashboard()));
+          }
           else if (url.pathname === '/api/admin/sales' && request.method === 'GET') json(response, 200, (await store.adminSales(url.searchParams.get('status') ?? 'pending', url.searchParams.get('attendantId') ?? '', url.searchParams.get('page') ?? '1')));
-          else if (route?.[1] === 'sales' && !route[3] && request.method === 'PATCH') json(response, 200, (await store.reviewSale(route[2], await readJson(request, options.bodyLimit))));
+          else if (route?.[1] === 'sales' && !route[3] && request.method === 'PATCH') json(response, 200, (await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor)));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
             const receipt = (await store.adminReceipt(url.pathname.split('/').at(-1)!));
             response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline' }); response.end(receipt.bytes);
           }
-          else if (url.pathname === '/api/admin/attendants' && request.method === 'POST') json(response, 201, (await store.adminCreateAttendant(await readJson(request, options.bodyLimit))));
-          else if (route?.[1] === 'attendants' && route[3] === 'token' && request.method === 'POST') json(response, 200, (await store.rotateToken(route[2])));
+          else if (url.pathname === '/api/admin/attendants' && request.method === 'POST') json(response, 201, (await store.adminCreateAttendant(await readJson(request, options.bodyLimit), actor)));
+          else if (route?.[1] === 'attendants' && route[3] === 'token' && request.method === 'POST') json(response, 200, (await store.rotateToken(route[2], actor)));
           else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'GET') {
             const date = url.searchParams.get('date') ?? '';
             json(response, 200, (await store.adminCosts(route[2], date)));
           }
-          else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'POST') { (await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit))); json(response, 200, { saved: true }); }
-          else if (route?.[1] === 'attendants' && !route[3] && request.method === 'PATCH') { (await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit))); json(response, 200, { saved: true }); }
-          else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { (await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit))); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'POST') { (await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'attendants' && !route[3] && request.method === 'PATCH') { (await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { (await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
           else if (route?.[1] === 'payouts' && !route[3] && request.method === 'PATCH') {
             const input = await readJson(request, options.bodyLimit) as { status?: unknown; note?: unknown } | null;
             if (!input || typeof input.status !== 'string' || typeof input.note !== 'string') throw new PortalError(400, 'Informe o status e a observação do pagamento.');
-            (await store.markPayout(route[2], input.status as 'paid' | 'cancelled', input.note)); json(response, 200, { saved: true });
+            (await store.markPayout(route[2], input.status as 'paid' | 'cancelled', input.note, actor)); json(response, 200, { saved: true });
           } else throw new PortalError(404, 'Recurso administrativo não encontrado.');
           return;
         }

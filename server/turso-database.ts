@@ -14,9 +14,9 @@ export function libsqlDatabase(client: Client): SqlDatabase {
   function locked<T>(work: () => Promise<T>): Promise<T> {
     const next = pending.then(work); pending = next.catch(() => undefined); return next;
   }
-  async function begin(): Promise<Transaction> {
+  async function begin(mode: 'read' | 'write'): Promise<Transaction> {
     for (let attempt = 0; ; attempt++) {
-      try { return await client.transaction('write'); }
+      try { return await client.transaction(mode); }
       catch (error) {
         const code = String((error as { code?: unknown }).code ?? '');
         if (!code.startsWith('SQLITE_BUSY') || attempt >= 5) throw error;
@@ -38,10 +38,10 @@ export function libsqlDatabase(client: Client): SqlDatabase {
         };
       },
       exec: sql => session.executeMultiple(sql),
-      async transaction(work) {
+      async transaction(work, mode = 'write') {
         if (session !== client) throw new Error('Transações aninhadas não são permitidas.');
         return locked(async () => {
-          const transaction = await begin();
+          const transaction = await begin(mode);
           try { const result = await work(connection(transaction)); await transaction.commit(); return result; }
           catch (error) { if (!transaction.closed) await transaction.rollback().catch(() => undefined); throw error; }
           finally { transaction.close(); }

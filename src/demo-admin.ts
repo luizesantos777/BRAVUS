@@ -1,6 +1,7 @@
 import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoCheckouts, validateSaleReview, validDate } from './domain.ts';
 import type { AdminDashboard, AdminSale, AdminSalesPage, Sale } from './domain.ts';
 import { readDemoData, writeDemoData } from './demo-store.ts';
+import { financialReport } from './admin-domain.ts';
 
 export function prepareAdminDemo() {
   const data = readDemoData();
@@ -23,6 +24,7 @@ export function prepareAdminDemo() {
 export async function demoAdminRequest(path: string, method: string, payload?: unknown): Promise<unknown> {
   const data = readDemoData(), url = new URL(path, 'https://demo.invalid');
   const profile = data.profile;
+  if (url.pathname === '/reports/financial' && method === 'GET') return financialReport({ attendants: [{ id: profile.id, name: profile.name }], sales: data.sales.map(sale => ({ ...sale, attendantId: profile.id, attendantName: profile.name })), costs: data.costs.map(cost => ({ ...cost, attendantId: profile.id, attendantName: profile.name })), payouts: data.payouts.map(payout => ({ ...payout, attendantId: profile.id, attendantName: profile.name, pixType: profile.pixType, pixKey: profile.pixKey, pixOwner: profile.pixOwner })) }, url.searchParams.get('start') ?? '', url.searchParams.get('end') ?? '', url.searchParams.get('attendantId') ?? '');
   if (url.pathname === '/dashboard') {
     const dashboard: AdminDashboard = { attendants: [{ id: profile.id, name: profile.name, active: true, commissionBps: profile.commissionBps, createdAt: new Date().toISOString(), salesCount: data.sales.length, grossCents: data.sales.reduce((sum, sale) => sum + sale.amountCents, 0) }], payouts: data.payouts.map(payout => ({ ...payout, attendantId: profile.id, attendantName: profile.name, pixType: profile.pixType, pixKey: profile.pixKey, pixOwner: profile.pixOwner })), checkouts: demoCheckouts, pendingSalesCount: data.sales.filter(sale => sale.status === 'pending').length, todayAdsCents: data.costs.filter(cost => cost.date === businessToday()).reduce((sum, cost) => sum + cost.adsCents, 0), costs: data.costs.map(cost => ({ ...cost, attendantId: profile.id, attendantName: profile.name })).sort((a, b) => b.date.localeCompare(a.date)) };
     return dashboard;

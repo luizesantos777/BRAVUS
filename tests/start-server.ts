@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
 import { loadDatabasePushKeys, PushService } from '../server/push.ts';
+import { BackupService, privateFolder } from '../server/backups.ts';
 
 const directory = mkdtempSync(join(tmpdir(), 'bravus-browser-'));
 const store = await PortalStore.open(join(directory, 'portal.sqlite'));
@@ -14,9 +15,11 @@ for (const platform of ['desktop', 'mobile']) {
   (await store.createAttendant(`Notificações ${platform}`, 5000, `fixture_${platform}_notify_01234567890123456789`));
   (await store.createAttendant(`Alertas do administrador ${platform}`, 5000, `fixture_${platform}_owner_notify_01234567890123456789`));
   (await store.createAttendant(`iPhone ${platform}`, 5000, `fixture_${platform}_ios_notify_01234567890123456789`));
+  (await store.createAttendant(`Gestão ${platform}`, 5000, `fixture_${platform}_controls_01234567890123456789`));
 }
 const push = new PushService(store, await loadDatabasePushKeys(store, {}), async () => ({ statusCode: 201, body: '', headers: {} }));
-const server = createPortalServer(store, { staticDir: resolve('dist'), adminKey: 'fixture_browser_admin_012345678901234567890123456789', push });
+const backups = new BackupService(store, privateFolder(join(directory, 'backups')));
+const server = createPortalServer(store, { staticDir: resolve('dist'), adminKey: 'fixture_browser_admin_012345678901234567890123456789', push, backups });
 server.listen(4173, '127.0.0.1', () => console.log('Servidor temporário dos testes do portal disponível.'));
 const close = () => server.close(() => { store.close(); rmSync(directory, { recursive: true, force: true }); process.exit(0); });
 process.on('SIGTERM', close); process.on('SIGINT', close);

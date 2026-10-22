@@ -199,7 +199,7 @@ O comando abaixo usa a API de backup online do SQLite e pode rodar com o servido
 npm run manage -- backup
 ```
 
-Para definir o destino, use `--output /caminho/privado/backup.sqlite`. Esse backup contém dados pessoais, fotos e inscrições de notificações: mantenha-o fora dos diretórios públicos. A chave administrativa, as chaves VAPID de notificações e os arquivos de convites devem ser preservados separadamente em um local privado. Essas chaves não fazem parte do banco.
+Para definir o destino, use `--output /caminho/privado/backup.sqlite`. Esse backup contém dados pessoais, fotos e inscrições de notificações: mantenha-o fora dos diretórios públicos. A chave administrativa, as variáveis privadas da hospedagem, os arquivos de convites e, no modo Node local, `push-keys.json` devem ser preservados separadamente. No Turso/Vercel, as chaves VAPID automáticas ficam no banco e são incluídas na cópia.
 
 A opção mais simples é servir interface e API no mesmo servidor, usando o endereço da hospedagem nos convites. Para manter a interface no GitHub Pages e hospedar apenas a API em outro domínio:
 
@@ -208,6 +208,34 @@ A opção mais simples é servir interface e API no mesmo servidor, usando o end
 3. Gere novamente a interface com `npm run build:pages`, envie `docs/` e aguarde a publicação.
 
 Consulte `.env.example`. `VITE_API_URL` é um endereço público e não pode conter senhas ou tokens.
+
+## Fechamento financeiro e histórico administrativo
+
+As abas **Fechamento**, **Histórico** e **Backups** exigem a chave administrativa existente. O acesso do atendente não permite consultar relatórios, eventos ou cópias. O fechamento aceita datas inicial/final e filtro por atendente, inclui somente vendas aprovadas e mantém a fórmula e o rateio originais de cada venda. ADS e ajustes entram pela data do custo; repasses e suas taxas entram pelo dia do pagamento em `America/Sao_Paulo`. Vendas pendentes e recusadas aparecem somente na contagem informativa.
+
+O lucro é faturamento menos taxas das vendas, comissões após taxas e parte BRAVUS dos saques pagos. ADS e ajustes são despesas integralmente debitadas do atendente; portanto aparecem como despesa e desconto correspondente, sem reduzir duas vezes o lucro. A movimentação de caixa desconta taxas de venda, ADS, ajustes, PIX líquidos pagos e a tarifa total dos saques. Repasses liquidam comissões já reconhecidas e não são descontados novamente do lucro. O CSV usa centavos inteiros na origem, ponto e vírgula, BOM UTF-8 e proteção contra fórmulas em nomes; não contém PIX, tokens ou credenciais.
+
+O histórico é paginado e filtrável por período/ação. Registra responsável, alvo, data, valores anteriores e novos para aprovação/recusa, ADS/ajustes, taxas, confirmação/cancelamento de repasse e gestão de atendentes. A mudança e o evento são gravados na mesma transação: uma falha no registro desfaz a alteração. Eventos não podem ser editados ou apagados pelas operações normais do banco. Tentativas inválidas e decisões repetidas não criam registros de sucesso. Tokens, hashes dos tokens, fotos, comprovantes e chaves não são gravados no histórico. O recurso começa a registrar após esta atualização; não inventa autoria de alterações antigas. O responsável autenticado pela chave atual aparece como **Administrador**; o terminal é identificado separadamente.
+
+## Backups automáticos e recuperação
+
+Na **Vercel**, conecte ao projeto BRAVUS um armazenamento **Blob com acesso Private** em **Storage**. A integração configura `BLOB_READ_WRITE_TOKEN` no servidor; confirme o ambiente **Production** e faça o redeploy da implantação mais recente. Nunca use um Blob público nem coloque o token no código ou no chat. Sem armazenamento configurado, o painel informa a pendência e não apresenta cópias fictícias. Também não usa o disco temporário da Vercel como destino.
+
+Com o armazenamento conectado, o primeiro acesso administrativo de cada dia cria uma cópia automaticamente. Para executar todos os dias mesmo sem acesso ao painel, configure também `CRON_SECRET` com um segredo aleatório de pelo menos 32 caracteres nas variáveis privadas de Production e faça o redeploy. `vercel.json` agenda `/api/cron/backups` às **06:00 UTC / 03:00 de Brasília**. A Vercel envia o segredo no cabeçalho; chamadas sem ele são recusadas. Não coloque o segredo na URL. A aba Backups mostra a modalidade efetivamente configurada. O agendamento é diário, compatível com a frequência do plano Hobby; a disponibilidade e o consumo do Blob seguem o plano da conta.
+
+No servidor Node com SQLite persistente, as cópias ficam por padrão em `.bravus/automatic-backups/`, com diretório `700` e arquivos `600`, criadas na inicialização e verificadas a cada hora para completar a cópia diária. Esse destino é independente do arquivo principal, mas continua no mesmo servidor; configure Blob privado para proteção fora dele. **Criar cópia agora** permite uma cópia adicional manual. As cópias usam JSON comprimido com Gzip, incluindo comprovantes, dados financeiros, hashes dos tokens, inscrições, histórico e as chaves push armazenadas no banco. Não incluem a chave administrativa ou variáveis de conexão.
+
+Cada execução captura uma visão consistente em transação de leitura, grava no armazenamento privado, baixa a cópia, compara SHA-256 e a restaura em um banco separado em memória. A verificação confere estrutura, número de registros, integridade SQLite e referências. Somente depois disso marca **Verificada** e permite remover cópias com mais de 30 dias. Falhas preservam as cópias válidas anteriores. Um bloqueio persistente impede execuções concorrentes; o mesmo backup diário não é duplicado entre instâncias. Os arquivos recebem identificadores únicos e não são sobrescritos, inclusive após recuperar um catálogo antigo. A cópia inclui o catálogo disponível e reconhece sua própria recuperação. O limite atual é de 128 MB de conteúdo antes da compressão; se o volume crescer além dele, amplie o processo de backup antes de depender da rotina. Downloads exigem autenticação administrativa e não usam URLs públicas permanentes.
+
+Para recuperar uma cópia baixada, use um **arquivo novo** fora de pastas públicas:
+
+```sh
+npm run manage -- restore-backup --input /caminho/privado/backup.json.gz --output /caminho/privado/recuperado.sqlite
+```
+
+O comando valida a cópia antes de criar o destino, recusa sobrescrever arquivos e testa as relações e integridade do banco. Nunca restaura sobre o banco ativo. Confira os saldos e o histórico no banco recuperado antes de escolher uma troca em produção. Para recuperar a operação em Turso, use o banco SQLite recuperado como origem na importação para um **novo** banco Turso e depois revise a conexão da implantação. Preserve também a configuração privada da hospedagem e, no modo Node local, o arquivo VAPID separado. A recuperação da cópia tem cobertura automática com dados fictícios; o Blob da conta precisa estar conectado para a primeira verificação real na nuvem.
+
+Para arquivos maiores, o download em Blob usa uma autorização temporária de **dois minutos**, restrita a **GET daquela cópia exata**, criada somente após autenticar o administrador e conferir o status Verificada. O navegador baixa diretamente do Blob privado, evitando transportar todo o arquivo pela resposta da função da Vercel. O token de escrita do armazenamento não sai do servidor. As URLs temporárias e os dados da cópia não são incluídos no histórico nem em respostas públicas.
 
 ## API
 
@@ -220,6 +248,13 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/profile` | Token do atendente | Atualizar nome, foto, alerta de venda e PIX |
 | `GET /api/push/config` | Token do atendente | Chave VAPID pública e IDs de inscrições próprias |
 | `GET /api/admin/push/config` | Chave administrativa | Chave VAPID pública e IDs dos aparelhos administrativos do acesso atual |
+| `GET /api/admin/reports/financial?start=AAAA-MM-DD&end=AAAA-MM-DD&attendantId=` | Chave administrativa | Fechamento por período e atendente |
+| `GET /api/admin/reports/financial.csv` | Chave administrativa | Mesmo fechamento em CSV, com os mesmos filtros |
+| `GET /api/admin/audit?start=&end=&action=&page=1` | Chave administrativa | Histórico imutável e paginado |
+| `GET /api/admin/backups` | Chave administrativa | Configuração e cópias recentes |
+| `POST /api/admin/backups` | Chave administrativa | Criar e testar uma cópia manual |
+| `GET /api/admin/backups/:id` | Chave administrativa | Baixar uma cópia verificada |
+| `GET /api/cron/backups` | `CRON_SECRET` | Executar a cópia diária idempotente |
 | `POST /api/admin/push/subscriptions` | Chave administrativa | Ativa alertas de novas vendas no aparelho do responsável |
 | `DELETE /api/admin/push/subscriptions` | Chave administrativa | Desativa a inscrição administrativa informada |
 | `POST /api/push/subscriptions` | Token do atendente | Cadastrar inscrição Web Push do aparelho |

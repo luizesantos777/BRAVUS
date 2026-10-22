@@ -69,8 +69,8 @@ function openSqliteDatabase(filename) {
       };
     },
     exec: (sql) => locked(() => direct.exec(sql)),
-    transaction: (work) => locked(async () => {
-      native.exec("BEGIN IMMEDIATE");
+    transaction: (work, mode = "write") => locked(async () => {
+      native.exec(mode === "read" ? "BEGIN" : "BEGIN IMMEDIATE");
       try {
         const result = await work(direct);
         native.exec("COMMIT");
@@ -111,10 +111,10 @@ function libsqlDatabase(client) {
     pending = next.catch(() => void 0);
     return next;
   }
-  async function begin() {
+  async function begin(mode) {
     for (let attempt = 0; ; attempt++) {
       try {
-        return await client.transaction("write");
+        return await client.transaction(mode);
       } catch (error) {
         const code = String(error.code ?? "");
         if (!code.startsWith("SQLITE_BUSY") || attempt >= 5) throw error;
@@ -140,10 +140,10 @@ function libsqlDatabase(client) {
         };
       },
       exec: (sql) => session.executeMultiple(sql),
-      async transaction(work) {
+      async transaction(work, mode = "write") {
         if (session !== client) throw new Error("Transa\xE7\xF5es aninhadas n\xE3o s\xE3o permitidas.");
         return locked(async () => {
-          const transaction = await begin();
+          const transaction = await begin(mode);
           try {
             const result = await work(connection(transaction));
             await transaction.commit();
@@ -178,6 +178,8 @@ var init_turso_database = __esm({
 import { readFile, stat } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import { createHash as createHash2, timingSafeEqual } from "node:crypto";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 // server/database.ts
 async function openDatabase(source) {
@@ -190,7 +192,7 @@ async function openDatabase(source) {
 }
 
 // server/store.ts
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID as randomUUID2 } from "node:crypto";
 
 // src/domain.ts
 var periodLabels = { today: "Hoje", yesterday: "Ontem", week: "\xDAltimos 7 dias", month: "Este m\xEAs", all: "Todo o per\xEDodo" };
@@ -352,6 +354,30 @@ function validateProfile(value) {
 }
 var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }];
 
+// server/controls-schema.ts
+import { randomUUID } from "node:crypto";
+async function appendAudit(db, actor, action, targetId, targetName, before, after) {
+  if (JSON.stringify(before) === JSON.stringify(after)) return;
+  await db.prepare("INSERT INTO audit_events VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(randomUUID(), (/* @__PURE__ */ new Date()).toISOString(), actor.id, actor.name, action, targetId, targetName, before === null ? null : JSON.stringify(before), after === null ? null : JSON.stringify(after));
+}
+var controlsSchema = `
+  CREATE TABLE IF NOT EXISTS audit_events (
+    id TEXT PRIMARY KEY, created_at TEXT NOT NULL, actor_id TEXT NOT NULL, actor_name TEXT NOT NULL,
+    action TEXT NOT NULL, target_id TEXT NOT NULL, target_name TEXT NOT NULL, before_json TEXT, after_json TEXT
+  );
+  CREATE INDEX IF NOT EXISTS audit_created ON audit_events(created_at DESC, id);
+  CREATE INDEX IF NOT EXISTS audit_action_created ON audit_events(action, created_at DESC);
+  CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
+  CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
+  CREATE TABLE IF NOT EXISTS backup_runs (
+    id TEXT PRIMARY KEY, kind TEXT NOT NULL CHECK(kind IN ('daily','manual')),
+    status TEXT NOT NULL CHECK(status IN ('running','verified','failed')), started_at TEXT NOT NULL,
+    verified_at TEXT, size_bytes INTEGER NOT NULL DEFAULT 0, sha256 TEXT NOT NULL DEFAULT '', error TEXT NOT NULL DEFAULT '', day_key TEXT
+  );
+  CREATE UNIQUE INDEX IF NOT EXISTS backup_daily_active ON backup_runs(day_key) WHERE status IN ('running','verified');
+  CREATE TABLE IF NOT EXISTS push_server_keys (id INTEGER PRIMARY KEY CHECK(id=1), public_key TEXT NOT NULL, private_key TEXT NOT NULL);
+`;
+
 // server/store.ts
 var PortalError = class extends Error {
   status;
@@ -360,6 +386,7 @@ var PortalError = class extends Error {
     this.status = status;
   }
 };
+var systemActor = { id: "system", name: "Sistema / terminal" };
 var tokenHash = (token) => createHash("sha256").update(token).digest("hex");
 var invalid = (message) => {
   throw new PortalError(400, message);
@@ -396,6 +423,9 @@ var PortalStore = class _PortalStore {
   async health() {
     await this.sql.prepare("SELECT 1").get();
   }
+  async audit(actor, action, targetId, targetName, before, after) {
+    await appendAudit(this.sql, actor, action, targetId, targetName, before, after);
+  }
   async initialize() {
     await this.withTransaction(async (store) => {
       await store.sql.exec(`
@@ -409,6 +439,7 @@ var PortalStore = class _PortalStore {
       CREATE TABLE IF NOT EXISTS costs (attendant_id TEXT NOT NULL REFERENCES attendants(id), date TEXT NOT NULL, ads_cents INTEGER NOT NULL CHECK(ads_cents >= 0), withdrawal_fee_cents INTEGER NOT NULL CHECK(withdrawal_fee_cents >= 0), PRIMARY KEY(attendant_id, date));
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `);
+      await store.sql.exec(controlsSchema);
       const saleColumns = new Set((await store.sql.prepare("PRAGMA table_info(sales)").all()).map((column) => column.name));
       if (!saleColumns.has("status")) await store.sql.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected'))");
       if (!saleColumns.has("review_note")) await store.sql.exec("ALTER TABLE sales ADD COLUMN review_note TEXT NOT NULL DEFAULT ''");
@@ -479,26 +510,30 @@ var PortalStore = class _PortalStore {
     const sales = await this.sql.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
     return { sales, total, page, pageSize };
   }
-  async reviewSale(id, input) {
+  async reviewSale(id, input, actor = systemActor) {
     let review;
     try {
       review = validateSaleReview(input);
     } catch (error) {
       return invalid(error.message);
     }
-    const result = await this.sql.prepare("UPDATE sales SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(review.status, review.note, (/* @__PURE__ */ new Date()).toISOString(), id);
-    if (!result.changes) {
-      if (!await this.sql.prepare("SELECT id FROM sales WHERE id = ?").get(id)) throw new PortalError(404, "Venda n\xE3o encontrada.");
-      throw new PortalError(409, "Esta venda j\xE1 foi analisada. Atualize a lista para conferir a decis\xE3o.");
-    }
-    return { saved: true };
+    return this.withTransaction(async (store) => {
+      const before = await store.sql.prepare("SELECT s.status, s.review_note, a.name FROM sales s JOIN attendants a ON a.id = s.attendant_id WHERE s.id = ?").get(id);
+      const result = await store.sql.prepare("UPDATE sales SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(review.status, review.note, (/* @__PURE__ */ new Date()).toISOString(), id);
+      if (!result.changes) {
+        if (!before) throw new PortalError(404, "Venda n\xE3o encontrada.");
+        throw new PortalError(409, "Esta venda j\xE1 foi analisada. Atualize a lista para conferir a decis\xE3o.");
+      }
+      await store.audit(actor, review.status === "approved" ? "sale.approved" : "sale.rejected", id, String(before.name), { status: String(before.status), note: String(before.review_note) }, { status: review.status, note: review.note });
+      return { saved: true };
+    });
   }
   async adminReceipt(id) {
     const row = await this.sql.prepare("SELECT mime, bytes FROM receipts WHERE id = ?").get(id);
     if (!row) throw new PortalError(404, "Comprovante n\xE3o encontrado.");
     return { mime: String(row.mime), bytes: row.bytes };
   }
-  async adminCreateAttendant(input) {
+  async adminCreateAttendant(input, actor = systemActor) {
     const data = { commission: String(DEFAULT_COMMISSION_BPS / 100), ...this.adminFields(input) };
     if (typeof data.name !== "string" || typeof data.commission !== "string") invalid("Informe nome e comiss\xE3o.");
     let commission;
@@ -511,36 +546,43 @@ var PortalStore = class _PortalStore {
     if (data.token !== void 0 && typeof data.token !== "string") invalid("Informe um token v\xE1lido.");
     const chosenToken = typeof data.token === "string" ? data.token.trim() : "";
     if (chosenToken && !/^[A-Za-z0-9_-]{32,160}$/.test(chosenToken)) invalid("O token deve ter de 32 a 160 letras, n\xFAmeros, h\xEDfen ou sublinhado.");
-    const { id, token } = await this.createAttendant(name, commission, chosenToken || void 0);
+    const { id, token } = await this.createAttendant(name, commission, chosenToken || void 0, actor);
     return { attendantId: id, name, token };
   }
   adminFields(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return invalid("Dados inv\xE1lidos.");
     return input;
   }
-  async rotateToken(id) {
-    const row = await this.sql.prepare("SELECT name, active FROM attendants WHERE id = ?").get(id);
-    if (!row) throw new PortalError(404, "Atendente n\xE3o encontrado.");
-    if (row.active !== 1) invalid("Reative o atendente antes de gerar um novo token.");
-    const token = `atd_${randomBytes(32).toString("base64url")}`;
-    await this.sql.prepare("UPDATE attendants SET token_hash = ? WHERE id = ?").run(tokenHash(token), id);
-    await this.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
-    return { attendantId: id, name: String(row.name), token };
+  async rotateToken(id, actor = systemActor) {
+    return this.withTransaction(async (store) => {
+      const row = await store.sql.prepare("SELECT name, active FROM attendants WHERE id = ?").get(id);
+      if (!row) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+      if (row.active !== 1) invalid("Reative o atendente antes de gerar um novo token.");
+      const token = `atd_${randomBytes(32).toString("base64url")}`;
+      await store.sql.prepare("UPDATE attendants SET token_hash = ? WHERE id = ?").run(tokenHash(token), id);
+      await store.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
+      await store.audit(actor, "attendant.token_rotated", id, String(row.name), null, { renewed: true });
+      return { attendantId: id, name: String(row.name), token };
+    });
   }
-  async setAttendantActive(id, input) {
+  async setAttendantActive(id, input, actor = systemActor) {
     const data = this.adminFields(input);
     if (typeof data.active !== "boolean") invalid("Informe se o acesso deve ficar ativo ou revogado.");
-    const result = await this.sql.prepare("UPDATE attendants SET active = ? WHERE id = ?").run(data.active ? 1 : 0, id);
-    if (!result.changes) throw new PortalError(404, "Atendente n\xE3o encontrado.");
-    if (!data.active) await this.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
+    return this.withTransaction(async (store) => {
+      const before = await store.sql.prepare("SELECT name, active FROM attendants WHERE id = ?").get(id);
+      const result = await store.sql.prepare("UPDATE attendants SET active = ? WHERE id = ?").run(data.active ? 1 : 0, id);
+      if (!result.changes) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+      if (!data.active) await store.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
+      await store.audit(actor, "attendant.access_changed", id, String(before.name), { active: before.active === 1 }, { active: data.active });
+    });
   }
-  async adminSetCosts(id, input) {
+  async adminSetCosts(id, input, actor = systemActor) {
     const data = this.adminFields(input);
     if (!await this.sql.prepare("SELECT id FROM attendants WHERE id = ?").get(id)) throw new PortalError(404, "Atendente n\xE3o encontrado.");
     if (typeof data.date !== "string" || typeof data.ads !== "string" || typeof data.withdrawalFee !== "string") invalid("Informe data, custo ADS e taxa de saque.");
     const amount = (value) => /^0+(?:[.,]0{1,2})?$/.test(value.trim()) ? 0 : amountToCents(value);
     try {
-      await this.setCosts(id, data.date, amount(data.ads), amount(data.withdrawalFee));
+      await this.setCosts(id, data.date, amount(data.ads), amount(data.withdrawalFee), actor);
     } catch (error) {
       if (error instanceof PortalError) throw error;
       invalid(error.message);
@@ -551,41 +593,48 @@ var PortalStore = class _PortalStore {
     if (!await this.sql.prepare("SELECT id FROM attendants WHERE id = ?").get(id)) throw new PortalError(404, "Atendente n\xE3o encontrado.");
     return (await this.costs({ id })).find((cost) => cost.date === date) ?? { date, adsCents: 0, withdrawalFeeCents: 0 };
   }
-  async adminSetCheckout(id, input) {
+  async adminSetCheckout(id, input, actor = systemActor) {
     const data = this.adminFields(input);
-    const current = (await this.checkouts()).find((checkout) => checkout.id === id);
-    if (!current) throw new PortalError(404, "Checkout n\xE3o encontrado.");
-    if (typeof data.name !== "string" || !data.name.trim() || data.name.length > 100 || typeof data.fee !== "string") invalid("Informe nome e percentual de taxa.");
-    if (data.fixedFee !== void 0 && typeof data.fixedFee !== "string" || data.minimum !== void 0 && typeof data.minimum !== "string") invalid("Informe valores v\xE1lidos para a taxa fixa e o m\xEDnimo por venda.");
-    let fee, fixedFee, minimum, higherTier = current.higherTier;
-    try {
-      fee = percentageToBps(data.fee);
-      fixedFee = data.fixedFee === void 0 ? current.fixedFeeCents : /^0+(?:[.,]0{1,2})?$/.test(data.fixedFee.trim()) ? 0 : amountToCents(data.fixedFee);
-      minimum = data.minimum === void 0 ? current.minAmountCents : amountToCents(data.minimum);
-      if (data.higherTier !== void 0) {
-        if (data.higherTier === null) higherTier = null;
-        else {
-          const tier = this.adminFields(data.higherTier);
-          if (typeof tier.aboveAmount !== "string" || typeof tier.fee !== "string" || typeof tier.fixedFee !== "string") throw new Error("Preencha o limite, o percentual e a taxa fixa da faixa superior.");
-          higherTier = { aboveAmountCents: amountToCents(tier.aboveAmount), feeBps: percentageToBps(tier.fee), fixedFeeCents: /^0+(?:[.,]0{1,2})?$/.test(tier.fixedFee.trim()) ? 0 : amountToCents(tier.fixedFee) };
+    return this.withTransaction(async (store) => {
+      const current = (await store.checkouts()).find((checkout) => checkout.id === id);
+      if (!current) throw new PortalError(404, "Checkout n\xE3o encontrado.");
+      if (typeof data.name !== "string" || !data.name.trim() || data.name.length > 100 || typeof data.fee !== "string") invalid("Informe nome e percentual de taxa.");
+      if (data.fixedFee !== void 0 && typeof data.fixedFee !== "string" || data.minimum !== void 0 && typeof data.minimum !== "string") invalid("Informe valores v\xE1lidos para a taxa fixa e o m\xEDnimo por venda.");
+      let fee, fixedFee, minimum, higherTier = current.higherTier;
+      try {
+        fee = percentageToBps(data.fee);
+        fixedFee = data.fixedFee === void 0 ? current.fixedFeeCents : /^0+(?:[.,]0{1,2})?$/.test(data.fixedFee.trim()) ? 0 : amountToCents(data.fixedFee);
+        minimum = data.minimum === void 0 ? current.minAmountCents : amountToCents(data.minimum);
+        if (data.higherTier !== void 0) {
+          if (data.higherTier === null) higherTier = null;
+          else {
+            const tier = this.adminFields(data.higherTier);
+            if (typeof tier.aboveAmount !== "string" || typeof tier.fee !== "string" || typeof tier.fixedFee !== "string") throw new Error("Preencha o limite, o percentual e a taxa fixa da faixa superior.");
+            higherTier = { aboveAmountCents: amountToCents(tier.aboveAmount), feeBps: percentageToBps(tier.fee), fixedFeeCents: /^0+(?:[.,]0{1,2})?$/.test(tier.fixedFee.trim()) ? 0 : amountToCents(tier.fixedFee) };
+          }
         }
+        if (higherTier && higherTier.aboveAmountCents < minimum) throw new Error("O limite da faixa inicial deve ser maior ou igual ao m\xEDnimo por venda.");
+        if (current.maxAmountCents !== null && minimum > current.maxAmountCents) throw new Error("O m\xEDnimo n\xE3o pode ultrapassar o limite de recebimento do checkout.");
+        if (higherTier && current.maxAmountCents !== null && higherTier.aboveAmountCents >= current.maxAmountCents) throw new Error("A faixa superior deve come\xE7ar abaixo do limite de recebimento do checkout.");
+      } catch (error) {
+        return invalid(error.message);
       }
-      if (higherTier && higherTier.aboveAmountCents < minimum) throw new Error("O limite da faixa inicial deve ser maior ou igual ao m\xEDnimo por venda.");
-      if (current.maxAmountCents !== null && minimum > current.maxAmountCents) throw new Error("O m\xEDnimo n\xE3o pode ultrapassar o limite de recebimento do checkout.");
-      if (higherTier && current.maxAmountCents !== null && higherTier.aboveAmountCents >= current.maxAmountCents) throw new Error("A faixa superior deve come\xE7ar abaixo do limite de recebimento do checkout.");
-    } catch (error) {
-      return invalid(error.message);
-    }
-    await this.sql.prepare("UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?").run(data.name.trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id);
+      await store.sql.prepare("UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?").run(data.name.trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id);
+      const values = (checkout) => ({ name: checkout.name, feeBps: checkout.feeBps, fixedFeeCents: checkout.fixedFeeCents, minAmountCents: checkout.minAmountCents, aboveAmountCents: checkout.higherTier?.aboveAmountCents ?? null, aboveFeeBps: checkout.higherTier?.feeBps ?? null, aboveFixedFeeCents: checkout.higherTier?.fixedFeeCents ?? null });
+      await store.audit(actor, "checkout.updated", id, current.name, values(current), values({ ...current, name: data.name.trim(), feeBps: fee, fixedFeeCents: fixedFee, minAmountCents: minimum, higherTier }));
+    });
   }
-  async createAttendant(name, commissionBps, providedToken) {
+  async createAttendant(name, commissionBps, providedToken, actor = systemActor) {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 1e4) invalid("Nome e comiss\xE3o s\xE3o obrigat\xF3rios e devem ser v\xE1lidos.");
     const token = providedToken ?? `atd_${randomBytes(32).toString("base64url")}`;
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) invalid("Token inv\xE1lido.");
-    if (await this.sql.prepare("SELECT id FROM attendants WHERE token_hash = ?").get(tokenHash(token))) throw new PortalError(409, "Esse token j\xE1 est\xE1 em uso. Defina outro token para este atendente.");
-    const id = randomUUID();
-    await this.sql.prepare("INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)").run(id, tokenHash(token), name.trim(), commissionBps, (/* @__PURE__ */ new Date()).toISOString());
-    return { id, token };
+    return this.withTransaction(async (store) => {
+      if (await store.sql.prepare("SELECT id FROM attendants WHERE token_hash = ?").get(tokenHash(token))) throw new PortalError(409, "Esse token j\xE1 est\xE1 em uso. Defina outro token para este atendente.");
+      const id = randomUUID2();
+      await store.sql.prepare("INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)").run(id, tokenHash(token), name.trim(), commissionBps, (/* @__PURE__ */ new Date()).toISOString());
+      await store.audit(actor, "attendant.created", id, name.trim(), null, { name: name.trim(), commissionBps, active: true });
+      return { id, token };
+    });
   }
   async authenticate(token) {
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) throw new PortalError(401, "Atendente n\xE3o encontrado pelo token informado.");
@@ -668,13 +717,14 @@ var PortalStore = class _PortalStore {
         if (existing.payload_hash !== payloadHash) throw new PortalError(409, "Este envio j\xE1 foi registrado com outros dados. Confira o hist\xF3rico e atualize a p\xE1gina antes de lan\xE7ar novas vendas.");
         return { duplicate: true, count: normalized.length };
       }
-      const batchId = randomUUID(), createdAt = (/* @__PURE__ */ new Date()).toISOString();
+      const batchId = randomUUID2(), createdAt = (/* @__PURE__ */ new Date()).toISOString();
       await store.sql.prepare("INSERT INTO batches VALUES (?, ?, ?, ?)").run(batchId, auth.id, requestKey, payloadHash);
       for (const row of normalized) {
-        const receiptId = randomUUID();
+        const receiptId = randomUUID2();
         await store.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, splitGatewayFee(row.feeCents));
+        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, splitGatewayFee(row.feeCents));
       }
+      await store.audit({ id: auth.id, name: profile.name }, "sales.submitted", batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
       return { duplicate: false, count: normalized.length };
     });
   }
@@ -706,25 +756,141 @@ var PortalStore = class _PortalStore {
       } catch (error) {
         return invalid(error.message);
       }
-      const id = randomUUID(), requestedAt = (/* @__PURE__ */ new Date()).toISOString();
+      const id = randomUUID2(), requestedAt = (/* @__PURE__ */ new Date()).toISOString();
       await store.sql.prepare("INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)").run(id, auth.id, amountCents, "pending", requestedAt, null, "", profile.pixType, profile.pixKey, profile.pixOwner, 0, 0);
       return { id, amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: "pending", requestedAt, paidAt: null, note: "" };
     });
   }
-  async setCosts(attendantId, date, adsCents, withdrawalFeeCents) {
+  async setCosts(attendantId, date, adsCents, withdrawalFeeCents, actor = systemActor) {
     if (!validDate(date) || ![adsCents, withdrawalFeeCents].every((value) => Number.isSafeInteger(value) && value >= 0 && value <= 1e8)) invalid("Custos ou data inv\xE1lidos.");
-    await this.sql.prepare("INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents").run(attendantId, date, adsCents, withdrawalFeeCents);
+    return this.withTransaction(async (store) => {
+      const attendant = await store.sql.prepare("SELECT name FROM attendants WHERE id = ?").get(attendantId);
+      if (!attendant) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+      const before = await store.adminCosts(attendantId, date);
+      await store.sql.prepare("INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents").run(attendantId, date, adsCents, withdrawalFeeCents);
+      await store.audit(actor, "costs.updated", attendantId, String(attendant.name), { date, adsCents: before.adsCents, withdrawalFeeCents: before.withdrawalFeeCents }, { date, adsCents, withdrawalFeeCents });
+    });
   }
-  async markPayout(id, status, note) {
+  async markPayout(id, status, note, actor = systemActor) {
     if (!["paid", "cancelled"].includes(status) || note.length > 500) invalid("Status ou observa\xE7\xE3o inv\xE1lidos.");
-    if (status === "paid") {
-      const pending = await this.sql.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id);
-      if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
-    }
-    const result = await this.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === "paid" ? (/* @__PURE__ */ new Date()).toISOString() : null, note, status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
-    if (!result.changes) invalid("Repasse pendente n\xE3o encontrado.");
+    return this.withTransaction(async (store) => {
+      const before = await store.sql.prepare("SELECT p.status, p.amount_cents, p.withdrawal_fee_cents, p.gateway_fee_cents, p.note, a.name FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.id = ?").get(id);
+      if (status === "paid") {
+        const pending = await store.sql.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id);
+        if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
+      }
+      const result = await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === "paid" ? (/* @__PURE__ */ new Date()).toISOString() : null, note, status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
+      if (!result.changes) invalid("Repasse pendente n\xE3o encontrado.");
+      await store.audit(actor, status === "paid" ? "payout.paid" : "payout.cancelled", id, String(before.name), { status: String(before.status), amountCents: Number(before.amount_cents), withdrawalFeeCents: Number(before.withdrawal_fee_cents), gatewayFeeCents: Number(before.gateway_fee_cents), note: String(before.note) }, { status, amountCents: Number(before.amount_cents), withdrawalFeeCents: status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, gatewayFeeCents: status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, note });
+    });
   }
 };
+
+// src/admin-domain.ts
+var auditActions = {
+  "sale.approved": "Venda aprovada",
+  "sale.rejected": "Venda recusada",
+  "sales.submitted": "Vendas lan\xE7adas",
+  "costs.updated": "Custos alterados",
+  "checkout.updated": "Taxas alteradas",
+  "payout.paid": "Repasse confirmado",
+  "payout.cancelled": "Repasse cancelado",
+  "attendant.created": "Atendente cadastrado",
+  "attendant.access_changed": "Acesso alterado",
+  "attendant.token_rotated": "Token renovado"
+};
+function validateDateRange(start, end) {
+  if (!validDate(start) || !validDate(end) || start > end || end > businessToday()) throw new Error("Informe um per\xEDodo v\xE1lido, com in\xEDcio at\xE9 o fim e sem datas futuras.");
+}
+function financialReport(input, start, end, attendantId = "") {
+  validateDateRange(start, end);
+  const inside = (date) => date >= start && date <= end;
+  const empty = () => ({ count: 0, pendingCount: 0, rejectedCount: 0, grossCents: 0, gatewayFeeCents: 0, commissionCents: 0, adsCents: 0, adjustmentsCents: 0, netCommissionCents: 0, paidPayoutCents: 0, paidPayoutNetCents: 0, withdrawalGatewayFeeCents: 0, attendantWithdrawalFeeCents: 0, businessWithdrawalFeeCents: 0, businessProfitCents: 0, cashMovementCents: 0 });
+  const rows2 = new Map(input.attendants.filter((a) => !attendantId || a.id === attendantId).map((a) => [a.id, { ...empty(), attendantId: a.id, attendantName: a.name }]));
+  for (const sale of input.sales) {
+    const row = rows2.get(sale.attendantId);
+    if (!row || !inside(sale.date)) continue;
+    if (sale.status === "pending") {
+      row.pendingCount++;
+      continue;
+    }
+    if (sale.status === "rejected") {
+      row.rejectedCount++;
+      continue;
+    }
+    row.count++;
+    row.grossCents += sale.amountCents;
+    row.gatewayFeeCents += sale.feeCents;
+    row.commissionCents += saleEarnings(sale);
+  }
+  for (const cost of input.costs) {
+    const row = rows2.get(cost.attendantId);
+    if (!row || !inside(cost.date)) continue;
+    row.adsCents += cost.adsCents;
+    row.adjustmentsCents += cost.withdrawalFeeCents;
+  }
+  for (const payout of input.payouts) {
+    const row = rows2.get(payout.attendantId);
+    if (!row || payout.status !== "paid" || !inside(businessToday(new Date(payout.paidAt ?? payout.requestedAt)))) continue;
+    row.paidPayoutCents += payout.amountCents;
+    row.paidPayoutNetCents += payoutNet(payout);
+    row.withdrawalGatewayFeeCents += payout.gatewayFeeCents ?? 0;
+    row.attendantWithdrawalFeeCents += payout.withdrawalFeeCents ?? 0;
+  }
+  const totals = empty();
+  for (const row of rows2.values()) {
+    row.businessWithdrawalFeeCents = row.withdrawalGatewayFeeCents - row.attendantWithdrawalFeeCents;
+    row.netCommissionCents = row.commissionCents - row.adsCents - row.adjustmentsCents - row.attendantWithdrawalFeeCents;
+    row.businessProfitCents = row.grossCents - row.gatewayFeeCents - row.commissionCents - row.businessWithdrawalFeeCents;
+    row.cashMovementCents = row.grossCents - row.gatewayFeeCents - row.adsCents - row.adjustmentsCents - row.paidPayoutNetCents - row.withdrawalGatewayFeeCents;
+    for (const key of Object.keys(totals)) totals[key] += row[key];
+  }
+  return { start, end, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), totals, attendants: [...rows2.values()].sort((a, b) => a.attendantName.localeCompare(b.attendantName, "pt-BR")) };
+}
+function financialCsv(report) {
+  const text = (value) => '"' + (/^[\s]*[=+\-@]/.test(value) ? "'" + value : value).replaceAll('"', '""') + '"';
+  const headings = ["Atendente", "In\xEDcio", "Fim", "Vendas aprovadas", "Faturamento", "Taxas de venda", "Comiss\xE3o ap\xF3s taxas de venda", "ADS", "Ajustes", "Parte do atendente no saque", "Comiss\xE3o ap\xF3s descontos", "Repasses brutos pagos", "PIX l\xEDquido pago", "Taxa total de saque", "Parte BRAVUS no saque", "Lucro BRAVUS", "Movimenta\xE7\xE3o de caixa"];
+  const row = (name, values) => [text(name), report.start, report.end, values.count, ...["grossCents", "gatewayFeeCents", "commissionCents", "adsCents", "adjustmentsCents", "attendantWithdrawalFeeCents", "netCommissionCents", "paidPayoutCents", "paidPayoutNetCents", "withdrawalGatewayFeeCents", "businessWithdrawalFeeCents", "businessProfitCents", "cashMovementCents"].map((key) => (values[key] / 100).toFixed(2).replace(".", ","))].join(";");
+  return "\uFEFF" + [headings.map(text).join(";"), ...report.attendants.map((a) => row(a.attendantName, a)), row("TOTAL", report.totals)].join("\r\n") + "\r\n";
+}
+
+// server/admin-controls.ts
+async function readFinancialReport(store, start, end, attendantId = "") {
+  try {
+    validateDateRange(start, end);
+  } catch (error) {
+    throw new PortalError(400, error.message);
+  }
+  if (attendantId && !/^[a-zA-Z0-9_-]{1,100}$/.test(attendantId)) throw new PortalError(400, "Atendente inv\xE1lido.");
+  return store.sql.transaction(async (db) => {
+    const attendants = await db.prepare("SELECT id, name FROM attendants WHERE (? = '' OR id = ?)").all(attendantId, attendantId);
+    if (attendantId && !attendants.length) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+    const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
+    const costs = await db.prepare("SELECT attendant_id AS attendantId, date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
+    const payouts = await db.prepare("SELECT attendant_id AS attendantId, status, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, paid_at AS paidAt, requested_at AS requestedAt FROM payouts WHERE status = 'paid' AND (? = '' OR attendant_id = ?)").all(attendantId, attendantId);
+    return financialReport({ attendants, sales, costs, payouts }, start, end, attendantId);
+  }, "read");
+}
+async function readAudit(store, parameters) {
+  const start = parameters.get("start") ?? "", end = parameters.get("end") ?? "", action = parameters.get("action") ?? "", page = Number(parameters.get("page") ?? "1"), pageSize = 50;
+  if (!Number.isSafeInteger(page) || page < 1 || page > 1e6 || action && !Object.hasOwn(auditActions, action)) throw new PortalError(400, "Filtro do hist\xF3rico inv\xE1lido.");
+  if (start || end) {
+    try {
+      validateDateRange(start, end);
+    } catch (error) {
+      throw new PortalError(400, error.message);
+    }
+  }
+  const upper = end ? new Date((/* @__PURE__ */ new Date(end + "T03:00:00.000Z")).getTime() + 864e5).toISOString() : "";
+  const where = "WHERE (? = '' OR created_at >= ?) AND (? = '' OR created_at < ?) AND (? = '' OR action = ?)";
+  const args = [start, start ? start + "T03:00:00.000Z" : "", end, upper, action, action];
+  return store.sql.transaction(async (db) => {
+    const total = Number((await db.prepare("SELECT COUNT(*) AS count FROM audit_events " + where).get(...args)).count);
+    const rows2 = await db.prepare(`SELECT id, created_at AS createdAt, actor_name AS actorName, action, target_id AS targetId, target_name AS targetName, before_json, after_json FROM audit_events ${where} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+    const entries = rows2.map(({ before_json, after_json, ...row }) => ({ ...row, before: before_json === null ? null : JSON.parse(String(before_json)), after: after_json === null ? null : JSON.parse(String(after_json)) }));
+    return { entries, total, page, pageSize };
+  }, "read");
+}
 
 // server/http.ts
 var BODY_LIMIT = 12 * 1024 * 1024;
@@ -801,6 +967,14 @@ function createPortalHandler(store, options = {}) {
         for (const [key, value] of failedAuth) if (now - value.started > 6e4) failedAuth.delete(key);
         if ((failedAuth.get(identity)?.count ?? 0) >= 30) throw new PortalError(429, "Muitas tentativas. Aguarde um minuto e tente novamente.");
         const authorization = request.headers.authorization ?? "";
+        if (url.pathname === "/api/cron/backups") {
+          const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash2("sha256").update(supplied).digest(), createHash2("sha256").update(options.cronSecret).digest())) throw new PortalError(401, "Acesso n\xE3o autorizado.");
+          if (request.method !== "GET") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
+          if (!options.backups) throw new PortalError(503, "Backups ainda n\xE3o configurados.");
+          json(response, 200, await options.backups.run("daily"));
+          return;
+        }
         if (url.pathname.startsWith("/api/admin/")) {
           if (!adminHash) throw new PortalError(503, "A administra\xE7\xE3o ainda n\xE3o foi configurada neste servidor.");
           const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
@@ -808,6 +982,36 @@ function createPortalHandler(store, options = {}) {
             const count = failedAuth.get(identity);
             failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
             throw new PortalError(401, "Chave administrativa inv\xE1lida.");
+          }
+          const actor = { id: adminHash.toString("hex"), name: "Administrador" };
+          if (url.pathname === "/api/admin/audit" && request.method === "GET") {
+            json(response, 200, await readAudit(store, url.searchParams));
+            return;
+          }
+          if (/^\/api\/admin\/reports\/financial(?:\.csv)?$/.test(url.pathname) && request.method === "GET") {
+            const report = await readFinancialReport(store, url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? "", url.searchParams.get("attendantId") ?? "");
+            if (url.pathname.endsWith(".csv")) {
+              response.writeHead(200, { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="bravus-fechamento-${report.start}-${report.end}.csv"`, "Cache-Control": "private, no-store" });
+              response.end(financialCsv(report));
+            } else json(response, 200, report);
+            return;
+          }
+          if (url.pathname.startsWith("/api/admin/backups")) {
+            if (!options.backups) throw new PortalError(503, "Backups ainda n\xE3o configurados.");
+            if (url.pathname === "/api/admin/backups" && request.method === "GET") json(response, 200, await options.backups.status());
+            else if (url.pathname === "/api/admin/backups" && request.method === "POST") json(response, 201, await options.backups.run("manual"));
+            else if (/^\/api\/admin\/backups\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
+              const id = url.pathname.split("/").at(-1), privateUrl = await options.backups.downloadUrl(id);
+              if (privateUrl) {
+                response.writeHead(302, { Location: privateUrl, "Cache-Control": "private, no-store" });
+                response.end();
+                return;
+              }
+              const bytes = await options.backups.download(id);
+              response.writeHead(200, { "Content-Type": "application/gzip", "Content-Disposition": `attachment; filename="bravus-backup-${id}.json.gz"`, "Cache-Control": "private, no-store" });
+              await pipeline(Readable.from([bytes]), response);
+            } else throw new PortalError(404, "C\xF3pia n\xE3o encontrada.");
+            return;
           }
           if (url.pathname.startsWith("/api/admin/push/")) {
             if (!options.push) throw new PortalError(503, "As notifica\xE7\xF5es push ainda n\xE3o est\xE3o dispon\xEDveis neste servidor.");
@@ -819,31 +1023,33 @@ function createPortalHandler(store, options = {}) {
             return;
           }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
-          if (url.pathname === "/api/admin/dashboard" && request.method === "GET") json(response, 200, await store.adminDashboard());
-          else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
-          else if (route?.[1] === "sales" && !route[3] && request.method === "PATCH") json(response, 200, await store.reviewSale(route[2], await readJson(request, options.bodyLimit)));
+          if (url.pathname === "/api/admin/dashboard" && request.method === "GET") {
+            if (options.backups) await options.backups.run("daily").catch(() => void 0);
+            json(response, 200, await store.adminDashboard());
+          } else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
+          else if (route?.[1] === "sales" && !route[3] && request.method === "PATCH") json(response, 200, await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
             const receipt = await store.adminReceipt(url.pathname.split("/").at(-1));
             response.writeHead(200, { "Content-Type": receipt.mime, "Content-Length": receipt.bytes.byteLength, "Cache-Control": "private, no-store", "Content-Disposition": "inline" });
             response.end(receipt.bytes);
-          } else if (url.pathname === "/api/admin/attendants" && request.method === "POST") json(response, 201, await store.adminCreateAttendant(await readJson(request, options.bodyLimit)));
-          else if (route?.[1] === "attendants" && route[3] === "token" && request.method === "POST") json(response, 200, await store.rotateToken(route[2]));
+          } else if (url.pathname === "/api/admin/attendants" && request.method === "POST") json(response, 201, await store.adminCreateAttendant(await readJson(request, options.bodyLimit), actor));
+          else if (route?.[1] === "attendants" && route[3] === "token" && request.method === "POST") json(response, 200, await store.rotateToken(route[2], actor));
           else if (route?.[1] === "attendants" && route[3] === "costs" && request.method === "GET") {
             const date = url.searchParams.get("date") ?? "";
             json(response, 200, await store.adminCosts(route[2], date));
           } else if (route?.[1] === "attendants" && route[3] === "costs" && request.method === "POST") {
-            await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit));
+            await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
           } else if (route?.[1] === "attendants" && !route[3] && request.method === "PATCH") {
-            await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit));
+            await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
           } else if (route?.[1] === "checkouts" && !route[3] && request.method === "PATCH") {
-            await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit));
+            await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
           } else if (route?.[1] === "payouts" && !route[3] && request.method === "PATCH") {
             const input = await readJson(request, options.bodyLimit);
             if (!input || typeof input.status !== "string" || typeof input.note !== "string") throw new PortalError(400, "Informe o status e a observa\xE7\xE3o do pagamento.");
-            await store.markPayout(route[2], input.status, input.note);
+            await store.markPayout(route[2], input.status, input.note, actor);
             json(response, 200, { saved: true });
           } else throw new PortalError(404, "Recurso administrativo n\xE3o encontrado.");
           return;
@@ -932,7 +1138,7 @@ function loadAdminKey(filename, configured) {
 
 // server/push.ts
 import webpush from "web-push";
-import { createHash as createHash3, createECDH, ECDH, randomUUID as randomUUID2 } from "node:crypto";
+import { createHash as createHash3, createECDH, ECDH, randomUUID as randomUUID3 } from "node:crypto";
 import { chmodSync as chmodSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 function validatePushKeys(keys) {
@@ -1049,7 +1255,7 @@ var PushService = class {
   async notifyAdminSale(scope, auth, batch) {
     const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
     const detail = batch.sales.length === 1 ? `venda de ${money(amount)}` : `${batch.sales.length} vendas, total de ${money(amount)}`;
-    await this.sendTo({ role: "admin", id: scope }, { title: "BRAVUS Brasil \xB7 Nova venda", body: `${profile.name}: ${detail}. Aguardando sua aprova\xE7\xE3o.`, target: "admin", tag: `bravus-admin-venda-${randomUUID2()}` });
+    await this.sendTo({ role: "admin", id: scope }, { title: "BRAVUS Brasil \xB7 Nova venda", body: `${profile.name}: ${detail}. Aguardando sua aprova\xE7\xE3o.`, target: "admin", tag: `bravus-admin-venda-${randomUUID3()}` });
   }
   async sendTo(target, message) {
     const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);
@@ -1061,6 +1267,197 @@ var PushService = class {
         if ([404, 410].includes(error.statusCode ?? 0)) await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(String(row.endpoint_hash), target.id);
       }
     }));
+  }
+};
+
+// server/backups.ts
+import { createHash as createHash4, randomUUID as randomUUID4 } from "node:crypto";
+import { gzip, gunzip } from "node:zlib";
+import { promisify } from "node:util";
+import { get, put, del, issueSignedToken, presignUrl } from "@vercel/blob";
+var compress = promisify(gzip);
+var decompress = promisify(gunzip);
+var MAX_BYTES = 128 * 1024 * 1024;
+var TABLES = ["attendants", "checkouts", "schema_migrations", "batches", "receipts", "sales", "costs", "payouts", "push_subscriptions", "admin_push_subscriptions", "push_server_keys", "backup_runs", "audit_events"];
+var hash = (bytes) => createHash4("sha256").update(bytes).digest("hex");
+var pathFor = (id) => {
+  if (!/^(daily-\d{4}-\d{2}-\d{2}(?:-[a-f0-9-]{36})?|manual-[a-f0-9-]{36})$/.test(id)) throw new PortalError(400, "Identificador do backup inv\xE1lido.");
+  return `bravus-backups/${id}.json.gz`;
+};
+async function createArchive(store, backupId) {
+  const archive = await store.sql.transaction(async (db) => {
+    const tables = [];
+    let size = 0;
+    for (const name of TABLES) {
+      const columns = (await db.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
+      const rows2 = (await db.prepare(`SELECT * FROM ${name}`).all()).map((row) => columns.map((column) => {
+        const value = row[column];
+        if (value instanceof Uint8Array) return { binary: Buffer.from(value).toString("base64") };
+        if (value === null || typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value)) return value;
+        throw new Error("Unsupported backup value");
+      }));
+      const table = { name, columns, rows: rows2 };
+      size += Buffer.byteLength(JSON.stringify(table));
+      if (size > MAX_BYTES) throw new PortalError(413, "A c\xF3pia ultrapassou o limite de 128 MB. O armazenamento precisa ser ampliado.");
+      tables.push(table);
+    }
+    return { format: "bravus-backup", version: 1, createdAt: (/* @__PURE__ */ new Date()).toISOString(), ...backupId ? { backupId } : {}, tables };
+  }, "read");
+  return compress(Buffer.from(JSON.stringify(archive)));
+}
+async function decodeArchive(bytes) {
+  if (bytes.length > MAX_BYTES) throw new Error("Invalid backup size");
+  const archive = JSON.parse((await decompress(bytes, { maxOutputLength: MAX_BYTES + 1024 * 1024 })).toString("utf8"));
+  if (archive.format !== "bravus-backup" || archive.version !== 1 || !Array.isArray(archive.tables) || archive.tables.length !== TABLES.length || new Set(archive.tables.map((table) => table.name)).size !== TABLES.length || TABLES.some((name) => !archive.tables.some((table) => table.name === name))) throw new Error("Invalid backup format");
+  return archive;
+}
+async function importArchive(db, archive) {
+  if (Number((await db.prepare("SELECT COUNT(*) AS count FROM attendants").get()).count) || Number((await db.prepare("SELECT COUNT(*) AS count FROM audit_events").get()).count)) throw new Error("Recovery requires an empty database");
+  await db.transaction(async (connection) => {
+    for (const name of [...TABLES].reverse()) if (name !== "audit_events") await connection.prepare(`DELETE FROM ${name}`).run();
+    for (const name of TABLES) {
+      const table = archive.tables.find((item) => item.name === name);
+      const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
+      if (!Array.isArray(table.columns) || table.columns.length !== expected.length || new Set(table.columns).size !== expected.length || table.columns.some((column) => !expected.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
+      const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map((column) => '"' + column + '"').join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
+      for (const row of table.rows) {
+        if (!Array.isArray(row) || row.length !== table.columns.length) throw new Error("Invalid backup row");
+        const values = row.map((value) => {
+          if (value === null || typeof value === "string" || typeof value === "number" && Number.isSafeInteger(value)) return value;
+          if (value && typeof value === "object" && Object.keys(value).length === 1 && typeof value.binary === "string" && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.binary)) return Buffer.from(value.binary, "base64");
+          throw new Error("Invalid backup value");
+        });
+        await statement.run(...values);
+      }
+      if (Number((await connection.prepare(`SELECT COUNT(*) AS count FROM ${name}`).get()).count) !== table.rows.length) throw new Error("Backup row count mismatch");
+    }
+    if ((await connection.prepare("PRAGMA foreign_key_check").all()).length || (await connection.prepare("PRAGMA quick_check").all()).some((row) => Object.values(row)[0] !== "ok")) throw new Error("Backup integrity check failed");
+  });
+}
+async function restoreArchive(bytes, destination) {
+  const archive = await decodeArchive(bytes);
+  if (archive.backupId) pathFor(archive.backupId);
+  await importArchive(destination.sql, archive);
+  if (archive.backupId) await destination.sql.prepare("UPDATE backup_runs SET status = 'verified', verified_at = ?, size_bytes = ?, sha256 = ?, error = '' WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), bytes.length, hash(bytes), archive.backupId);
+}
+async function verifyArchive(bytes) {
+  const copy = await PortalStore.open(":memory:");
+  try {
+    await restoreArchive(bytes, copy);
+  } finally {
+    copy.close();
+  }
+}
+function privateBlob(token, signing = { issue: issueSignedToken, url: presignUrl }) {
+  return {
+    destination: "private-blob",
+    async write(id, bytes) {
+      await put(pathFor(id), bytes, { access: "private", token, addRandomSuffix: false, allowOverwrite: false, contentType: "application/gzip", cacheControlMaxAge: 60 });
+    },
+    async read(id) {
+      const result = await get(pathFor(id), { access: "private", token, useCache: false });
+      if (!result || result.statusCode !== 200) throw new Error("Backup not found");
+      const reader = result.stream.getReader(), parts = [];
+      let size = 0;
+      try {
+        while (true) {
+          const next = await reader.read();
+          if (next.done) break;
+          size += next.value.length;
+          if (size > MAX_BYTES) throw new Error("Backup exceeds size limit");
+          parts.push(Buffer.from(next.value));
+        }
+      } finally {
+        await reader.cancel().catch(() => void 0);
+      }
+      return Buffer.concat(parts);
+    },
+    async remove(id) {
+      await del(pathFor(id), { token });
+    },
+    async downloadUrl(id) {
+      const pathname = pathFor(id), validUntil = Date.now() + 2 * 6e4;
+      const signed = await signing.issue({ token, pathname, operations: ["get"], validUntil });
+      return (await signing.url(signed, { operation: "get", pathname, access: "private", validUntil, useCache: false })).presignedUrl;
+    }
+  };
+}
+var BackupService = class {
+  store;
+  storage;
+  scheduled;
+  constructor(store, storage, scheduled = false) {
+    this.store = store;
+    this.storage = storage;
+    this.scheduled = scheduled;
+  }
+  async status() {
+    const records = await this.store.sql.prepare("SELECT id, kind, status, started_at AS startedAt, verified_at AS verifiedAt, size_bytes AS sizeBytes, error FROM backup_runs ORDER BY started_at DESC LIMIT 50").all();
+    return { configured: this.storage !== null, destination: this.storage?.destination ?? "unconfigured", scheduled: this.scheduled, automatic: !this.storage ? "Aguardando armazenamento privado" : this.scheduled ? "Todos os dias, \xE0s 03h de Bras\xEDlia" : "Uma c\xF3pia por dia ao abrir o painel", retentionDays: 30, records };
+  }
+  async run(kind, now = /* @__PURE__ */ new Date()) {
+    if (!this.storage) throw new PortalError(503, "Conecte um armazenamento Blob privado ao projeto na Vercel para ativar os backups.");
+    const day = kind === "daily" ? businessToday(now) : null;
+    let id = kind === "daily" ? "daily-" + day + "-" + randomUUID4() : "manual-" + randomUUID4();
+    const startedAt = now.toISOString();
+    const existing = await this.store.sql.transaction(async (db) => {
+      const previous = day ? await db.prepare("SELECT id FROM backup_runs WHERE day_key = ? AND status = 'verified'").get(day) : void 0;
+      if (previous) {
+        id = String(previous.id);
+        return true;
+      }
+      if (await db.prepare("SELECT id FROM backup_runs WHERE status = 'running' AND started_at > ?").get(new Date(now.getTime() - 10 * 6e4).toISOString())) throw new PortalError(409, "Uma c\xF3pia de seguran\xE7a j\xE1 est\xE1 em andamento. Aguarde a conclus\xE3o.");
+      await db.prepare("UPDATE backup_runs SET status = 'failed', error = 'A c\xF3pia foi interrompida. Tente novamente.' WHERE status = 'running'").run();
+      await db.prepare("INSERT INTO backup_runs (id, kind, status, started_at, day_key) VALUES (?, ?, 'running', ?, ?)").run(id, kind, startedAt, day);
+      return false;
+    });
+    if (!existing) {
+      try {
+        const archive = await createArchive(this.store, id), checksum = hash(archive);
+        await this.storage.write(id, archive);
+        const downloaded = await this.storage.read(id);
+        if (hash(downloaded) !== checksum) throw new Error("Backup checksum mismatch");
+        await verifyArchive(downloaded);
+        await this.store.sql.prepare("UPDATE backup_runs SET status = 'verified', verified_at = ?, size_bytes = ?, sha256 = ? WHERE id = ?").run((/* @__PURE__ */ new Date()).toISOString(), downloaded.length, checksum, id);
+      } catch {
+        const message = "N\xE3o foi poss\xEDvel criar e verificar esta c\xF3pia. O \xFAltimo backup v\xE1lido foi preservado.";
+        await this.store.sql.prepare("UPDATE backup_runs SET status = 'failed', error = ? WHERE id = ?").run(message, id);
+        throw new PortalError(503, message);
+      }
+      const cutoff = new Date(now.getTime() - 30 * 864e5).toISOString();
+      for (const record of await this.store.sql.prepare("SELECT id FROM backup_runs WHERE started_at < ? AND id <> ?").all(cutoff, id)) {
+        try {
+          await this.storage.remove(String(record.id));
+          await this.store.sql.prepare("DELETE FROM backup_runs WHERE id = ?").run(String(record.id));
+        } catch {
+        }
+      }
+    }
+    return await this.store.sql.prepare("SELECT id, kind, status, started_at AS startedAt, verified_at AS verifiedAt, size_bytes AS sizeBytes, error FROM backup_runs WHERE id = ?").get(id);
+  }
+  async download(id) {
+    pathFor(id);
+    const record = await this.store.sql.prepare("SELECT sha256 FROM backup_runs WHERE id = ? AND status = 'verified'").get(id);
+    if (!this.storage || !record) throw new PortalError(404, "C\xF3pia verificada n\xE3o encontrada.");
+    try {
+      const bytes = await this.storage.read(id);
+      if (hash(bytes) !== record.sha256) throw new Error("Backup checksum mismatch");
+      return bytes;
+    } catch {
+      throw new PortalError(503, "N\xE3o foi poss\xEDvel conferir a integridade desta c\xF3pia. Tente novamente ou use outra c\xF3pia verificada.");
+    }
+  }
+  async downloadUrl(id) {
+    pathFor(id);
+    if (!this.storage?.downloadUrl) return null;
+    if (!await this.store.sql.prepare("SELECT id FROM backup_runs WHERE id = ? AND status = 'verified'").get(id)) throw new PortalError(404, "C\xF3pia verificada n\xE3o encontrada.");
+    try {
+      const url = new URL(await this.storage.downloadUrl(id));
+      if (url.protocol !== "https:" || !url.hostname.endsWith(".blob.vercel-storage.com") || url.username || url.password) throw new Error("Invalid private download");
+      return url.href;
+    } catch {
+      throw new PortalError(503, "N\xE3o foi poss\xEDvel autorizar o download privado. Tente novamente.");
+    }
   }
 };
 
@@ -1108,7 +1505,8 @@ function createVercelHandler(options = {}) {
     try {
       const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT2 });
+      const backups = new BackupService(store, env.BLOB_READ_WRITE_TOKEN ? privateBlob(env.BLOB_READ_WRITE_TOKEN) : null, (env.CRON_SECRET?.length ?? 0) >= 32);
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT2 });
     } catch {
       store.close();
       throw new StartupError("configuration_invalid");
@@ -1119,7 +1517,7 @@ function createVercelHandler(options = {}) {
       const url = new URL(request.url ?? "/", "http://localhost");
       const routed = url.searchParams.get("__bravus_path");
       if (routed !== null) {
-        if (!/^[a-zA-Z0-9_/-]+$/.test(routed)) {
+        if (!/^[a-zA-Z0-9_/-]+(?:\.csv)?$/.test(routed)) {
           response.writeHead(404, { "Content-Type": "application/json", "Cache-Control": "no-store" });
           response.end(JSON.stringify({ error: "Recurso n\xE3o encontrado." }));
           return;

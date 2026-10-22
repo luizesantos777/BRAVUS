@@ -4,9 +4,13 @@ import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, splitGatewayFee, validateProfile, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
+import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
+import { appendAudit, controlsSchema } from './controls-schema.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
+export interface AuditActor { id: string; name: string }
+const systemActor: AuditActor = { id: 'system', name: 'Sistema / terminal' };
 interface AttendantRow { id: string; name: string; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
@@ -35,6 +39,9 @@ export class PortalStore {
     return this.sql.transaction(connection => work(new PortalStore(connection)));
   }
   async health() { await this.sql.prepare('SELECT 1').get(); }
+  private async audit(actor: AuditActor, action: AuditAction, targetId: string, targetName: string, before: AuditValues | null, after: AuditValues | null) {
+    await appendAudit(this.sql, actor, action, targetId, targetName, before, after);
+  }
   private async initialize() {
     await this.withTransaction(async store => {
     (await store.sql.exec(`
@@ -48,6 +55,7 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS costs (attendant_id TEXT NOT NULL REFERENCES attendants(id), date TEXT NOT NULL, ads_cents INTEGER NOT NULL CHECK(ads_cents >= 0), withdrawal_fee_cents INTEGER NOT NULL CHECK(withdrawal_fee_cents >= 0), PRIMARY KEY(attendant_id, date));
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `));
+      await store.sql.exec(controlsSchema);
       const saleColumns = new Set((await store.sql.prepare('PRAGMA table_info(sales)').all()).map(column => column.name));
       if (!saleColumns.has('status')) (await store.sql.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected'))"));
       if (!saleColumns.has('review_note')) (await store.sql.exec("ALTER TABLE sales ADD COLUMN review_note TEXT NOT NULL DEFAULT ''"));
@@ -116,22 +124,26 @@ export class PortalStore {
     const sales = (await this.sql.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize)) as unknown as AdminSale[];
     return { sales, total, page, pageSize };
   }
-  async reviewSale(id: string, input: unknown) {
+  async reviewSale(id: string, input: unknown, actor = systemActor) {
     let review: ReturnType<typeof validateSaleReview>;
     try { review = validateSaleReview(input); } catch (error) { return invalid((error as Error).message); }
-    const result = (await this.sql.prepare("UPDATE sales SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(review.status, review.note, new Date().toISOString(), id));
+    return this.withTransaction(async store => {
+    const before = await store.sql.prepare('SELECT s.status, s.review_note, a.name FROM sales s JOIN attendants a ON a.id = s.attendant_id WHERE s.id = ?').get(id);
+    const result = (await store.sql.prepare("UPDATE sales SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(review.status, review.note, new Date().toISOString(), id));
     if (!result.changes) {
-      if (!(await this.sql.prepare('SELECT id FROM sales WHERE id = ?').get(id))) throw new PortalError(404, 'Venda não encontrada.');
+      if (!before) throw new PortalError(404, 'Venda não encontrada.');
       throw new PortalError(409, 'Esta venda já foi analisada. Atualize a lista para conferir a decisão.');
     }
+    await store.audit(actor, review.status === 'approved' ? 'sale.approved' : 'sale.rejected', id, String(before!.name), { status: String(before!.status), note: String(before!.review_note) }, { status: review.status, note: review.note });
     return { saved: true };
+    });
   }
   async adminReceipt(id: string) {
     const row = (await this.sql.prepare('SELECT mime, bytes FROM receipts WHERE id = ?').get(id));
     if (!row) throw new PortalError(404, 'Comprovante não encontrado.');
     return { mime: String(row.mime), bytes: row.bytes as Uint8Array };
   }
-  async adminCreateAttendant(input: unknown): Promise<Invitation> {
+  async adminCreateAttendant(input: unknown, actor = systemActor): Promise<Invitation> {
     const data: Record<string, unknown> = { commission: String(DEFAULT_COMMISSION_BPS / 100), ...this.adminFields(input) };
     if (typeof data.name !== 'string' || typeof data.commission !== 'string') invalid('Informe nome e comissão.');
     let commission: number;
@@ -141,35 +153,42 @@ export class PortalStore {
     if (data.token !== undefined && typeof data.token !== 'string') invalid('Informe um token válido.');
     const chosenToken = typeof data.token === 'string' ? data.token.trim() : '';
     if (chosenToken && !/^[A-Za-z0-9_-]{32,160}$/.test(chosenToken)) invalid('O token deve ter de 32 a 160 letras, números, hífen ou sublinhado.');
-    const { id, token } = (await this.createAttendant(name, commission, chosenToken || undefined));
+    const { id, token } = (await this.createAttendant(name, commission, chosenToken || undefined, actor));
     return { attendantId: id, name, token };
   }
   private adminFields(input: unknown): Record<string, unknown> {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return invalid('Dados inválidos.');
     return input as Record<string, unknown>;
   }
-  async rotateToken(id: string): Promise<Invitation> {
-    const row = (await this.sql.prepare('SELECT name, active FROM attendants WHERE id = ?').get(id));
+  async rotateToken(id: string, actor = systemActor): Promise<Invitation> {
+    return this.withTransaction(async store => {
+    const row = (await store.sql.prepare('SELECT name, active FROM attendants WHERE id = ?').get(id));
     if (!row) throw new PortalError(404, 'Atendente não encontrado.');
     if (row.active !== 1) invalid('Reative o atendente antes de gerar um novo token.');
     const token = `atd_${randomBytes(32).toString('base64url')}`;
-    (await this.sql.prepare('UPDATE attendants SET token_hash = ? WHERE id = ?').run(tokenHash(token), id));
-    (await this.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id));
+    (await store.sql.prepare('UPDATE attendants SET token_hash = ? WHERE id = ?').run(tokenHash(token), id));
+    (await store.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id));
+    await store.audit(actor, 'attendant.token_rotated', id, String(row.name), null, { renewed: true });
     return { attendantId: id, name: String(row.name), token };
+    });
   }
-  async setAttendantActive(id: string, input: unknown) {
+  async setAttendantActive(id: string, input: unknown, actor = systemActor) {
     const data = this.adminFields(input);
     if (typeof data.active !== 'boolean') invalid('Informe se o acesso deve ficar ativo ou revogado.');
-    const result = (await this.sql.prepare('UPDATE attendants SET active = ? WHERE id = ?').run(data.active ? 1 : 0, id));
+    return this.withTransaction(async store => {
+    const before = await store.sql.prepare('SELECT name, active FROM attendants WHERE id = ?').get(id);
+    const result = (await store.sql.prepare('UPDATE attendants SET active = ? WHERE id = ?').run(data.active ? 1 : 0, id));
     if (!result.changes) throw new PortalError(404, 'Atendente não encontrado.');
-    if (!data.active) (await this.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id));
+    if (!data.active) (await store.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id));
+    await store.audit(actor, 'attendant.access_changed', id, String(before!.name), { active: before!.active === 1 }, { active: data.active as boolean });
+    });
   }
-  async adminSetCosts(id: string, input: unknown) {
+  async adminSetCosts(id: string, input: unknown, actor = systemActor) {
     const data = this.adminFields(input);
     if (!(await this.sql.prepare('SELECT id FROM attendants WHERE id = ?').get(id))) throw new PortalError(404, 'Atendente não encontrado.');
     if (typeof data.date !== 'string' || typeof data.ads !== 'string' || typeof data.withdrawalFee !== 'string') invalid('Informe data, custo ADS e taxa de saque.');
     const amount = (value: string) => /^0+(?:[.,]0{1,2})?$/.test(value.trim()) ? 0 : amountToCents(value);
-    try { (await this.setCosts(id, data.date as string, amount(data.ads as string), amount(data.withdrawalFee as string))); }
+    try { (await this.setCosts(id, data.date as string, amount(data.ads as string), amount(data.withdrawalFee as string), actor)); }
     catch (error) { if (error instanceof PortalError) throw error; invalid((error as Error).message); }
   }
   async adminCosts(id: string, date: string): Promise<DailyCost> {
@@ -177,9 +196,10 @@ export class PortalStore {
     if (!(await this.sql.prepare('SELECT id FROM attendants WHERE id = ?').get(id))) throw new PortalError(404, 'Atendente não encontrado.');
     return (await this.costs({ id })).find(cost => cost.date === date) ?? { date, adsCents: 0, withdrawalFeeCents: 0 };
   }
-  async adminSetCheckout(id: string, input: unknown) {
+  async adminSetCheckout(id: string, input: unknown, actor = systemActor) {
     const data = this.adminFields(input);
-    const current = (await this.checkouts()).find(checkout => checkout.id === id);
+    return this.withTransaction(async store => {
+    const current = (await store.checkouts()).find(checkout => checkout.id === id);
     if (!current) throw new PortalError(404, 'Checkout não encontrado.');
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
     if (data.fixedFee !== undefined && typeof data.fixedFee !== 'string' || data.minimum !== undefined && typeof data.minimum !== 'string') invalid('Informe valores válidos para a taxa fixa e o mínimo por venda.');
@@ -200,17 +220,23 @@ export class PortalStore {
       if (current.maxAmountCents !== null && minimum > current.maxAmountCents) throw new Error('O mínimo não pode ultrapassar o limite de recebimento do checkout.');
       if (higherTier && current.maxAmountCents !== null && higherTier.aboveAmountCents >= current.maxAmountCents) throw new Error('A faixa superior deve começar abaixo do limite de recebimento do checkout.');
     } catch (error) { return invalid((error as Error).message); }
-    (await this.sql.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id));
+    (await store.sql.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id));
+    const values = (checkout: Checkout): AuditValues => ({ name: checkout.name, feeBps: checkout.feeBps, fixedFeeCents: checkout.fixedFeeCents, minAmountCents: checkout.minAmountCents, aboveAmountCents: checkout.higherTier?.aboveAmountCents ?? null, aboveFeeBps: checkout.higherTier?.feeBps ?? null, aboveFixedFeeCents: checkout.higherTier?.fixedFeeCents ?? null });
+    await store.audit(actor, 'checkout.updated', id, current.name, values(current), values({ ...current, name: (data.name as string).trim(), feeBps: fee, fixedFeeCents: fixedFee, minAmountCents: minimum, higherTier }));
+    });
   }
-  async createAttendant(name: string, commissionBps: number, providedToken?: string) {
+  async createAttendant(name: string, commissionBps: number, providedToken?: string, actor = systemActor) {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000) invalid('Nome e comissão são obrigatórios e devem ser válidos.');
     const token = providedToken ?? `atd_${randomBytes(32).toString('base64url')}`;
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) invalid('Token inválido.');
-    if ((await this.sql.prepare('SELECT id FROM attendants WHERE token_hash = ?').get(tokenHash(token)))) throw new PortalError(409, 'Esse token já está em uso. Defina outro token para este atendente.');
+    return this.withTransaction(async store => {
+    if ((await store.sql.prepare('SELECT id FROM attendants WHERE token_hash = ?').get(tokenHash(token)))) throw new PortalError(409, 'Esse token já está em uso. Defina outro token para este atendente.');
     const id = randomUUID();
     // Legacy goal columns stay in SQLite to preserve existing databases; they are no longer read or applied.
-    (await this.sql.prepare('INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, tokenHash(token), name.trim(), commissionBps, new Date().toISOString()));
+    (await store.sql.prepare('INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)').run(id, tokenHash(token), name.trim(), commissionBps, new Date().toISOString()));
+    await store.audit(actor, 'attendant.created', id, name.trim(), null, { name: name.trim(), commissionBps, active: true });
     return { id, token };
+    });
   }
   async authenticate(token: string): Promise<Authenticated> {
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
@@ -282,6 +308,7 @@ export class PortalStore {
         (await store.sql.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes));
         (await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, splitGatewayFee(row.feeCents)));
       }
+    await store.audit({ id: auth.id, name: profile.name }, 'sales.submitted', batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
     return { duplicate: false, count: normalized.length };
     });
   }
@@ -310,17 +337,27 @@ export class PortalStore {
       return { id, amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: 'pending', requestedAt, paidAt: null, note: '' };
     });
   }
-  async setCosts(attendantId: string, date: string, adsCents: number, withdrawalFeeCents: number) {
+  async setCosts(attendantId: string, date: string, adsCents: number, withdrawalFeeCents: number, actor = systemActor) {
     if (!validDate(date) || ![adsCents, withdrawalFeeCents].every(value => Number.isSafeInteger(value) && value >= 0 && value <= 100000000)) invalid('Custos ou data inválidos.');
-    (await this.sql.prepare('INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents').run(attendantId, date, adsCents, withdrawalFeeCents));
+    return this.withTransaction(async store => {
+    const attendant = await store.sql.prepare('SELECT name FROM attendants WHERE id = ?').get(attendantId);
+    if (!attendant) throw new PortalError(404, 'Atendente não encontrado.');
+    const before = await store.adminCosts(attendantId, date);
+    (await store.sql.prepare('INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents').run(attendantId, date, adsCents, withdrawalFeeCents));
+    await store.audit(actor, 'costs.updated', attendantId, String(attendant.name), { date, adsCents: before.adsCents, withdrawalFeeCents: before.withdrawalFeeCents }, { date, adsCents, withdrawalFeeCents });
+    });
   }
-  async markPayout(id: string, status: 'paid' | 'cancelled', note: string) {
+  async markPayout(id: string, status: 'paid' | 'cancelled', note: string, actor = systemActor) {
     if (!['paid', 'cancelled'].includes(status) || note.length > 500) invalid('Status ou observação inválidos.');
+    return this.withTransaction(async store => {
+    const before = await store.sql.prepare('SELECT p.status, p.amount_cents, p.withdrawal_fee_cents, p.gateway_fee_cents, p.note, a.name FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.id = ?').get(id);
     if (status === 'paid') {
-      const pending = (await this.sql.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id));
+      const pending = (await store.sql.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id));
       if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
     }
-    const result = (await this.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id));
+    const result = (await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id));
     if (!result.changes) invalid('Repasse pendente não encontrado.');
+    await store.audit(actor, status === 'paid' ? 'payout.paid' : 'payout.cancelled', id, String(before!.name), { status: String(before!.status), amountCents: Number(before!.amount_cents), withdrawalFeeCents: Number(before!.withdrawal_fee_cents), gatewayFeeCents: Number(before!.gateway_fee_cents), note: String(before!.note) }, { status, amountCents: Number(before!.amount_cents), withdrawalFeeCents: status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, gatewayFeeCents: status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, note });
+    });
   }
 }

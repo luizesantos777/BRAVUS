@@ -67,6 +67,9 @@ export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'comm
   return Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000);
 }
 export function payoutNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents'>): number { return payout.amountCents - (payout.withdrawalFeeCents ?? 0); }
+export function payoutExpectedNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents' | 'status'>): number {
+  return payout.status === 'pending' ? payout.amountCents - GATEWAY_WITHDRAWAL_FEE_CENTS : payoutNet(payout);
+}
 export function validatePayoutAmount(amountCents: number, availableCents: number): void {
   if (amountCents <= GATEWAY_WITHDRAWAL_FEE_CENTS) throw new Error(`O saque deve ser maior que a taxa de ${money(GATEWAY_WITHDRAWAL_FEE_CENTS)} do gateway.`);
   if (amountCents > availableCents) throw new Error('O valor ultrapassa seu saldo disponível para repasse.');
@@ -147,7 +150,7 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   const pendingPayoutCents = payouts.filter(payout => payout.status === 'pending').reduce((sum, payout) => sum + payout.amountCents, 0);
   const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
   const transactionFeeCents = filtered.reduce((sum, sale) => sum + sale.feeCents, 0);
-  const withdrawalFeeCents = filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0) + payouts.filter(payout => payout.status !== 'cancelled' && inPeriod(businessToday(new Date(payout.requestedAt)), period, today)).reduce((sum, payout) => sum + (payout.withdrawalFeeCents ?? 0), 0);
+  const withdrawalFeeCents = filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0) + payouts.filter(payout => payout.status === 'paid' && inPeriod(businessToday(new Date(payout.paidAt ?? payout.requestedAt)), period, today)).reduce((sum, payout) => sum + (payout.withdrawalFeeCents ?? 0), 0);
   const businessShareCents = filtered.reduce((sum, sale) => sum + sale.amountCents - sale.feeCents - saleEarnings(sale), 0);
   const paidPayoutNetCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payoutNet(payout), 0);
   return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };

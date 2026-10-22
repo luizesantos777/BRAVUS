@@ -70,6 +70,10 @@ export class PortalStore {
         this.db.prepare('UPDATE attendants SET commission_bps = ?').run(DEFAULT_COMMISSION_BPS);
         this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('attendant-gross-share-50-v1');
       }
+      if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('payout-fee-on-payment-v1')) {
+        this.db.exec("UPDATE payouts SET withdrawal_fee_cents = 0 WHERE status IN ('pending','cancelled')");
+        this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('payout-fee-on-payment-v1');
+      }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
   }
@@ -285,9 +289,9 @@ export class PortalStore {
       if (!profile.pixKey || !profile.pixOwner) invalid('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
       try { validatePayoutAmount(amountCents, portal.finance.availableCents); } catch (error) { return invalid((error as Error).message); }
       const id = randomUUID(), requestedAt = new Date().toISOString();
-      this.db.prepare('INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, auth.id, amountCents, 'pending', requestedAt, null, '', profile.pixType, profile.pixKey, profile.pixOwner, GATEWAY_WITHDRAWAL_FEE_CENTS);
+      this.db.prepare('INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, auth.id, amountCents, 'pending', requestedAt, null, '', profile.pixType, profile.pixKey, profile.pixOwner, 0);
       this.db.exec('COMMIT');
-      return { id, amountCents, withdrawalFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS, status: 'pending', requestedAt, paidAt: null, note: '' };
+      return { id, amountCents, withdrawalFeeCents: 0, status: 'pending', requestedAt, paidAt: null, note: '' };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   setCosts(attendantId: string, date: string, adsCents: number, withdrawalFeeCents: number) {
@@ -296,7 +300,11 @@ export class PortalStore {
   }
   markPayout(id: string, status: 'paid' | 'cancelled', note: string) {
     if (!['paid', 'cancelled'].includes(status) || note.length > 500) invalid('Status ou observação inválidos.');
-    const result = this.db.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, id);
+    if (status === 'paid') {
+      const pending = this.db.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id);
+      if (pending && Number(pending.amount_cents) <= GATEWAY_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a taxa de ${GATEWAY_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
+    }
+    const result = this.db.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
     if (!result.changes) invalid('Repasse pendente não encontrado.');
   }
 }

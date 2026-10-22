@@ -12,6 +12,7 @@ export function readDemoData(): DemoData {
     data.sales = data.sales.map(sale => ({ ...sale, status: sale.status ?? 'approved', reviewNote: sale.reviewNote ?? '', reviewedAt: sale.reviewedAt ?? null }));
     if (!data.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000 && (sale.commissionMode === undefined || sale.commissionMode === 'net-share' || sale.commissionMode === 'gross-share-less-fees') && Object.hasOwn(saleStatusLabels, sale.status) && typeof sale.reviewNote === 'string')) throw new Error();
     if (!data.payouts.every(payout => Number.isSafeInteger(payout.amountCents) && payout.amountCents > 0 && (payout.withdrawalFeeCents === undefined || Number.isSafeInteger(payout.withdrawalFeeCents) && payout.withdrawalFeeCents >= 0 && payout.withdrawalFeeCents < payout.amountCents))) throw new Error();
+    data.payouts = data.payouts.map(payout => payout.status === 'paid' ? payout : { ...payout, withdrawalFeeCents: 0 });
     return data;
   } catch { throw new Error('Não foi possível ler a demonstração salva. Seus dados foram preservados; use outro navegador para experimentar.'); }
 }

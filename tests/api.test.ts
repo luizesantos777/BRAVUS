@@ -470,16 +470,18 @@ test('padrão de 50% desconta taxas integrais e saque de R$ 5 sem aceitar valore
   const concurrent = await Promise.all([request('72,33'), request('72,33')]);
   assert.deepEqual(concurrent.map(response => response.status).sort(), [201, 400]);
   const payout = await concurrent.find(response => response.status === 201)!.json();
-  assert.equal(payout.withdrawalFeeCents, 500); assert.equal(payout.amountCents, 7233); assert.equal(payout.status, 'pending');
+  assert.equal(payout.withdrawalFeeCents, 0); assert.equal(payout.amountCents, 7233); assert.equal(payout.status, 'pending');
   portal = await (await call('/api/portal', token)).json();
-  assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.withdrawalFeeCents, 500);
-  const finish = (id: string, status: string) => call('/api/admin/payouts/' + id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Teste sintético' }) });
+  assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.withdrawalFeeCents, 0);
+  const finish = (id: string, status: string) => call('/api/admin/payouts/' + id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Teste sintético', withdrawalFeeCents: 0 }) });
   assert.equal((await finish(payout.id, 'cancelled')).status, 200);
   portal = await (await call('/api/portal', token)).json();
   assert.equal(portal.finance.availableCents, 7233); assert.equal(portal.finance.withdrawalFeeCents, 0);
   const second = await (await request('72,33')).json();
-  assert.equal((await finish(second.id, 'paid')).status, 200);
+  const paidTwice = await Promise.all([finish(second.id, 'paid'), finish(second.id, 'paid')]);
+  assert.deepEqual(paidTwice.map(response => response.status).sort(), [200, 400]);
   portal = await (await call('/api/portal', token)).json();
+  assert.equal(portal.finance.withdrawalFeeCents, 500); assert.equal(portal.payouts.find((item: { id: string }) => item.id === second.id).withdrawalFeeCents, 500);
   assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.paidPayoutNetCents, 6733); assert.equal(portal.finance.feeCents, 3067);
   assert.equal((await finish(second.id, 'paid')).status, 400);
 });
@@ -509,5 +511,34 @@ test('migração mantém regras e saques históricos e aplica 50% apenas aos pr�
     store.db.prepare('UPDATE attendants SET commission_bps = 6000 WHERE id = ?').run(account.id);
     store.close(); store = new PortalStore(file);
     assert.equal(store.profile(auth).commissionBps, 6000); assert.equal(store.portal(auth).finance.availableCents, 3331);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('migração remove tarifas antecipadas de pedidos em análise sem alterar repasses já pagos', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-payout-fee-upgrade-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Repasse de teste', 5000, tokenA), auth = { id: account.id };
+    store.recordSales(auth, batch(), 'fixture_payout_fee_migration');
+    store.reviewSale(store.sales(auth)[0].id, { status: 'approved', note: '' });
+    store.saveProfile(auth, { name: 'Repasse de teste', email: '', phone: '', pixType: 'email', pixKey: 'payout@example.com', pixOwner: 'Teste' });
+    const paid = store.requestPayout(auth, { amount: '10' }); store.markPayout(paid.id, 'paid', 'Pagamento sintético');
+    const pending = store.requestPayout(auth, { amount: '10' });
+    const cancelled = store.requestPayout(auth, { amount: '10' }); store.markPayout(cancelled.id, 'cancelled', 'Cancelamento sintético');
+    store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id IN (?, ?)').run(pending.id, cancelled.id);
+    store.db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('payout-fee-on-payment-v1');
+    const paidAt = store.payouts(auth).find(item => item.id === paid.id)!.paidAt, balance = store.portal(auth).finance.availableCents;
+    store.close(); store = new PortalStore(file);
+    const payouts = store.payouts(auth);
+    assert.equal(payouts.find(item => item.id === pending.id)!.withdrawalFeeCents, 0);
+    assert.equal(payouts.find(item => item.id === cancelled.id)!.withdrawalFeeCents, 0);
+    assert.equal(payouts.find(item => item.id === paid.id)!.withdrawalFeeCents, 500);
+    assert.equal(payouts.find(item => item.id === paid.id)!.paidAt, paidAt);
+    assert.equal(store.portal(auth).finance.availableCents, balance);
+    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 500);
+    store.markPayout(pending.id, 'paid', 'Pagamento posterior');
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 1000);
+    assert.equal(store.portal(auth).finance.availableCents, balance);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });

@@ -44,6 +44,7 @@ test('modo instalado no iPhone permite ativar alertas e mantém a inscrição ap
   await page.addInitScript(agent => {
     Object.defineProperty(navigator, 'userAgent', { get: () => agent });
     Object.defineProperty(navigator, 'standalone', { value: true });
+    Object.defineProperty(Notification, 'requestPermission', { value: () => { throw new Error('A permissão já concedida não deve ser solicitada de novo.'); } });
   }, iPhoneAgent);
   await mockBrowserSubscription(page, `ios-${info.project.name}`);
   await page.goto(`/?aba=perfil#/atendente/${token}`);
@@ -54,6 +55,50 @@ test('modo instalado no iPhone permite ativar alertas e mantém a inscrição ap
   await page.reload(); await expect(page.locator('.notification-badge')).toHaveText('Ativado');
   await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+});
+test('iPhone instalado mostra os recursos indisponíveis sem pedir permissão ou expor credenciais', async ({ page }, info) => {
+  const adminKey = 'fixture_browser_admin_012345678901234567890123456789', subscriptionWrites: string[] = [];
+  page.on('request', request => { if (request.url().includes('/push/subscriptions') && request.method() !== 'GET') subscriptionWrites.push(request.method()); });
+  await page.addInitScript(agent => {
+    Object.defineProperty(navigator, 'userAgent', { get: () => agent });
+    Object.defineProperty(navigator, 'standalone', { value: true });
+    Reflect.deleteProperty(window, 'Notification'); Reflect.deleteProperty(window, 'PushManager');
+  }, iPhoneAgent);
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Indisponível');
+  await expect(page.getByRole('button', { name: 'Ativar alertas de vendas no meu celular' })).toBeDisabled();
+  await expect(page.locator('.notification-note')).toContainText('BRAVUS está aberto como app');
+  await page.getByRole('button', { name: 'Verificar notificações' }).click();
+  const diagnostic = page.getByRole('status', { name: 'Verificação das notificações' });
+  await expect(diagnostic).toContainText('App da Tela de Início');
+  await expect(diagnostic.locator('dl > div').filter({ has: page.getByText('Notificações do aparelho', { exact: true }) })).toContainText('Indisponíveis');
+  await expect(diagnostic.locator('dl > div').filter({ has: page.getByText('Servidor BRAVUS', { exact: true }) })).toContainText('Disponível');
+  await expect(diagnostic).not.toContainText(adminKey); await expect(diagnostic).not.toContainText('publicKey');
+  expect(subscriptionWrites).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('iphone-verificar-notificacoes.png'), fullPage: true });
+});
+test('notificações verificam novamente ao retomar o app e distinguem uma falha do servidor', async ({ page }) => {
+  const adminKey = 'fixture_browser_admin_012345678901234567890123456789';
+  await page.addInitScript(agent => {
+    Object.defineProperty(navigator, 'userAgent', { get: () => agent });
+    Object.defineProperty(navigator, 'standalone', { configurable: true, value: false });
+    Object.defineProperty(Notification, 'permission', { get: () => 'default' });
+    Object.defineProperty(Notification, 'requestPermission', { value: () => { throw new Error('A verificação não deve pedir permissão.'); } });
+  }, iPhoneAgent);
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
+  await page.evaluate(() => { Object.defineProperty(navigator, 'standalone', { value: true }); dispatchEvent(new Event('pageshow')); });
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+  await page.route('**/api/admin/push/config', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'As notificações push ainda não estão disponíveis neste servidor.' }) }));
+  await page.getByRole('button', { name: 'Verificar notificações' }).click();
+  const diagnostic = page.getByRole('status', { name: 'Verificação das notificações' });
+  await expect(diagnostic).toContainText('não estão disponíveis neste servidor');
+  await expect(diagnostic).toContainText('Falha na conexão');
+  await expect(diagnostic).toContainText('Ainda não solicitada');
+  await expect(diagnostic).toContainText('App da Tela de Início');
 });
 async function mockBrowserSubscription(page: Page, deviceId: string) {
   const curve = createECDH('prime256v1'); curve.generateKeys();

@@ -1,4 +1,4 @@
-import { isAppleMobile, needsAppleInstallation, publicAssetUrl } from './pwa.ts';
+import { isAppleMobile, isInstalledApp, needsAppleInstallation, publicAssetUrl } from './pwa.ts';
 
 export interface NotificationClient {
   readonly isDemo: boolean;
@@ -9,9 +9,20 @@ export interface NotificationClient {
 
 export type NotificationState = 'off' | 'on' | 'blocked' | 'unsupported' | 'install-required';
 const DEMO_NOTIFICATIONS = 'bravus.demo.notifications.v1';
-function supported() { return window.isSecureContext && typeof window.Notification !== 'undefined' && 'serviceWorker' in navigator; }
+function supported(client: NotificationClient) { return window.isSecureContext && typeof window.Notification !== 'undefined' && 'serviceWorker' in navigator && (client.isDemo || 'PushManager' in window); }
 export function notificationUnsupportedMessage() {
-  return isAppleMobile() ? 'No iPhone e iPad, use iOS 16.4 ou superior e abra o BRAVUS pelo ícone da Tela de Início para ativar as notificações.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
+  if (!window.isSecureContext) return 'Abra o BRAVUS pelo endereço HTTPS para ativar as notificações.';
+  return isAppleMobile() && isInstalledApp() ? 'O BRAVUS está aberto como app, mas o iPhone não disponibilizou o serviço de notificações. Toque em Verificar notificações para conferir o impedimento.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
+}
+function blockedMessage() { return isAppleMobile() ? 'No iPhone, abra Ajustes > Notificações > BRAVUS e ative Permitir Notificações. Depois volte ao painel.' : 'As notificações estão bloqueadas. Permita as notificações nas configurações deste site no navegador e volte ao painel.'; }
+export function notificationErrorMessage(cause: unknown) {
+  if (cause instanceof DOMException) {
+    if (cause.name === 'NotAllowedError') return typeof window.Notification !== 'undefined' && Notification.permission === 'denied' ? blockedMessage() : 'O aparelho recusou a ativação. Toque em Verificar notificações para conferir a permissão e o serviço neste aparelho.';
+    if (cause.name === 'InvalidStateError') return 'O serviço de notificações ainda não iniciou neste aparelho. Feche o BRAVUS, abra novamente e tente ativar.';
+    if (cause.name === 'NotSupportedError') return notificationUnsupportedMessage();
+    return 'Não foi possível concluir a conexão com o serviço de notificações. Verifique sua conexão e tente novamente.';
+  }
+  return cause instanceof Error ? cause.message : 'Não foi possível verificar as notificações. Tente novamente.';
 }
 function workerPath() {
   return new URL(publicAssetUrl('notifications-worker.js'));
@@ -22,11 +33,10 @@ async function endpointId(endpoint: string) {
 }
 export async function notificationState(client: NotificationClient): Promise<NotificationState> {
   if (needsAppleInstallation()) return 'install-required';
-  if (!supported()) return 'unsupported';
+  if (!supported(client)) return 'unsupported';
   if (Notification.permission === 'denied') return 'blocked';
   if (Notification.permission !== 'granted') return 'off';
   if (client.isDemo) return localStorage.getItem(DEMO_NOTIFICATIONS) === 'on' ? 'on' : 'off';
-  if (!('PushManager' in window)) return 'unsupported';
   const registration = await navigator.serviceWorker.getRegistration(workerPath().href), subscription = await registration?.pushManager.getSubscription();
   if (!subscription) return 'off';
   const config = await client.pushConfig();
@@ -34,13 +44,13 @@ export async function notificationState(client: NotificationClient): Promise<Not
 }
 export async function enableNotifications(client: NotificationClient) {
   if (needsAppleInstallation()) throw new Error('No iPhone, abra o link no Safari, toque em Compartilhar e Adicionar à Tela de Início. Depois abra o BRAVUS pelo novo ícone e ative as notificações.');
-  if (!supported()) throw new Error(notificationUnsupportedMessage());
-  const permission = await Notification.requestPermission();
-  if (permission !== 'granted') throw new Error('As notificações não foram autorizadas. Você pode permitir nas configurações deste site no navegador.');
+  if (!supported(client)) throw new Error(notificationUnsupportedMessage());
+  // Request only from the button's gesture, and never prompt again after consent.
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  if (permission !== 'granted') throw new Error(permission === 'denied' ? blockedMessage() : 'A autorização não foi concluída. Toque em ativar novamente e escolha Permitir.');
   const registration = await navigator.serviceWorker.register(workerPath().href);
   await navigator.serviceWorker.ready;
   if (client.isDemo) { localStorage.setItem(DEMO_NOTIFICATIONS, 'on'); return; }
-  if (!('PushManager' in window)) throw new Error('Este navegador não oferece notificações push.');
   const config = await client.pushConfig();
   const decoded = atob(config.publicKey.replaceAll('-', '+').replaceAll('_', '/'));
   const key = Uint8Array.from(decoded, char => char.charCodeAt(0));
@@ -51,6 +61,41 @@ export async function enableNotifications(client: NotificationClient) {
   }
   subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   await client.subscribePush(subscription.toJSON());
+}
+
+export interface NotificationDiagnostic {
+  state: NotificationState | null;
+  result: string;
+  checks: { label: string; value: string }[];
+}
+export async function notificationDiagnostic(client: NotificationClient): Promise<NotificationDiagnostic> {
+  // Read-only checks: never prompt, create a subscription, or include access keys/URLs.
+  const [server, status] = await Promise.allSettled([
+    client.isDemo ? Promise.resolve(null) : client.pushConfig(),
+    notificationState(client),
+  ]);
+  const state = status.status === 'fulfilled' ? status.value : null;
+  const permission = typeof window.Notification === 'undefined' ? 'Indisponível' : ({ granted: 'Permitida', denied: 'Bloqueada', default: 'Ainda não solicitada' }[Notification.permission]);
+  const results: Record<NotificationState, string> = {
+    'install-required': 'Este acesso está funcionando como página do navegador, mesmo que você tenha criado um ícone. O iPhone ainda não o reconhece como app instalado.',
+    unsupported: notificationUnsupportedMessage(),
+    blocked: blockedMessage(),
+    off: 'Os alertas ainda não estão ativados para este painel neste aparelho. Toque em ativar para concluir.',
+    on: 'Este aparelho está inscrito para receber os alertas deste painel.',
+  };
+  return {
+    state,
+    result: server.status === 'rejected' ? notificationErrorMessage(server.reason) : status.status === 'rejected' ? notificationErrorMessage(status.reason) : results[status.value],
+    checks: [
+      { label: 'Abertura', value: isInstalledApp() ? 'App da Tela de Início' : 'Página do navegador' },
+      { label: 'Conexão segura', value: window.isSecureContext ? 'Sim' : 'Não' },
+      { label: 'Notificações do aparelho', value: typeof window.Notification !== 'undefined' ? 'Disponíveis' : 'Indisponíveis' },
+      { label: 'Permissão', value: permission },
+      { label: 'Serviço em segundo plano', value: 'serviceWorker' in navigator ? 'Disponível' : 'Indisponível' },
+      { label: 'Notificações push', value: 'PushManager' in window ? 'Disponíveis' : 'Indisponíveis' },
+      { label: 'Servidor BRAVUS', value: client.isDemo ? 'Demonstração' : server.status === 'fulfilled' ? 'Disponível' : 'Falha na conexão' },
+    ],
+  };
 }
 export async function disableNotifications(client: NotificationClient) {
   if (client.isDemo) { localStorage.removeItem(DEMO_NOTIFICATIONS); return; }

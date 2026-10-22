@@ -8,7 +8,16 @@
 .notification-badge.enabled { color: #a3d2a3; border-color: #3a603b; background: #203e25; }
 .notification-copy > p { color: #a0b18f; font-size: 11px; line-height: 1.8; margin-top: 3px; }
 .notification-copy > .notification-note { color: #e6c874; margin-top: 8px; }
-.profile-notifications > .button { font-size: 11px; min-height: 34px; }
+.notification-actions { display: grid; gap: 9px; justify-items: stretch; }
+.notification-actions > .button { font-size: 11px; min-height: 34px; }
+.notification-check { color: #ddc778; font-size: 11px; text-decoration: underline; padding: 5px; }
+.notification-check:disabled { opacity: .6; cursor: wait; }
+.notification-diagnostic { grid-column: 1 / -1; padding: 13px; border: 1px solid #53633b; border-radius: 10px; background: #111a0e; font-size: 11px; line-height: 1.8; }
+.notification-diagnostic > p { color: #e6c874; margin-bottom: 10px; }
+.notification-diagnostic dl { margin: 0; }
+.notification-diagnostic dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 5px 0; border-top: 1px solid #303e27; }
+.notification-diagnostic dt { color: #a0b18f; }
+.notification-diagnostic dd { margin: 0; color: #d2dbc7; text-align: right; }
 .profile-photo-row { display: flex; align-items: center; gap: 16px; padding: 16px; border: 1px solid #303c27; background: #0b1009; border-radius: 13px; margin-bottom: 17px; }
 .profile-avatar { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 60px; height: 60px; overflow: hidden; border-radius: 50%; background: #1e3018; color: #d9b94f; font-size: 22px; font-weight: 700; }
 .profile-avatar > img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -39,7 +48,7 @@
 
 @media (max-width: 700px) {
   .profile-notifications { grid-template-columns: 38px minmax(0, 1fr); padding: 15px; gap: 11px; }
-  .profile-notifications > .button { grid-column: 1 / -1; justify-self: stretch; margin-top: 4px; }
+  .notification-actions { grid-column: 1 / -1; margin-top: 4px; }
   .profile-notifications > .notification-symbol { align-self: start; margin-top: 2px; }
 }
 @media (max-width: 600px) {

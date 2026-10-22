@@ -1,7 +1,44 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import { createECDH, randomBytes } from 'node:crypto';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
+test('notificações com permissão liberada ativam na API e continuam ativas após recarregar', async ({ page, context }, info) => {
+  const token = `fixture_${info.project.name}_notify_01234567890123456789`;
+  const curve = createECDH('prime256v1'); curve.generateKeys();
+  const device = { endpoint: `https://fcm.googleapis.com/fcm/send/fixture-browser-${info.project.name}`, keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+  await context.grantPermissions(['notifications']);
+  // Keep the browser subscription handshake local; API authorization and persistence are real.
+  await page.addInitScript(device => {
+    const storageKey = 'bravus.test.push.subscription';
+    function restored(value: { applicationServerKey: number[] }) {
+      return { endpoint: device.endpoint, options: { applicationServerKey: Uint8Array.from(value.applicationServerKey).buffer }, toJSON: () => device, unsubscribe: async () => { localStorage.removeItem(storageKey); return true; } };
+    }
+    Object.defineProperty(PushManager.prototype, 'getSubscription', { configurable: true, value: async () => { const saved = localStorage.getItem(storageKey); return saved ? restored(JSON.parse(saved)) : null; } });
+    Object.defineProperty(PushManager.prototype, 'subscribe', { configurable: true, value: async (options: PushSubscriptionOptionsInit) => {
+      const saved = { applicationServerKey: Array.from(new Uint8Array(options.applicationServerKey as ArrayBuffer)) };
+      localStorage.setItem(storageKey, JSON.stringify(saved)); return restored(saved);
+    } });
+  }, device);
+  let failOnce = true;
+  await page.route('**/api/push/config', route => {
+    if (failOnce) { failOnce = false; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'As notificações push ainda não estão disponíveis neste servidor.' }) }); }
+    return route.continue();
+  });
+  await page.goto(`/?aba=perfil#/atendente/${token}`);
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+  await page.getByRole('button', { name: 'Ativar Notificações no Celular' }).click();
+  await expect(page.locator('.notification-note')).toContainText('não estão disponíveis');
+  expect(await page.evaluate(() => Notification.permission)).toBe('granted');
+  await page.getByRole('button', { name: 'Ativar Notificações no Celular' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  const config = await (await page.request.get('/api/push/config', { headers: { Authorization: `Bearer ${token}` } })).json();
+  expect(config.subscriptionIds).toHaveLength(1); expect(config.privateKey).toBeUndefined();
+  await page.reload(); await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+  expect((await (await page.request.get('/api/push/config', { headers: { Authorization: `Bearer ${token}` } })).json()).subscriptionIds).toEqual([]);
+});
 async function approveDemoSales(page: Page) {
   await page.goto('/#/admin');
   await page.getByRole('button', { name: 'Ver painel de demonstração' }).click();

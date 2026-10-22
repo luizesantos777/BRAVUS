@@ -51,7 +51,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         if (request.method === 'OPTIONS') {
           response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
         }
-        if (url.pathname === '/api/health' && request.method === 'GET') { await store.health(); json(response, 200, { status: 'ok' }); return; }
+        if (url.pathname === '/api/health' && request.method === 'GET') { await store.health(); json(response, 200, { status: 'ok', push: options.push ? 'enabled' : 'disabled' }); return; }
         const identity = request.socket.remoteAddress ?? 'unknown';
         const now = Date.now();
         for (const [key, value] of failedAuth) if (now - value.started > 60_000) failedAuth.delete(key);

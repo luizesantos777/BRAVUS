@@ -8,10 +8,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { createECDH, randomBytes } from 'node:crypto';
 import { createClient } from '@libsql/client';
+import webpush from 'web-push';
 import { libsqlDatabase, openTursoDatabase } from '../server/turso-database.ts';
 import { PortalStore } from '../server/store.ts';
 import { createVercelHandler } from '../server/vercel.ts';
+import { loadDatabasePushKeys } from '../server/push.ts';
 
 const adminKey = 'fixture_cloud_admin_012345678901234567890123456789';
 const token = 'fixture_cloud_attendant_012345678901234567890123456789';
@@ -106,6 +109,41 @@ test('handler aceita corpo já interpretado pela Vercel e aplica o limite de env
   assert.equal((await call('/api/admin/attendants', adminKey, { method: 'POST' })).status, 201);
   const oversized = await call('/api/admin/attendants', adminKey, { method: 'POST', headers: { 'x-fixture-large': '1' } });
   assert.equal(oversized.status, 413); assert.equal((await store.adminDashboard()).attendants.length, 1);
+});
+test('push da Vercel é ativado sem variáveis extras e mantém chave e inscrição entre instâncias concorrentes', async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-push-')), file = join(directory, 'database.sqlite'), stores: PortalStore[] = [];
+  const bootstrap = createClient({ url: `file:${file}` }); await bootstrap.execute('PRAGMA journal_mode = WAL'); bootstrap.close();
+  const openStore = async () => {
+    const store = await PortalStore.open(libsqlDatabase(createClient({ url: `file:${file}`, intMode: 'number', timeout: 0 })));
+    stores.push(store); return store;
+  };
+  t.after(() => { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const first = await serve(t, createVercelHandler({ environment: () => env, openStore }));
+  const second = await serve(t, createVercelHandler({ environment: () => env, openStore }));
+  for (const response of await Promise.all([first('/api/health'), second('/api/health')])) assert.deepEqual(await response.json(), { status: 'ok', push: 'enabled' });
+  assert.equal((await first('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Conta push de teste', token }) })).status, 201);
+  assert.equal((await first('/api/push/config')).status, 401);
+  const config = await (await first('/api/push/config', token)).json();
+  assert.equal((await (await second('/api/push/config', token)).json()).publicKey, config.publicKey);
+  const curve = createECDH('prime256v1'); curve.generateKeys();
+  const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/fixture-serverless-device', keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+  const registered = await first('/api/push/subscriptions', token, { method: 'POST', body: JSON.stringify(subscription) });
+  assert.equal(registered.status, 201); const { id } = await registered.json();
+  const restarted = await serve(t, createVercelHandler({ environment: () => env, openStore }));
+  const restored = await (await restarted('/api/push/config', token)).json();
+  assert.equal(restored.publicKey, config.publicKey); assert.deepEqual(restored.subscriptionIds, [id]);
+  assert.equal((await stores[0].sql.prepare('SELECT COUNT(*) AS count FROM push_server_keys').get())!.count, 1);
+  const privateKey = String((await stores[0].sql.prepare('SELECT private_key FROM push_server_keys WHERE id = 1').get())!.private_key);
+  for (const response of [restored, await (await restarted('/api/portal', token)).json(), await (await restarted('/api/admin/dashboard', adminKey)).json()]) assert.equal(JSON.stringify(response).includes(privateKey), false);
+});
+test('push persistente respeita chaves explícitas e não substitui credenciais inválidas silenciosamente', async t => {
+  const store = await PortalStore.open(':memory:'); t.after(() => store.close());
+  const saved = await loadDatabasePushKeys(store, {}), configured = webpush.generateVAPIDKeys();
+  assert.deepEqual(await loadDatabasePushKeys(store, { BRAVUS_PUSH_PUBLIC_KEY: configured.publicKey, BRAVUS_PUSH_PRIVATE_KEY: configured.privateKey }), configured);
+  assert.deepEqual(await loadDatabasePushKeys(store, {}), saved);
+  await assert.rejects(loadDatabasePushKeys(store, { BRAVUS_PUSH_PUBLIC_KEY: configured.publicKey }));
+  await store.sql.prepare('UPDATE push_server_keys SET private_key = ? WHERE id = 1').run(configured.privateKey);
+  await assert.rejects(loadDatabasePushKeys(store, {}));
 });
 test('instâncias libSQL concorrentes inicializam o esquema uma vez sem perder dados', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-initialize-')), file = join(directory, 'database.sqlite');

@@ -30,6 +30,19 @@ export function loadPushKeys(filename: string, environment: NodeJS.ProcessEnv = 
   return validatePushKeys(JSON.parse(readFileSync(filename, 'utf8')) as VapidKeys);
 }
 
+/** Serverless instances share one private key pair through the persistent database. */
+export async function loadDatabasePushKeys(store: PortalStore, environment: NodeJS.ProcessEnv = process.env): Promise<VapidKeys> {
+  if (environment.BRAVUS_PUSH_PUBLIC_KEY || environment.BRAVUS_PUSH_PRIVATE_KEY) return loadPushKeys('', environment);
+  return store.sql.transaction(async database => {
+    await database.exec('CREATE TABLE IF NOT EXISTS push_server_keys (id INTEGER PRIMARY KEY CHECK(id = 1), public_key TEXT NOT NULL, private_key TEXT NOT NULL)');
+    const saved = await database.prepare('SELECT public_key, private_key FROM push_server_keys WHERE id = 1').get();
+    if (saved) return validatePushKeys({ publicKey: String(saved.public_key), privateKey: String(saved.private_key) });
+    const keys = validatePushKeys(webpush.generateVAPIDKeys());
+    await database.prepare('INSERT INTO push_server_keys (id, public_key, private_key) VALUES (1, ?, ?)').run(keys.publicKey, keys.privateKey);
+    return keys;
+  });
+}
+
 export class PushService {
   store: PortalStore;
   keys: VapidKeys;

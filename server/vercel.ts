@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createPortalHandler } from './http.ts';
 import { PortalStore } from './store.ts';
 import { loadAdminKey } from './admin-key.ts';
-import { loadPushKeys, PushService } from './push.ts';
+import { loadDatabasePushKeys, PushService } from './push.ts';
 import type { TursoConnection } from './database.ts';
 
 const BODY_LIMIT = 4 * 1024 * 1024;
@@ -44,8 +44,7 @@ export function createVercelHandler(options: Options = {}) {
     try { store = await openStore({ url, authToken }); }
     catch (error) { throw new StartupError('database_initialization_failed', error); }
     try {
-      const configuredPush = !!(env.BRAVUS_PUSH_PUBLIC_KEY || env.BRAVUS_PUSH_PRIVATE_KEY);
-      const push = configuredPush ? new PushService(store, loadPushKeys('', env)) : undefined;
+      const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
       return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }

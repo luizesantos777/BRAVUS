@@ -792,7 +792,7 @@ function createPortalHandler(store, options = {}) {
         }
         if (url.pathname === "/api/health" && request.method === "GET") {
           await store.health();
-          json(response, 200, { status: "ok" });
+          json(response, 200, { status: "ok", push: options.push ? "enabled" : "disabled" });
           return;
         }
         const identity = request.socket.remoteAddress ?? "unknown";
@@ -948,6 +948,17 @@ function loadPushKeys(filename, environment = process.env) {
   chmodSync3(filename, 384);
   return validatePushKeys(JSON.parse(readFileSync2(filename, "utf8")));
 }
+async function loadDatabasePushKeys(store, environment = process.env) {
+  if (environment.BRAVUS_PUSH_PUBLIC_KEY || environment.BRAVUS_PUSH_PRIVATE_KEY) return loadPushKeys("", environment);
+  return store.sql.transaction(async (database) => {
+    await database.exec("CREATE TABLE IF NOT EXISTS push_server_keys (id INTEGER PRIMARY KEY CHECK(id = 1), public_key TEXT NOT NULL, private_key TEXT NOT NULL)");
+    const saved = await database.prepare("SELECT public_key, private_key FROM push_server_keys WHERE id = 1").get();
+    if (saved) return validatePushKeys({ publicKey: String(saved.public_key), privateKey: String(saved.private_key) });
+    const keys = validatePushKeys(webpush.generateVAPIDKeys());
+    await database.prepare("INSERT INTO push_server_keys (id, public_key, private_key) VALUES (1, ?, ?)").run(keys.publicKey, keys.privateKey);
+    return keys;
+  });
+}
 var PushService = class {
   store;
   keys;
@@ -1045,8 +1056,7 @@ function createVercelHandler(options = {}) {
       throw new StartupError("database_initialization_failed", error);
     }
     try {
-      const configuredPush = !!(env.BRAVUS_PUSH_PUBLIC_KEY || env.BRAVUS_PUSH_PRIVATE_KEY);
-      const push = configuredPush ? new PushService(store, loadPushKeys("", env)) : void 0;
+      const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
       return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT2 });
     } catch {

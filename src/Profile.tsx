@@ -1,30 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { AlertCircle, Bell, BellOff, Camera, CheckCircle2, LoaderCircle, Save, UserRound } from 'lucide-react';
+import { AlertCircle, Bell, Camera, CheckCircle2, LoaderCircle, Save, UserRound } from 'lucide-react';
 import { DEFAULT_SALE_ALERT, detectPixType, pixLabels, renderSaleAlert } from './domain.ts';
 import type { PixType, Profile } from './domain.ts';
 import { PortalClient, readAvatar } from './client.ts';
-import { disableNotifications, enableNotifications, notificationState } from './notifications.ts';
-import type { NotificationState } from './notifications.ts';
+import NotificationsCard from './NotificationsCard.tsx';
 
 export function ProfileAvatar({ photoUrl, name, className = '' }: { photoUrl?: string; name: string; className?: string }) {
   return <span className={`profile-avatar ${className}`}>{photoUrl ? <img src={photoUrl} alt={`Foto de ${name}`} /> : <span aria-hidden="true">{name.trim().slice(0, 1).toUpperCase() || 'A'}</span>}</span>;
 }
-function NotificationsCard({ client, disabled }: { client: PortalClient; disabled: boolean }) {
-  const [state, setState] = useState<NotificationState>('off'), [busy, setBusy] = useState(false), [note, setNote] = useState('');
-  useEffect(() => { let cancelled = false; notificationState(client).then(value => { if (!cancelled) setState(value); }).catch(() => undefined); return () => { cancelled = true; }; }, [client]);
-  async function toggle() {
-    if (busy || disabled) return; setBusy(true); setNote('');
-    try {
-      if (state === 'on') { await disableNotifications(client); setState('off'); }
-      else { await enableNotifications(client); setState('on'); }
-    } catch (cause) { setNote((cause as Error).message); setState(await notificationState(client).catch(() => 'off' as const)); }
-    finally { setBusy(false); }
-  }
-  const label = state === 'on' ? 'Ativado' : state === 'blocked' ? 'Bloqueado' : state === 'unsupported' ? 'Indisponível' : 'Desativado';
-  return <section className="profile-notifications" aria-label="Notificações no celular"><span className="notification-symbol">{state === 'on' ? <Bell size={20} /> : <BellOff size={20} />}</span><div className="notification-copy"><div><h3>Notificações Push no Celular</h3><span className={`notification-badge ${state === 'on' ? 'enabled' : ''}`}>{label}</span></div><p>Ative para receber alertas neste aparelho a cada venda registrada.{client.isDemo && ' Na demonstração, os alertas são de teste.'}</p>{note && <p className="notification-note" role="status">{note}</p>}</div><button type="button" className={`button ${state === 'on' ? 'secondary' : 'primary'}`} disabled={busy || disabled} onClick={() => void toggle()}>{busy ? <LoaderCircle size={14} className="spin" /> : <Bell size={14} />}{state === 'on' ? 'Desativar neste aparelho' : 'Ativar Notificações no Celular'}</button></section>;
-}
-
 export default function ProfileForm({ profile, client, disabled, refresh, notify }: { profile: Profile; client: PortalClient; disabled: boolean; refresh: () => Promise<void>; notify: (notice: { text: string; error?: boolean }) => void }) {
   const [name, setName] = useState(profile.name), [photoUrl, setPhotoUrl] = useState(profile.photoUrl ?? ''), [template, setTemplate] = useState(profile.saleAlertTemplate ?? DEFAULT_SALE_ALERT);
   const [pixKey, setPixKey] = useState(profile.pixKey), [pixType, setPixType] = useState(profile.pixType), [pixOwner, setPixOwner] = useState(profile.pixOwner);

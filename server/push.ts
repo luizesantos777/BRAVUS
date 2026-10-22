@@ -1,9 +1,9 @@
 import webpush from 'web-push';
 import type { PushSubscription, VapidKeys } from 'web-push';
-import { createHash, createECDH, ECDH } from 'node:crypto';
+import { createHash, createECDH, ECDH, randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, renderSaleAlert } from '../src/domain.ts';
+import { amountToCents, money, renderSaleAlert } from '../src/domain.ts';
 import type { SaleBatch } from '../src/domain.ts';
 import { PortalError, PortalStore } from './store.ts';
 import type { Authenticated } from './store.ts';
@@ -43,50 +43,77 @@ export async function loadDatabasePushKeys(store: PortalStore, environment: Node
   });
 }
 
+type PushTarget = { role: 'attendant' | 'admin'; id: string };
+function subscriptionTable(target: PushTarget) {
+  return target.role === 'admin' ? { table: 'admin_push_subscriptions', column: 'admin_scope' } : { table: 'push_subscriptions', column: 'attendant_id' };
+}
+function validateSubscription(input: unknown): PushSubscription {
+  if (!input || typeof input !== 'object') throw new PortalError(400, 'Inscrição de notificações inválida.');
+  const data = input as PushSubscription;
+  try {
+    if (typeof data.endpoint !== 'string' || data.endpoint.length > 4096) throw new Error();
+    const url = new URL(data.endpoint);
+    const allowed = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com'].includes(url.hostname) || url.hostname.endsWith('.notify.windows.com');
+    if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowed) throw new Error();
+    if (!data.keys || typeof data.keys.p256dh !== 'string' || typeof data.keys.auth !== 'string' || !/^[\w-]{87}$/.test(data.keys.p256dh) || !/^[\w-]{22}$/.test(data.keys.auth) || Buffer.from(data.keys.auth, 'base64url').length !== 16 || Buffer.from(data.keys.p256dh, 'base64url').length !== 65) throw new Error();
+    ECDH.convertKey(Buffer.from(data.keys.p256dh, 'base64url'), 'prime256v1');
+  } catch { throw new PortalError(400, 'Use uma inscrição válida do serviço de notificações do navegador.'); }
+  return { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
+}
+
 export class PushService {
   store: PortalStore;
   keys: VapidKeys;
   sender: typeof webpush.sendNotification;
   constructor(store: PortalStore, keys: VapidKeys, sender = webpush.sendNotification) { this.store = store; this.keys = keys; this.sender = sender; }
-  async config(auth: Authenticated) {
-    const subscriptionIds = (await this.store.sql.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE attendant_id = ?').all(auth.id)).map(row => String(row.endpoint_hash));
+  private async configFor(target: PushTarget) {
+    const { table, column } = subscriptionTable(target);
+    const subscriptionIds = (await this.store.sql.prepare(`SELECT endpoint_hash FROM ${table} WHERE ${column} = ?`).all(target.id)).map(row => String(row.endpoint_hash));
     return { publicKey: this.keys.publicKey, subscriptionIds };
   }
-  async subscribe(auth: Authenticated, input: unknown) {
-    if (!input || typeof input !== 'object') throw new PortalError(400, 'Inscrição de notificações inválida.');
-    const data = input as PushSubscription;
-    try {
-      if (typeof data.endpoint !== 'string' || data.endpoint.length > 4096) throw new Error();
-      const url = new URL(data.endpoint);
-      const allowed = ['fcm.googleapis.com', 'updates.push.services.mozilla.com', 'web.push.apple.com'].includes(url.hostname) || url.hostname.endsWith('.notify.windows.com');
-      if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowed) throw new Error();
-      if (!data.keys || typeof data.keys.p256dh !== 'string' || typeof data.keys.auth !== 'string' || !/^[\w-]{87}$/.test(data.keys.p256dh) || !/^[\w-]{22}$/.test(data.keys.auth) || Buffer.from(data.keys.auth, 'base64url').length !== 16 || Buffer.from(data.keys.p256dh, 'base64url').length !== 65) throw new Error();
-      ECDH.convertKey(Buffer.from(data.keys.p256dh, 'base64url'), 'prime256v1');
-    } catch { throw new PortalError(400, 'Use uma inscrição válida do serviço de notificações do navegador.'); }
+  private async subscribeFor(target: PushTarget, input: unknown) {
+    const data = validateSubscription(input), { table, column } = subscriptionTable(target);
     const id = createHash('sha256').update(data.endpoint).digest('hex');
-    const exists = (await this.store.sql.prepare('SELECT endpoint_hash FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').get(id, auth.id));
-    if (!exists && (await this.config(auth)).subscriptionIds.length >= 5) throw new PortalError(400, 'O limite é de cinco aparelhos por atendente.');
-    const safe = { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
-    (await this.store.sql.prepare('INSERT INTO push_subscriptions VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET attendant_id = excluded.attendant_id, subscription = excluded.subscription').run(id, auth.id, JSON.stringify(safe)));
-    return { id };
+    return this.store.sql.transaction(async database => {
+      const exists = await database.prepare(`SELECT endpoint_hash FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).get(id, target.id);
+      const count = Number((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(target.id))!.count);
+      if (!exists && count >= 5) throw new PortalError(400, 'O limite é de cinco aparelhos por acesso.');
+      await database.prepare(`INSERT INTO ${table} (endpoint_hash, ${column}, subscription) VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET ${column} = excluded.${column}, subscription = excluded.subscription`).run(id, target.id, JSON.stringify(data));
+      return { id };
+    });
   }
-  async unsubscribe(auth: Authenticated, input: unknown) {
+  private async unsubscribeFor(target: PushTarget, input: unknown) {
+    const { table, column } = subscriptionTable(target);
     const id = (input as { id?: unknown } | null)?.id;
     if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new PortalError(400, 'Inscrição inválida.');
-    (await this.store.sql.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(id, auth.id));
+    await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(id, target.id);
     return { saved: true };
   }
+  config(auth: Authenticated) { return this.configFor({ role: 'attendant', id: auth.id }); }
+  subscribe(auth: Authenticated, input: unknown) { return this.subscribeFor({ role: 'attendant', id: auth.id }, input); }
+  unsubscribe(auth: Authenticated, input: unknown) { return this.unsubscribeFor({ role: 'attendant', id: auth.id }, input); }
+  adminConfig(scope: string) { return this.configFor({ role: 'admin', id: scope }); }
+  adminSubscribe(scope: string, input: unknown) { return this.subscribeFor({ role: 'admin', id: scope }, input); }
+  adminUnsubscribe(scope: string, input: unknown) { return this.unsubscribeFor({ role: 'admin', id: scope }, input); }
   async notifySale(auth: Authenticated, batch: SaleBatch) {
     const active = (await this.store.sql.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id));
     if (!active) return;
     const profile = (await this.store.profile(auth)), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    const payload = JSON.stringify({ title: 'BRAVUS Brasil · Venda registrada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
-    const rows = (await this.store.sql.prepare('SELECT endpoint_hash, subscription FROM push_subscriptions WHERE attendant_id = ?').all(auth.id));
+    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'BRAVUS Brasil · Venda registrada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+  }
+  async notifyAdminSale(scope: string, auth: Authenticated, batch: SaleBatch) {
+    const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
+    const detail = batch.sales.length === 1 ? `venda de ${money(amount)}` : `${batch.sales.length} vendas, total de ${money(amount)}`;
+    await this.sendTo({ role: 'admin', id: scope }, { title: 'BRAVUS Brasil · Nova venda', body: `${profile.name}: ${detail}. Aguardando sua aprovação.`, target: 'admin', tag: `bravus-admin-venda-${randomUUID()}` });
+  }
+  private async sendTo(target: PushTarget, message: { title: string; body: string; target?: 'admin'; tag?: string }) {
+    const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);
+    const rows = await this.store.sql.prepare(`SELECT endpoint_hash, subscription FROM ${table} WHERE ${column} = ?`).all(target.id);
     await Promise.allSettled(rows.map(async row => {
       try {
         await this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? 'https://github.com/luizesantos777/BRAVUS' }, TTL: 600, timeout: 5000, ...(process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {}) });
       } catch (error) {
-        if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) (await this.store.sql.prepare('DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?').run(String(row.endpoint_hash), auth.id));
+        if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(String(row.endpoint_hash), target.id);
         // A push delivery failure never changes an already committed sale or exposes subscription credentials.
       }
     }));

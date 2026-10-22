@@ -64,6 +64,15 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
             const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
             throw new PortalError(401, 'Chave administrativa inválida.');
           }
+          if (url.pathname.startsWith('/api/admin/push/')) {
+            if (!options.push) throw new PortalError(503, 'As notificações push ainda não estão disponíveis neste servidor.');
+            const scope = adminHash.toString('hex');
+            if (url.pathname === '/api/admin/push/config' && request.method === 'GET') json(response, 200, await options.push.adminConfig(scope));
+            else if (url.pathname === '/api/admin/push/subscriptions' && request.method === 'POST') json(response, 201, await options.push.adminSubscribe(scope, await readJson(request, options.bodyLimit)));
+            else if (url.pathname === '/api/admin/push/subscriptions' && request.method === 'DELETE') json(response, 200, await options.push.adminUnsubscribe(scope, await readJson(request, options.bodyLimit)));
+            else throw new PortalError(404, 'Recurso administrativo não encontrado.');
+            return;
+          }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
           if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') json(response, 200, (await store.adminDashboard()));
           else if (url.pathname === '/api/admin/sales' && request.method === 'GET') json(response, 200, (await store.adminSales(url.searchParams.get('status') ?? 'pending', url.searchParams.get('attendantId') ?? '', url.searchParams.get('page') ?? '1')));
@@ -105,7 +114,10 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         else if (url.pathname === '/api/profile' && request.method === 'PATCH') json(response, 200, (await store.saveProfile(auth, await readJson(request, options.bodyLimit))));
         else if (url.pathname === '/api/sales' && request.method === 'POST') {
           const batch = await readJson(request, options.bodyLimit), result = (await store.recordSales(auth, batch, String(request.headers['idempotency-key'] ?? '')));
-          if (!result.duplicate && options.push) await options.push.notifySale(auth, batch as SaleBatch).catch(() => undefined);
+          if (!result.duplicate && options.push) await Promise.allSettled([
+            options.push.notifySale(auth, batch as SaleBatch),
+            ...(adminHash ? [options.push.notifyAdminSale(adminHash.toString('hex'), auth, batch as SaleBatch)] : []),
+          ]);
           json(response, 200, result);
         }
         else if (url.pathname === '/api/ranking' && request.method === 'GET') json(response, 200, (await store.ranking(auth, period)));

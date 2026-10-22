@@ -12,7 +12,8 @@ import { createPortalServer } from '../server/http.ts';
 import { businessToday } from '../src/domain.ts';
 import { loadAdminKey } from '../server/admin-key.ts';
 import webpush from 'web-push';
-import { createECDH, randomBytes } from 'node:crypto';
+import { createECDH, createHash, randomBytes } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import { PushService, loadPushKeys } from '../server/push.ts';
 
 const tokenA = 'fixture_attendant_a_012345678901234567890';
@@ -328,10 +329,73 @@ test('foto e alerta são salvos por atendente, persistem e a foto aparece no ran
   assert.equal((await store.profile({ id: a.id })).photoUrl, photoUrl);
 });
 
-function pushFixtureSubscription() {
+function pushFixtureSubscription(device = 'fixture-device') {
   const curve = createECDH('prime256v1'); curve.generateKeys();
-  return { endpoint: 'https://fcm.googleapis.com/fcm/send/fixture-device', keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
+  return { endpoint: `https://fcm.googleapis.com/fcm/send/${device}`, keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
 }
+test('somente administrador cadastra seus alertas, com limite atômico e isolamento do atendente', async t => {
+  const { call } = await fixture(t), device = pushFixtureSubscription('fixture-admin-device');
+  for (const method of ['GET', 'POST', 'DELETE']) assert.equal((await call('/api/admin/push/' + (method === 'GET' ? 'config' : 'subscriptions'), tokenA, { method, ...(method === 'GET' ? {} : { body: JSON.stringify(device) }) })).status, 401);
+  const initial = await call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(device) });
+  const devices = Array.from({ length: 5 }, (_, index) => pushFixtureSubscription(`fixture-admin-${index}`));
+  const registered = [initial, ...await Promise.all(devices.map(subscription => call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(subscription) })))];
+  assert.equal(registered.filter(response => response.status === 201).length, 5); assert.equal(registered.filter(response => response.status === 400).length, 1);
+  const own = await (await call('/api/admin/push/config', adminKey)).json(); assert.equal(own.subscriptionIds.length, 5); assert.equal(Object.hasOwn(own, 'privateKey'), false);
+  assert.deepEqual((await (await call('/api/push/config', tokenA)).json()).subscriptionIds, []);
+  const first = await registered.find(response => response.status === 201)!.json();
+  assert.equal((await call('/api/admin/push/subscriptions', tokenA, { method: 'DELETE', body: JSON.stringify({ id: first.id }) })).status, 401);
+  assert.equal((await (await call('/api/admin/push/config', adminKey)).json()).subscriptionIds.length, 5);
+  assert.equal((await call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify({ ...device, endpoint: 'https://example.com/private' }) })).status, 400);
+  await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(device) });
+  await call('/api/admin/push/subscriptions', adminKey, { method: 'DELETE', body: JSON.stringify({ id: first.id }) });
+  assert.equal((await (await call('/api/push/config', tokenA)).json()).subscriptionIds.length, 1);
+});
+test('administrador recebe novas vendas de todos os atendentes uma vez, ainda em análise, sem alerta na aprovação', async t => {
+  const { call, submit, deliveries, store, a } = await fixture(t, { approveSales: false });
+  await call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-owner')) });
+  await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-attendant')) });
+  assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 2);
+  const ownerAlerts = () => deliveries.map(item => JSON.parse(item.payload)).filter(item => item.target === 'admin');
+  assert.equal(ownerAlerts().length, 1); assert.equal(ownerAlerts()[0].title, 'BRAVUS Brasil · Nova venda');
+  assert.match(ownerAlerts()[0].body, /Ana Teste.*300,00.*Aguardando sua aprovação/);
+  for (const secret of [tokenA, tokenB, adminKey, image.base64]) assert.equal(JSON.stringify(ownerAlerts()).includes(secret), false);
+  const portal = await (await call('/api/portal')).json(); assert.equal(portal.sales[0].status, 'pending'); assert.equal(portal.finance.availableCents, 0);
+  await submit(); assert.equal(deliveries.length, 2);
+  assert.equal((await call('/api/admin/sales/' + portal.sales[0].id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'approved', note: 'Conferência sintética' }) })).status, 200);
+  assert.equal(deliveries.length, 2);
+  const invalid = batch(); invalid.sales[0].amount = '-10'; assert.equal((await submit(invalid, 'fixture_invalid_owner_sale')).status, 400); assert.equal(deliveries.length, 2);
+  const another = batch(); another.sales[0].amount = '200,00';
+  assert.equal((await submit(another, 'fixture_other_owner_sale', tokenB)).status, 200);
+  assert.equal(deliveries.length, 3); assert.equal(ownerAlerts().length, 2); assert.match(ownerAlerts()[1].body, /Bruno Teste.*200,00/);
+  assert.notEqual(ownerAlerts()[0].tag, ownerAlerts()[1].tag);
+  const currentScope = createHash('sha256').update(adminKey).digest('hex'), differentScope = createHash('sha256').update('fixture_rotated_admin_012345678901234567890123456789').digest('hex');
+  assert.equal((await store.sql.prepare('SELECT COUNT(*) AS count FROM admin_push_subscriptions WHERE admin_scope = ?').get(currentScope))!.count, 1);
+  let outdatedDeliveries = 0;
+  const push = new PushService(store, webpush.generateVAPIDKeys(), async () => { outdatedDeliveries++; return { statusCode: 201, body: '', headers: {} }; });
+  assert.deepEqual((await push.adminConfig(differentScope)).subscriptionIds, []);
+  await push.notifyAdminSale(differentScope, { id: a.id }, batch()); assert.equal(outdatedDeliveries, 0);
+});
+test('falha de entrega administrativa preserva a venda e remove somente inscrições expiradas', async t => {
+  const { call, submit, push, store, a } = await fixture(t, { approveSales: false });
+  await call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-owner-expired')) });
+  push.sender = async () => { throw Object.assign(new Error('fixture unavailable'), { statusCode: 500 }); };
+  assert.equal((await submit()).status, 200); assert.equal((await (await call('/api/admin/push/config', adminKey)).json()).subscriptionIds.length, 1);
+  push.sender = async () => { throw Object.assign(new Error('fixture expired'), { statusCode: 410 }); };
+  assert.equal((await submit(batch(), 'fixture_expired_owner_sale')).status, 200);
+  assert.equal((await store.sales({ id: a.id })).length, 2); assert.deepEqual((await (await call('/api/admin/push/config', adminKey)).json()).subscriptionIds, []);
+});
+test('notificação administrativa abre o painel e mantém os alertas pessoais no portal do atendente', async () => {
+  const handlers: Record<string, (event: any) => void> = {}, shown: { title: string; options: any }[] = [], opened: string[] = [];
+  let focused = 0, pending: Promise<unknown> = Promise.resolve();
+  const personal = { url: 'https://portal.example/#/atendente/fixture-token', focus: async () => { focused++; } };
+  runInNewContext(readFileSync('public/notifications-worker.js', 'utf8'), { URL, self: { addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler; }, registration: { scope: 'https://portal.example/', showNotification: async (title: string, options: any) => { shown.push({ title, options }); } }, clients: { matchAll: async () => [personal], openWindow: async (url: string) => { opened.push(url); } } } });
+  handlers.push({ data: { json: () => ({ target: 'admin', body: 'Ana: venda de R$ 100,00 aguardando aprovação.', tag: 'bravus-admin-venda-fixture' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.equal(shown[0].title, 'BRAVUS Brasil · Nova venda'); assert.equal(shown[0].options.data.target, 'admin');
+  handlers.notificationclick({ notification: { ...shown[0].options, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
+  handlers.notificationclick({ notification: { data: { target: 'attendant' }, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.equal(focused, 1);
+});
 test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
   const { call, submit, deliveries, store, a, b } = await fixture(t), subscription = pushFixtureSubscription();
   const registered = await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(subscription) });

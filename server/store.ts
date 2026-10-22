@@ -65,6 +65,7 @@ export class PortalStore {
       if (!profileColumns.has('photo_url')) (await store.sql.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''"));
       if (!profileColumns.has('sale_alert_template')) (await store.sql.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '✅ Venda de {valor} lançada com sucesso!'"));
       (await store.sql.exec('CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), subscription TEXT NOT NULL)'));
+      (await store.sql.exec('CREATE TABLE IF NOT EXISTS admin_push_subscriptions (endpoint_hash TEXT PRIMARY KEY, admin_scope TEXT NOT NULL, subscription TEXT NOT NULL)'));
       const columns = new Set((await store.sql.prepare('PRAGMA table_info(checkouts)').all()).map(column => column.name));
       if (!columns.has('fixed_fee_cents')) (await store.sql.exec('ALTER TABLE checkouts ADD COLUMN fixed_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fixed_fee_cents >= 0)'));
       if (!columns.has('min_amount_cents')) (await store.sql.exec('ALTER TABLE checkouts ADD COLUMN min_amount_cents INTEGER NOT NULL DEFAULT 1 CHECK(min_amount_cents > 0)'));

@@ -3,11 +3,9 @@ import type { Page } from '@playwright/test';
 import { createECDH, randomBytes } from 'node:crypto';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
-test('notificações com permissão liberada ativam na API e continuam ativas após recarregar', async ({ page, context }, info) => {
-  const token = `fixture_${info.project.name}_notify_01234567890123456789`;
+async function mockBrowserSubscription(page: Page, deviceId: string) {
   const curve = createECDH('prime256v1'); curve.generateKeys();
-  const device = { endpoint: `https://fcm.googleapis.com/fcm/send/fixture-browser-${info.project.name}`, keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
-  await context.grantPermissions(['notifications']);
+  const device = { endpoint: `https://fcm.googleapis.com/fcm/send/fixture-browser-${deviceId}`, keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
   // Keep the browser subscription handshake local; API authorization and persistence are real.
   await page.addInitScript(device => {
     const storageKey = 'bravus.test.push.subscription';
@@ -20,6 +18,11 @@ test('notificações com permissão liberada ativam na API e continuam ativas ap
       localStorage.setItem(storageKey, JSON.stringify(saved)); return restored(saved);
     } });
   }, device);
+}
+test('notificações com permissão liberada ativam na API e continuam ativas após recarregar', async ({ page, context }, info) => {
+  const token = `fixture_${info.project.name}_notify_01234567890123456789`;
+  await context.grantPermissions(['notifications']);
+  await mockBrowserSubscription(page, info.project.name);
   let failOnce = true;
   await page.route('**/api/push/config', route => {
     if (failOnce) { failOnce = false; return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: 'As notificações push ainda não estão disponíveis neste servidor.' }) }); }
@@ -38,6 +41,34 @@ test('notificações com permissão liberada ativam na API e continuam ativas ap
   await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');
   expect((await (await page.request.get('/api/push/config', { headers: { Authorization: `Bearer ${token}` } })).json()).subscriptionIds).toEqual([]);
+});
+test('administrador ativa alertas no celular sem perder a inscrição ao desativar o portal pessoal', async ({ page, context }, info) => {
+  const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_owner_notify_01234567890123456789`;
+  await context.grantPermissions(['notifications']); await mockBrowserSubscription(page, `admin-${info.project.name}`);
+  async function login() {
+    await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
+    await page.getByRole('button', { name: 'Entrar na administração' }).click();
+    await expect(page.getByRole('heading', { name: 'Visão administrativa' })).toBeVisible();
+  }
+  await login();
+  await page.getByRole('button', { name: 'Ativar alertas de vendas no meu celular' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await expect(page.getByText('As vendas continuam aguardando sua aprovação.', { exact: false })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('admin-notificacoes.png') });
+  const headers = { Authorization: `Bearer ${adminKey}` };
+  expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(1);
+  expect(await page.evaluate(key => JSON.stringify({ ...localStorage }).includes(key), adminKey)).toBe(false);
+  await page.goto(`/?aba=perfil#/atendente/${token}`);
+  await page.getByRole('button', { name: 'Ativar Notificações no Celular' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+  expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(1);
+  await login(); await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+  expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(0);
 });
 async function approveDemoSales(page: Page) {
   await page.goto('/#/admin');

@@ -91,6 +91,10 @@ O botão pede permissão ao navegador e ativa os alertas apenas naquele aparelho
 
 Na API, as inscrições pertencem ao atendente autenticado, com limite de cinco aparelhos. Cada lote novo salvo envia o alerta personalizado aos seus aparelhos, mesmo com a página fechada, conforme suporte e permissões do dispositivo. Uma repetição idempotente não dispara novamente. Erros de entrega não desfazem a venda; inscrições expiradas são removidas. Trocar o token ou revogar o acesso remove as inscrições, exigindo nova ativação pelos aparelhos autorizados.
 
+O responsável também pode receber novas vendas no celular: abra `/#/admin`, entre com sua chave e toque em **Ativar alertas de vendas no meu celular**. O alerta chega quando qualquer atendente registra um lote novo, com nome, quantidade e valor bruto. A mensagem informa que aguarda aprovação; não aprova a venda nem altera comissões. Conforme a escolha do responsável, aprovar ou recusar depois não gera outro alerta administrativo. Ao tocar na notificação, abre a administração e pede login quando necessário.
+
+Os aparelhos administrativos ficam em `admin_push_subscriptions`, separados dos atendentes e vinculados ao hash da chave administrativa atual, com limite de cinco aparelhos por acesso. Somente a chave administrativa autoriza cadastrar, consultar ou remover essas inscrições. Trocar a chave exige ativar novamente os alertas administrativos. A chave administrativa não é guardada no navegador nem enviada nas notificações. As inscrições permanecem até desativar no aparelho, inclusive com o painel fechado. Desativar os alertas pessoais do atendente no mesmo navegador preserva os alertas administrativos, e vice-versa.
+
 No modo SQLite local, o servidor cria `push-keys.json` ao lado do banco, com permissão `600`, e reutiliza esse par de chaves VAPID ao reiniciar; preserve esse arquivo em backup privado separado do SQLite. Com Turso, inclusive na Vercel, as chaves automáticas ficam na tabela privada `push_server_keys`: a criação é transacional para evitar pares diferentes em instâncias simultâneas. Os backups desse banco passam a conter também a chave privada de notificações e devem permanecer privados. Também é possível configurar `BRAVUS_PUSH_PUBLIC_KEY` e `BRAVUS_PUSH_PRIVATE_KEY` nas variáveis privadas da hospedagem, sempre juntas e sem prefixo `VITE_`; esse par explícito tem prioridade. Somente a chave pública é fornecida à interface. `BRAVUS_PUSH_SUBJECT` aceita o endereço HTTPS do responsável ou um contato `mailto:`; por padrão usa a URL deste repositório. As assinaturas e o conteúdo são enviados pelo protocolo Web Push criptografado aos provedores dos navegadores; a hospedagem precisa permitir essas conexões de saída. O proxy HTTPS do ambiente é respeitado quando configurado.
 
 Para desenvolvimento com recarga da interface, use dois terminais:
@@ -211,6 +215,9 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `GET /api/portal?period=today` | Token do atendente | Perfil, vendas, custos, extrato e repasses próprios |
 | `PATCH /api/profile` | Token do atendente | Atualizar nome, foto, alerta de venda e PIX |
 | `GET /api/push/config` | Token do atendente | Chave VAPID pública e IDs de inscrições próprias |
+| `GET /api/admin/push/config` | Chave administrativa | Chave VAPID pública e IDs dos aparelhos administrativos do acesso atual |
+| `POST /api/admin/push/subscriptions` | Chave administrativa | Ativa alertas de novas vendas no aparelho do responsável |
+| `DELETE /api/admin/push/subscriptions` | Chave administrativa | Desativa a inscrição administrativa informada |
 | `POST /api/push/subscriptions` | Token do atendente | Cadastrar inscrição Web Push do aparelho |
 | `DELETE /api/push/subscriptions` | Token do atendente | Remover inscrição própria pelo ID |
 | `POST /api/sales` | Token do atendente | Gravar lote atômico; requer `Idempotency-Key` |

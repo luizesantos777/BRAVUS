@@ -426,6 +426,7 @@ var PortalStore = class _PortalStore {
       if (!profileColumns.has("photo_url")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
       if (!profileColumns.has("sale_alert_template")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '\u2705 Venda de {valor} lan\xE7ada com sucesso!'");
       await store.sql.exec("CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), subscription TEXT NOT NULL)");
+      await store.sql.exec("CREATE TABLE IF NOT EXISTS admin_push_subscriptions (endpoint_hash TEXT PRIMARY KEY, admin_scope TEXT NOT NULL, subscription TEXT NOT NULL)");
       const columns = new Set((await store.sql.prepare("PRAGMA table_info(checkouts)").all()).map((column) => column.name));
       if (!columns.has("fixed_fee_cents")) await store.sql.exec("ALTER TABLE checkouts ADD COLUMN fixed_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fixed_fee_cents >= 0)");
       if (!columns.has("min_amount_cents")) await store.sql.exec("ALTER TABLE checkouts ADD COLUMN min_amount_cents INTEGER NOT NULL DEFAULT 1 CHECK(min_amount_cents > 0)");
@@ -808,6 +809,15 @@ function createPortalHandler(store, options = {}) {
             failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
             throw new PortalError(401, "Chave administrativa inv\xE1lida.");
           }
+          if (url.pathname.startsWith("/api/admin/push/")) {
+            if (!options.push) throw new PortalError(503, "As notifica\xE7\xF5es push ainda n\xE3o est\xE3o dispon\xEDveis neste servidor.");
+            const scope = adminHash.toString("hex");
+            if (url.pathname === "/api/admin/push/config" && request.method === "GET") json(response, 200, await options.push.adminConfig(scope));
+            else if (url.pathname === "/api/admin/push/subscriptions" && request.method === "POST") json(response, 201, await options.push.adminSubscribe(scope, await readJson(request, options.bodyLimit)));
+            else if (url.pathname === "/api/admin/push/subscriptions" && request.method === "DELETE") json(response, 200, await options.push.adminUnsubscribe(scope, await readJson(request, options.bodyLimit)));
+            else throw new PortalError(404, "Recurso administrativo n\xE3o encontrado.");
+            return;
+          }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
           if (url.pathname === "/api/admin/dashboard" && request.method === "GET") json(response, 200, await store.adminDashboard());
           else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
@@ -859,7 +869,10 @@ function createPortalHandler(store, options = {}) {
         else if (url.pathname === "/api/profile" && request.method === "PATCH") json(response, 200, await store.saveProfile(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === "/api/sales" && request.method === "POST") {
           const batch = await readJson(request, options.bodyLimit), result = await store.recordSales(auth, batch, String(request.headers["idempotency-key"] ?? ""));
-          if (!result.duplicate && options.push) await options.push.notifySale(auth, batch).catch(() => void 0);
+          if (!result.duplicate && options.push) await Promise.allSettled([
+            options.push.notifySale(auth, batch),
+            ...adminHash ? [options.push.notifyAdminSale(adminHash.toString("hex"), auth, batch)] : []
+          ]);
           json(response, 200, result);
         } else if (url.pathname === "/api/ranking" && request.method === "GET") json(response, 200, await store.ranking(auth, period));
         else if (url.pathname === "/api/payouts" && request.method === "POST") json(response, 201, await store.requestPayout(auth, await readJson(request, options.bodyLimit)));
@@ -919,7 +932,7 @@ function loadAdminKey(filename, configured) {
 
 // server/push.ts
 import webpush from "web-push";
-import { createHash as createHash3, createECDH, ECDH } from "node:crypto";
+import { createHash as createHash3, createECDH, ECDH, randomUUID as randomUUID2 } from "node:crypto";
 import { chmodSync as chmodSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
 function validatePushKeys(keys) {
@@ -959,6 +972,24 @@ async function loadDatabasePushKeys(store, environment = process.env) {
     return keys;
   });
 }
+function subscriptionTable(target) {
+  return target.role === "admin" ? { table: "admin_push_subscriptions", column: "admin_scope" } : { table: "push_subscriptions", column: "attendant_id" };
+}
+function validateSubscription(input) {
+  if (!input || typeof input !== "object") throw new PortalError(400, "Inscri\xE7\xE3o de notifica\xE7\xF5es inv\xE1lida.");
+  const data = input;
+  try {
+    if (typeof data.endpoint !== "string" || data.endpoint.length > 4096) throw new Error();
+    const url = new URL(data.endpoint);
+    const allowed = ["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"].includes(url.hostname) || url.hostname.endsWith(".notify.windows.com");
+    if (url.protocol !== "https:" || url.username || url.password || url.port || !allowed) throw new Error();
+    if (!data.keys || typeof data.keys.p256dh !== "string" || typeof data.keys.auth !== "string" || !/^[\w-]{87}$/.test(data.keys.p256dh) || !/^[\w-]{22}$/.test(data.keys.auth) || Buffer.from(data.keys.auth, "base64url").length !== 16 || Buffer.from(data.keys.p256dh, "base64url").length !== 65) throw new Error();
+    ECDH.convertKey(Buffer.from(data.keys.p256dh, "base64url"), "prime256v1");
+  } catch {
+    throw new PortalError(400, "Use uma inscri\xE7\xE3o v\xE1lida do servi\xE7o de notifica\xE7\xF5es do navegador.");
+  }
+  return { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
+}
 var PushService = class {
   store;
   keys;
@@ -968,47 +999,66 @@ var PushService = class {
     this.keys = keys;
     this.sender = sender;
   }
-  async config(auth) {
-    const subscriptionIds = (await this.store.sql.prepare("SELECT endpoint_hash FROM push_subscriptions WHERE attendant_id = ?").all(auth.id)).map((row) => String(row.endpoint_hash));
+  async configFor(target) {
+    const { table, column } = subscriptionTable(target);
+    const subscriptionIds = (await this.store.sql.prepare(`SELECT endpoint_hash FROM ${table} WHERE ${column} = ?`).all(target.id)).map((row) => String(row.endpoint_hash));
     return { publicKey: this.keys.publicKey, subscriptionIds };
   }
-  async subscribe(auth, input) {
-    if (!input || typeof input !== "object") throw new PortalError(400, "Inscri\xE7\xE3o de notifica\xE7\xF5es inv\xE1lida.");
-    const data = input;
-    try {
-      if (typeof data.endpoint !== "string" || data.endpoint.length > 4096) throw new Error();
-      const url = new URL(data.endpoint);
-      const allowed = ["fcm.googleapis.com", "updates.push.services.mozilla.com", "web.push.apple.com"].includes(url.hostname) || url.hostname.endsWith(".notify.windows.com");
-      if (url.protocol !== "https:" || url.username || url.password || url.port || !allowed) throw new Error();
-      if (!data.keys || typeof data.keys.p256dh !== "string" || typeof data.keys.auth !== "string" || !/^[\w-]{87}$/.test(data.keys.p256dh) || !/^[\w-]{22}$/.test(data.keys.auth) || Buffer.from(data.keys.auth, "base64url").length !== 16 || Buffer.from(data.keys.p256dh, "base64url").length !== 65) throw new Error();
-      ECDH.convertKey(Buffer.from(data.keys.p256dh, "base64url"), "prime256v1");
-    } catch {
-      throw new PortalError(400, "Use uma inscri\xE7\xE3o v\xE1lida do servi\xE7o de notifica\xE7\xF5es do navegador.");
-    }
+  async subscribeFor(target, input) {
+    const data = validateSubscription(input), { table, column } = subscriptionTable(target);
     const id = createHash3("sha256").update(data.endpoint).digest("hex");
-    const exists = await this.store.sql.prepare("SELECT endpoint_hash FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?").get(id, auth.id);
-    if (!exists && (await this.config(auth)).subscriptionIds.length >= 5) throw new PortalError(400, "O limite \xE9 de cinco aparelhos por atendente.");
-    const safe = { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
-    await this.store.sql.prepare("INSERT INTO push_subscriptions VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET attendant_id = excluded.attendant_id, subscription = excluded.subscription").run(id, auth.id, JSON.stringify(safe));
-    return { id };
+    return this.store.sql.transaction(async (database) => {
+      const exists = await database.prepare(`SELECT endpoint_hash FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).get(id, target.id);
+      const count = Number((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(target.id)).count);
+      if (!exists && count >= 5) throw new PortalError(400, "O limite \xE9 de cinco aparelhos por acesso.");
+      await database.prepare(`INSERT INTO ${table} (endpoint_hash, ${column}, subscription) VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET ${column} = excluded.${column}, subscription = excluded.subscription`).run(id, target.id, JSON.stringify(data));
+      return { id };
+    });
   }
-  async unsubscribe(auth, input) {
+  async unsubscribeFor(target, input) {
+    const { table, column } = subscriptionTable(target);
     const id = input?.id;
     if (typeof id !== "string" || !/^[a-f0-9]{64}$/.test(id)) throw new PortalError(400, "Inscri\xE7\xE3o inv\xE1lida.");
-    await this.store.sql.prepare("DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?").run(id, auth.id);
+    await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(id, target.id);
     return { saved: true };
+  }
+  config(auth) {
+    return this.configFor({ role: "attendant", id: auth.id });
+  }
+  subscribe(auth, input) {
+    return this.subscribeFor({ role: "attendant", id: auth.id }, input);
+  }
+  unsubscribe(auth, input) {
+    return this.unsubscribeFor({ role: "attendant", id: auth.id }, input);
+  }
+  adminConfig(scope) {
+    return this.configFor({ role: "admin", id: scope });
+  }
+  adminSubscribe(scope, input) {
+    return this.subscribeFor({ role: "admin", id: scope }, input);
+  }
+  adminUnsubscribe(scope, input) {
+    return this.unsubscribeFor({ role: "admin", id: scope }, input);
   }
   async notifySale(auth, batch) {
     const active = await this.store.sql.prepare("SELECT id FROM attendants WHERE id = ? AND active = 1").get(auth.id);
     if (!active) return;
     const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    const payload = JSON.stringify({ title: "BRAVUS Brasil \xB7 Venda registrada", body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
-    const rows2 = await this.store.sql.prepare("SELECT endpoint_hash, subscription FROM push_subscriptions WHERE attendant_id = ?").all(auth.id);
+    await this.sendTo({ role: "attendant", id: auth.id }, { title: "BRAVUS Brasil \xB7 Venda registrada", body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+  }
+  async notifyAdminSale(scope, auth, batch) {
+    const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
+    const detail = batch.sales.length === 1 ? `venda de ${money(amount)}` : `${batch.sales.length} vendas, total de ${money(amount)}`;
+    await this.sendTo({ role: "admin", id: scope }, { title: "BRAVUS Brasil \xB7 Nova venda", body: `${profile.name}: ${detail}. Aguardando sua aprova\xE7\xE3o.`, target: "admin", tag: `bravus-admin-venda-${randomUUID2()}` });
+  }
+  async sendTo(target, message) {
+    const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);
+    const rows2 = await this.store.sql.prepare(`SELECT endpoint_hash, subscription FROM ${table} WHERE ${column} = ?`).all(target.id);
     await Promise.allSettled(rows2.map(async (row) => {
       try {
         await this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? "https://github.com/luizesantos777/BRAVUS" }, TTL: 600, timeout: 5e3, ...process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {} });
       } catch (error) {
-        if ([404, 410].includes(error.statusCode ?? 0)) await this.store.sql.prepare("DELETE FROM push_subscriptions WHERE endpoint_hash = ? AND attendant_id = ?").run(String(row.endpoint_hash), auth.id);
+        if ([404, 410].includes(error.statusCode ?? 0)) await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(String(row.endpoint_hash), target.id);
       }
     }));
   }

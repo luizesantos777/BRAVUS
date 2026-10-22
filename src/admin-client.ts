@@ -28,6 +28,9 @@ export class AdminClient {
     } finally { window.clearTimeout(timer); }
   }
   dashboard() { return this.request<AdminDashboard>('/dashboard'); }
+  pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }
+  subscribePush(subscription: PushSubscriptionJSON) { return this.request('/push/subscriptions', 'POST', subscription); }
+  unsubscribePush(id: string) { return this.request('/push/subscriptions', 'DELETE', { id }); }
   sales(status: SaleStatus | 'all', attendantId = '', page = 1) { return this.request<AdminSalesPage>(`/sales?${new URLSearchParams({ status, attendantId, page: String(page) })}`); }
   reviewSale(id: string, status: 'approved' | 'rejected', note: string) { return this.request(`/sales/${id}`, 'PATCH', { status, note }); }
   async receipt(id: string): Promise<string> {

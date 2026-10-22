@@ -129,9 +129,11 @@ test('push da Vercel é ativado sem variáveis extras e mantém chave e inscriç
   const subscription = { endpoint: 'https://fcm.googleapis.com/fcm/send/fixture-serverless-device', keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };
   const registered = await first('/api/push/subscriptions', token, { method: 'POST', body: JSON.stringify(subscription) });
   assert.equal(registered.status, 201); const { id } = await registered.json();
+  assert.equal((await first('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(subscription) })).status, 201);
   const restarted = await serve(t, createVercelHandler({ environment: () => env, openStore }));
   const restored = await (await restarted('/api/push/config', token)).json();
   assert.equal(restored.publicKey, config.publicKey); assert.deepEqual(restored.subscriptionIds, [id]);
+  assert.deepEqual((await (await restarted('/api/admin/push/config', adminKey)).json()).subscriptionIds, [id]);
   assert.equal((await stores[0].sql.prepare('SELECT COUNT(*) AS count FROM push_server_keys').get())!.count, 1);
   const privateKey = String((await stores[0].sql.prepare('SELECT private_key FROM push_server_keys WHERE id = 1').get())!.private_key);
   for (const response of [restored, await (await restarted('/api/portal', token)).json(), await (await restarted('/api/admin/dashboard', adminKey)).json()]) assert.equal(JSON.stringify(response).includes(privateKey), false);

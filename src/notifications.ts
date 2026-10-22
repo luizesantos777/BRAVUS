@@ -1,4 +1,9 @@
-import type { PortalClient } from './client.ts';
+export interface NotificationClient {
+  readonly isDemo: boolean;
+  pushConfig(): Promise<{ publicKey: string; subscriptionIds: string[] }>;
+  subscribePush(subscription: PushSubscriptionJSON): Promise<unknown>;
+  unsubscribePush(id: string): Promise<unknown>;
+}
 
 export type NotificationState = 'off' | 'on' | 'blocked' | 'unsupported';
 const DEMO_NOTIFICATIONS = 'bravus.demo.notifications.v1';
@@ -11,7 +16,7 @@ async function endpointId(endpoint: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
-export async function notificationState(client: PortalClient): Promise<NotificationState> {
+export async function notificationState(client: NotificationClient): Promise<NotificationState> {
   if (!supported()) return 'unsupported';
   if (Notification.permission === 'denied') return 'blocked';
   if (Notification.permission !== 'granted') return 'off';
@@ -22,7 +27,7 @@ export async function notificationState(client: PortalClient): Promise<Notificat
   const config = await client.pushConfig();
   return config.subscriptionIds.includes(await endpointId(subscription.endpoint)) ? 'on' : 'off';
 }
-export async function enableNotifications(client: PortalClient) {
+export async function enableNotifications(client: NotificationClient) {
   if (!supported()) throw new Error('Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.');
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error('As notificações não foram autorizadas. Você pode permitir nas configurações deste site no navegador.');
@@ -41,14 +46,14 @@ export async function enableNotifications(client: PortalClient) {
   subscription ??= await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key });
   await client.subscribePush(subscription.toJSON());
 }
-export async function disableNotifications(client: PortalClient) {
+export async function disableNotifications(client: NotificationClient) {
   if (client.isDemo) { localStorage.removeItem(DEMO_NOTIFICATIONS); return; }
   const registration = await navigator.serviceWorker.getRegistration(workerPath().href), subscription = await registration?.pushManager.getSubscription();
   if (!subscription) return;
   await client.unsubscribePush(await endpointId(subscription.endpoint));
-  await subscription.unsubscribe();
+  // The same browser subscription may also receive alerts for another signed-in role.
 }
-export async function notifyDemoSale(client: PortalClient, body: string) {
+export async function notifyDemoSale(client: NotificationClient, body: string) {
   try {
     if (!client.isDemo || await notificationState(client) !== 'on') return;
     const registration = await navigator.serviceWorker.getRegistration(workerPath().href);

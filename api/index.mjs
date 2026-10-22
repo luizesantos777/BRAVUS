@@ -895,7 +895,7 @@ function createPortalHandler(store, options = {}) {
         filename = resolve(root, "index.html");
       }
       const body = await readFile(filename);
-      const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png" };
+      const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
       response.writeHead(200, { "Content-Type": types[extname(filename)] ?? "application/octet-stream", "Cache-Control": extname(filename) === ".html" ? "no-store" : "public, max-age=3600" });
       response.end(request.method === "HEAD" ? void 0 : body);
     } catch (error) {

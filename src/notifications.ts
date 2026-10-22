@@ -1,3 +1,5 @@
+import { isAppleMobile, needsAppleInstallation, publicAssetUrl } from './pwa.ts';
+
 export interface NotificationClient {
   readonly isDemo: boolean;
   pushConfig(): Promise<{ publicKey: string; subscriptionIds: string[] }>;
@@ -5,18 +7,21 @@ export interface NotificationClient {
   unsubscribePush(id: string): Promise<unknown>;
 }
 
-export type NotificationState = 'off' | 'on' | 'blocked' | 'unsupported';
+export type NotificationState = 'off' | 'on' | 'blocked' | 'unsupported' | 'install-required';
 const DEMO_NOTIFICATIONS = 'bravus.demo.notifications.v1';
-function supported() { return window.isSecureContext && 'Notification' in window && 'serviceWorker' in navigator; }
+function supported() { return window.isSecureContext && typeof window.Notification !== 'undefined' && 'serviceWorker' in navigator; }
+export function notificationUnsupportedMessage() {
+  return isAppleMobile() ? 'No iPhone e iPad, use iOS 16.4 ou superior e abra o BRAVUS pelo ícone da Tela de Início para ativar as notificações.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
+}
 function workerPath() {
-  const base = window.location.hostname.endsWith('.github.io') ? '/' + window.location.pathname.split('/').filter(Boolean)[0] + '/' : import.meta.env.BASE_URL;
-  return new URL(`${base}notifications-worker.js`, window.location.origin);
+  return new URL(publicAssetUrl('notifications-worker.js'));
 }
 async function endpointId(endpoint: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }
 export async function notificationState(client: NotificationClient): Promise<NotificationState> {
+  if (needsAppleInstallation()) return 'install-required';
   if (!supported()) return 'unsupported';
   if (Notification.permission === 'denied') return 'blocked';
   if (Notification.permission !== 'granted') return 'off';
@@ -28,7 +33,8 @@ export async function notificationState(client: NotificationClient): Promise<Not
   return config.subscriptionIds.includes(await endpointId(subscription.endpoint)) ? 'on' : 'off';
 }
 export async function enableNotifications(client: NotificationClient) {
-  if (!supported()) throw new Error('Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.');
+  if (needsAppleInstallation()) throw new Error('No iPhone, abra o link no Safari, toque em Compartilhar e Adicionar à Tela de Início. Depois abra o BRAVUS pelo novo ícone e ative as notificações.');
+  if (!supported()) throw new Error(notificationUnsupportedMessage());
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') throw new Error('As notificações não foram autorizadas. Você pode permitir nas configurações deste site no navegador.');
   const registration = await navigator.serviceWorker.register(workerPath().href);

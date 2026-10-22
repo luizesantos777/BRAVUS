@@ -137,7 +137,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
       let filename = requested;
       try { if (!(await stat(filename)).isFile()) filename = resolve(root, 'index.html'); } catch { filename = resolve(root, 'index.html'); }
       const body = await readFile(filename);
-      const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
+      const types: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
       response.writeHead(200, { 'Content-Type': types[extname(filename)] ?? 'application/octet-stream', 'Cache-Control': extname(filename) === '.html' ? 'no-store' : 'public, max-age=3600' });
       response.end(request.method === 'HEAD' ? undefined : body);
     } catch (error) {

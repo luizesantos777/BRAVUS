@@ -65,3 +65,6 @@
   .ranking-avatar { width: 29px; height: 29px; }
   .ranking-row { gap: 8px; }
 }
+.notification-install-guide { margin-top: 12px; padding: 12px 14px; border: 1px solid #53633b; border-radius: 10px; color: #d2dbc7; background: #111a0e; font-size: 11px; line-height: 1.8; }
+.notification-install-guide ol { margin: 0; padding-left: 18px; }
+.notification-install-guide li + li { margin-top: 9px; }

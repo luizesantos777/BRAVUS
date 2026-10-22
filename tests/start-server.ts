@@ -13,6 +13,7 @@ for (const platform of ['desktop', 'mobile']) {
   (await store.createAttendant(`Outro ${platform}`, 5000, `fixture_${platform}_other_01234567890123456789`));
   (await store.createAttendant(`Notificações ${platform}`, 5000, `fixture_${platform}_notify_01234567890123456789`));
   (await store.createAttendant(`Alertas do administrador ${platform}`, 5000, `fixture_${platform}_owner_notify_01234567890123456789`));
+  (await store.createAttendant(`iPhone ${platform}`, 5000, `fixture_${platform}_ios_notify_01234567890123456789`));
 }
 const push = new PushService(store, await loadDatabasePushKeys(store, {}), async () => ({ statusCode: 201, body: '', headers: {} }));
 const server = createPortalServer(store, { staticDir: resolve('dist'), adminKey: 'fixture_browser_admin_012345678901234567890123456789', push });

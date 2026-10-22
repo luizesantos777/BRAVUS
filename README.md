@@ -87,7 +87,9 @@ O texto do alerta admite `{valor}`, `{qtd}` e `{nome}`; a prévia se atualiza en
 
 ### Notificações de venda
 
-O botão pede permissão ao navegador e ativa os alertas apenas naquele aparelho. O uso real exige HTTPS, navegador com suporte a Web Push e API hospedada. No iPhone, Web Push depende de um aplicativo web instalado na Tela de Início; esta versão não inclui um manifesto de instalação. O sistema mostra quando o modo atual não oferece notificações ou a permissão foi bloqueada. Na demonstração, somente os lançamentos de teste feitos naquele navegador exibem notificações locais; não há recebimento de vendas de terceiros.
+O botão pede permissão ao navegador e ativa os alertas apenas naquele aparelho. O uso real exige HTTPS, navegador com suporte a Web Push e API hospedada. No iPhone e iPad, requer **iOS/iPadOS 16.4 ou superior** e o BRAVUS instalado na Tela de Início: abra o link no **Safari**, toque em **Compartilhar → Adicionar à Tela de Início**, abra pelo novo ícone e então ative os alertas. O navegador interno do WhatsApp e uma aba normal do Safari não oferecem esse modo de notificações. O cartão identifica essa situação e apresenta **Como ativar no iPhone** com os passos, em vez de pedir uma permissão indisponível naquela aba. Na demonstração, somente os lançamentos de teste feitos naquele navegador exibem notificações locais; não há recebimento de vendas de terceiros.
+
+O projeto inclui manifestos com `display: standalone`, ícones PNG 192/512 e ícone Apple de 180 pixels, gerados a partir da marca BRAVUS existente. A administração usa `admin.webmanifest`, com abertura em `/#/admin`, sem credenciais. Ao abrir o app instalado, entre com a chave administrativa para ativar ou consultar seus alertas; essa chave continua apenas na memória da sessão. O manifesto geral omite `start_url` para usar o endereço de instalação como fallback, preservando o link individual do atendente em vez de direcionar ao modo público. Não coloque tokens de atendentes em arquivos públicos de manifesto. O service worker continua dedicado às notificações, sem armazenar páginas privadas ou respostas da API em cache.
 
 Na API, as inscrições pertencem ao atendente autenticado, com limite de cinco aparelhos. Cada lote novo salvo envia o alerta personalizado aos seus aparelhos, mesmo com a página fechada, conforme suporte e permissões do dispositivo. Uma repetição idempotente não dispara novamente. Erros de entrega não desfazem a venda; inscrições expiradas são removidas. Trocar o token ou revogar o acesso remove as inscrições, exigindo nova ativação pelos aparelhos autorizados.
 
@@ -244,7 +246,7 @@ A criação recebe `{ "name": "Nome", "commission": "50" }` (sem `commission`, u
 npm run build:pages
 ```
 
-O comando gera `docs/index.html` com JavaScript, CSS e ícone incorporados, além de `.nojekyll`, `notifications-worker.js` e `favicon.svg` para as notificações. O Pages usa a branch `main`, pasta `/docs`. Envie os arquivos gerados junto com o código. A geração estática não inclui SQLite, convites, comprovantes reais, inscrições ou dados do navegador. O service worker é registrado somente ao ativar notificações e não armazena tokens, PIX ou páginas privadas em cache.
+O comando gera `docs/index.html` com JavaScript, CSS e ícone incorporados, além de `.nojekyll`, `notifications-worker.js`, `favicon.svg`, manifestos de instalação e ícones PNG. O Pages usa a branch `main`, pasta `/docs`. Envie os arquivos gerados junto com o código. A geração estática não inclui SQLite, convites, comprovantes reais, inscrições ou dados do navegador. O service worker é registrado somente ao ativar notificações e não armazena tokens, PIX ou páginas privadas em cache.
 
 ## Testar
 

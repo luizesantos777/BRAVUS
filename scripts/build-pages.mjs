@@ -17,9 +17,13 @@ html = html.replace(scriptTag[0], () => `<script type="module">\n${script}\n</sc
 html = html.replace(styleTag[0], () => `<style>\n${style}\n</style>`);
 const favicon = await readFile(path.join(dist, 'favicon.svg'));
 html = html.replace('href="/favicon.svg"', `href="data:image/svg+xml;base64,${favicon.toString('base64')}"`);
+html = html.replace('href="/apple-touch-icon.png"', 'href="./apple-touch-icon.png"').replace('href="/manifest.webmanifest"', 'href="./manifest.webmanifest"');
 await mkdir(path.join(root, 'docs'), { recursive: true });
 await writeFile(path.join(root, 'docs/index.html'), html);
 await writeFile(path.join(root, 'docs/.nojekyll'), '');
 await writeFile(path.join(root, 'docs/notifications-worker.js'), await readFile(path.join(dist, 'notifications-worker.js')));
 await writeFile(path.join(root, 'docs/favicon.svg'), favicon);
+for (const filename of ['manifest.webmanifest', 'admin.webmanifest', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']) {
+  await writeFile(path.join(root, 'docs', filename), await readFile(path.join(dist, filename)));
+}
 console.log('GitHub Pages build ready in docs/: self-contained HTML and .nojekyll.');

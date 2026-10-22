@@ -3,6 +3,58 @@ import type { Page } from '@playwright/test';
 import { createECDH, randomBytes } from 'node:crypto';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
+const iPhoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+test('iPhone no navegador recebe instruções e instalação abre o painel administrativo sem expor a chave', async ({ page }, info) => {
+  const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_ios_notify_01234567890123456789`;
+  const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(agent => {
+    Object.defineProperty(navigator, 'userAgent', { get: () => agent });
+    Object.defineProperty(navigator, 'standalone', { value: false });
+    Reflect.deleteProperty(window, 'Notification'); Reflect.deleteProperty(window, 'PushManager');
+  }, iPhoneAgent);
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
+  await expect(page.getByText('No iPhone, adicione o BRAVUS à Tela de Início. Requer iOS 16.4 ou superior.')).toBeVisible();
+  await page.getByRole('button', { name: 'Como ativar no iPhone' }).click();
+  await expect(page.locator('.notification-install-guide')).toContainText('Safari');
+  await expect(page.locator('.notification-install-guide')).toContainText('Adicionar à Tela de Início');
+  const manifestHref = await page.locator('link[rel="manifest"]').getAttribute('href');
+  expect(manifestHref).toContain('/admin.webmanifest');
+  const response = await page.request.get(manifestHref!); expect(response.headers()['content-type']).toContain('application/manifest+json');
+  const manifest = await response.json(); expect(new URL(manifest.start_url, manifestHref!).hash).toBe('#/admin'); expect(manifest.display).toBe('standalone');
+  expect(JSON.stringify(manifest)).not.toContain(adminKey);
+  for (const icon of manifest.icons) {
+    const result = await page.request.get(new URL(icon.src, manifestHref!).href), png = await result.body();
+    expect(result.status()).toBe(200); expect(result.headers()['content-type']).toContain('image/png');
+    expect(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`).toBe(icon.sizes);
+  }
+  const appleHref = await page.locator('link[rel="apple-touch-icon"]').getAttribute('href');
+  const appleIcon = await (await page.request.get(appleHref!)).body(); expect(appleIcon.readUInt32BE(16)).toBe(180);
+  await page.screenshot({ path: info.outputPath('iphone-instalar-alertas.png'), fullPage: true });
+  await page.goto(`/?aba=perfil#/atendente/${token}`); await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
+  const personalManifest = await (await page.request.get('/manifest.webmanifest')).json();
+  // Omitting start_url preserves the document's individual link rather than opening the public demo.
+  expect(personalManifest.start_url).toBeUndefined(); expect(JSON.stringify(personalManifest)).not.toContain(token);
+  expect(errors).toEqual([]); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+test('modo instalado no iPhone permite ativar alertas e mantém a inscrição após recarregar', async ({ page, context }, info) => {
+  const token = `fixture_${info.project.name}_ios_notify_01234567890123456789`;
+  await context.grantPermissions(['notifications']);
+  await page.addInitScript(agent => {
+    Object.defineProperty(navigator, 'userAgent', { get: () => agent });
+    Object.defineProperty(navigator, 'standalone', { value: true });
+  }, iPhoneAgent);
+  await mockBrowserSubscription(page, `ios-${info.project.name}`);
+  await page.goto(`/?aba=perfil#/atendente/${token}`);
+  await expect(page.getByRole('button', { name: 'Ativar Notificações no Celular' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Como ativar no iPhone' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Ativar Notificações no Celular' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await page.reload(); await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
+  await expect(page.locator('.notification-badge')).toHaveText('Desativado');
+});
 async function mockBrowserSubscription(page: Page, deviceId: string) {
   const curve = createECDH('prime256v1'); curve.generateKeys();
   const device = { endpoint: `https://fcm.googleapis.com/fcm/send/fixture-browser-${deviceId}`, keys: { p256dh: curve.getPublicKey().toString('base64url'), auth: randomBytes(16).toString('base64url') } };

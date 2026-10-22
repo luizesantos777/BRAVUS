@@ -1,0 +1,51 @@
+.admin-tabs { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.admin-stats { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.admin-preview-notice { margin: 0 0 22px; padding: 13px 16px; border: 1px solid #60502a; border-radius: 12px; color: #e5cd80; background: #252114; font-size: 11px; line-height: 1.8; }
+.admin-demo-entry { width: 100%; margin-top: 15px; }
+.review-count { color: #c5b678; font-size: 11px; white-space: nowrap; }
+.review-filters { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }
+.review-filters label { color: #c4ceb9; font-size: 11px; font-weight: 600; }
+.review-filters select { display: block; width: 100%; margin-top: 7px; height: 39px; }
+.review-list { display: grid; gap: 15px; }
+.review-sale { padding: 20px; border: 1px solid #3c482f; border-radius: 13px; background: #141d10; }
+.review-sale-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; }
+.review-sale-heading strong { font-size: 13px; }
+.review-sale-heading small { display: block; font-size: 10px; color: #98a887; margin-top: 8px; line-height: 1.8; }
+.sale-status { display: inline-block; padding: 5px 9px; font-size: 10px; border-radius: 20px; border: 1px solid; white-space: nowrap; }
+.sale-status.pending { color: #e6cb75; border-color: #66572c; background: #302a15; }
+.sale-status.approved { color: #b2d5a4; border-color: #456739; background: #20331b; }
+.sale-status.rejected { color: #f5abb1; border-color: #723d45; background: #331c21; }
+.review-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 22px 0 17px; }
+.review-values > div { min-width: 0; }
+.review-values dt { color: #a3b294; font-size: 10px; line-height: 1.7; }
+.review-values dd { color: #e8d797; font-size: 16px; margin: 6px 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.review-note { color: #bdc9af; font-size: 11px; line-height: 1.8; margin: 12px 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding-top: 15px; border-top: 1px solid #35442a; }
+.review-actions > .button { font-size: 11px; }
+.review-actions > .button:first-child { margin-right: auto; }
+.review-actions > .reject-sale { color: #e8a4a7; border-color: #634047; }
+.admin-form textarea { display: block; margin-top: 8px; min-height: 95px; width: 100%; resize: vertical; border: 1px solid #3c4a30; border-radius: 10px; background: #172013; color: #e4ebdc; padding: 12px; font: inherit; line-height: 1.7; }
+.admin-form textarea:focus { outline: 2px solid var(--brand-gold); outline-offset: 1px; }
+.review-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 23px; font-size: 10px; color: #a6b594; }
+.pending-sales-notice { display: flex; align-items: center; gap: 9px; border: 1px solid #64532b; border-radius: 10px; background: #272314; padding: 13px; margin-bottom: 20px; color: #dfc779; font-size: 11px; line-height: 1.7; }
+.pending-sales-notice > svg { flex-shrink: 0; }
+.sale-review-note { max-width: 200px; white-space: normal; color: #c7aa8f; }
+.costs-history { margin-top: 28px; }
+.costs-history h3 { margin-bottom: 17px; font-size: 13px; }
+@media (max-width: 800px) { .admin-stats { grid-template-columns: 1fr 1fr; } .admin-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 600px) {
+  .admin-tabs { grid-template-columns: 1fr 1fr; }
+  .admin-tabs > button { white-space: normal; line-height: 1.5; }
+  .review-filters { grid-template-columns: 1fr; gap: 12px; }
+  .review-sale { padding: 15px 13px; }
+  .review-sale-heading strong { font-size: 12px; }
+  .review-sale-heading small { font-size: 9px; }
+  .review-values { grid-template-columns: 1fr 1fr; gap: 15px; margin-top: 18px; }
+  .review-values dd { font-size: 16px; }
+  .review-values dt { font-size: 9px; }
+  .review-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
+  .review-actions > .button:first-child { grid-column: 1 / -1; margin: 0; }
+  .review-actions > .button { font-size: 10px; padding: 10px 7px; }
+  .admin-preview-notice { font-size: 10px; }
+  .pending-sales-notice { font-size: 10px; }
+}

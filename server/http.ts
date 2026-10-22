@@ -55,8 +55,14 @@ export function createPortalServer(store: PortalStore, options: { staticDir?: st
             const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
             throw new PortalError(401, 'Chave administrativa inválida.');
           }
-          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
+          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
           if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') json(response, 200, store.adminDashboard());
+          else if (url.pathname === '/api/admin/sales' && request.method === 'GET') json(response, 200, store.adminSales(url.searchParams.get('status') ?? 'pending', url.searchParams.get('attendantId') ?? '', url.searchParams.get('page') ?? '1'));
+          else if (route?.[1] === 'sales' && !route[3] && request.method === 'PATCH') json(response, 200, store.reviewSale(route[2], await readJson(request)));
+          else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
+            const receipt = store.adminReceipt(url.pathname.split('/').at(-1)!);
+            response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline' }); response.end(receipt.bytes);
+          }
           else if (url.pathname === '/api/admin/attendants' && request.method === 'POST') json(response, 201, store.adminCreateAttendant(await readJson(request)));
           else if (route?.[1] === 'attendants' && route[3] === 'token' && request.method === 'POST') json(response, 200, store.rotateToken(route[2]));
           else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'GET') {

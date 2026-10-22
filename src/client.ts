@@ -1,4 +1,5 @@
-import { amountToCents, businessToday, checkoutFee, DEMO_KEY, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
+import { readDemoData, writeDemoData } from './demo-store.ts';
+import { amountToCents, businessToday, checkoutFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
 import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -14,25 +15,18 @@ export class PortalClient {
   private base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '/api';
   constructor(token: string) {
     this.token = token; this.isDemo = !token; this.demo = demoInitial();
-    if (this.isDemo) {
-      try {
-        const saved = localStorage.getItem(DEMO_KEY);
-        if (saved) {
-          const parsed = JSON.parse(saved) as DemoData;
-          if (parsed.version !== 1 || !Array.isArray(parsed.sales) || !Array.isArray(parsed.payouts) || !Array.isArray(parsed.costs) || !parsed.receipts || typeof parsed.receipts !== 'object') throw new Error('Invalid demo storage');
-          parsed.profile = { ...demoInitial().profile, ...parsed.profile };
-          validateProfile(parsed.profile);
-          if (!parsed.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000)) throw new Error('Invalid sales');
-          this.demo = parsed;
-        }
-      } catch { this.storageError = true; }
-    }
+    if (this.isDemo) { try { this.demo = readDemoData(); } catch { this.storageError = true; } }
+  }
+  private reloadDemo() {
+    if (!this.isDemo) return;
+    try { this.demo = readDemoData(); this.storageError = false; }
+    catch (error) { this.storageError = true; throw new ApiError((error as Error).message); }
   }
   private persist(next: DemoData) {
-    if (this.storageError) throw new ApiError('Não foi possível ler a demonstração salva. Seus dados foram preservados; use outro navegador para experimentar.');
-    try { localStorage.setItem(DEMO_KEY, JSON.stringify(next)); this.demo = next; }
-    catch { throw new ApiError('Não foi possível salvar a demonstração. Verifique o espaço de armazenamento do navegador.'); }
+    if (this.storageError) throw new ApiError('Não foi possível ler a demonstração salva. Seus dados foram preservados.');
+    writeDemoData(next); this.demo = next;
   }
+
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!import.meta.env.VITE_API_URL && window.location.hostname.endsWith('.github.io')) throw new ApiError('O acesso por token ainda precisa da API de atendentes hospedada. A demonstração está disponível na página inicial.', 503);
     const abort = new AbortController(), timeout = window.setTimeout(() => abort.abort(), 20_000);
@@ -48,6 +42,7 @@ export class PortalClient {
     } finally { window.clearTimeout(timeout); }
   }
   async portal(period: Period): Promise<Portal> {
+    this.reloadDemo();
     if (this.isDemo) {
       if (this.storageError) throw new ApiError('Os dados desta demonstração não puderam ser lidos e foram preservados. Abra em outro navegador para experimentar.');
       return demoPortal(this.demo, period);
@@ -55,6 +50,7 @@ export class PortalClient {
     return this.request(`/portal?period=${period}`);
   }
   async saveSales(batch: SaleBatch, requestKey: string) {
+    this.reloadDemo();
     if (!this.isDemo) return this.request('/sales', { method: 'POST', body: JSON.stringify(batch), headers: { 'Idempotency-Key': requestKey } });
     if (!validDate(batch.date) || batch.date > businessToday()) throw new ApiError('Informe uma data válida, até hoje.');
     if (!batch.sales.length || batch.sales.length > 10) throw new ApiError('Envie entre 1 e 10 vendas por vez.');
@@ -66,25 +62,28 @@ export class PortalClient {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) throw new ApiError('Informe o horário de cada venda.');
       const amountCents = amountToCents(row.amount), receiptId = crypto.randomUUID();
       receipts[receiptId] = row.receipt;
-      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), commissionBps: current.profile.commissionBps, note: row.note.trim(), receiptId, createdAt: new Date().toISOString() };
+      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), commissionBps: current.profile.commissionBps, note: row.note.trim(), receiptId, createdAt: new Date().toISOString(), status: 'pending', reviewNote: '', reviewedAt: null };
     });
     this.persist({ ...this.demo, receipts, sales: [...sales, ...this.demo.sales] });
     return { duplicate: false, count: sales.length };
   }
   async saveProfile(input: unknown): Promise<Profile> {
+    this.reloadDemo();
     if (!this.isDemo) return this.request('/profile', { method: 'PATCH', body: JSON.stringify(input) });
     const fields = validateProfile(input), profile = { ...this.demo.profile, ...fields };
     this.persist({ ...this.demo, profile }); return profile;
   }
   async ranking(period: Period): Promise<RankingEntry[]> {
+    this.reloadDemo();
     if (!this.isDemo) return this.request(`/ranking?period=${period}`);
-    const sales = this.demo.sales.filter(sale => inPeriod(sale.date, period, businessToday()));
+    const sales = this.demo.sales.filter(sale => sale.status === 'approved').filter(sale => inPeriod(sale.date, period, businessToday()));
     return sales.length ? [{ id: this.demo.profile.id, name: this.demo.profile.name, photoUrl: this.demo.profile.photoUrl, grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: true }] : [];
   }
   pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }
   subscribePush(subscription: PushSubscriptionJSON) { return this.request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) }); }
   unsubscribePush(id: string) { return this.request('/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ id }) }); }
   async requestPayout(amount: string) {
+    this.reloadDemo();
     if (!this.isDemo) return this.request('/payouts', { method: 'POST', body: JSON.stringify({ amount }) });
     const current = demoPortal(this.demo, 'all'), amountCents = amountToCents(amount);
     if (!current.profile.pixKey || !current.profile.pixOwner) throw new ApiError('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
@@ -92,6 +91,7 @@ export class PortalClient {
     this.persist({ ...this.demo, payouts: [{ id: crypto.randomUUID(), amountCents, status: 'pending', requestedAt: new Date().toISOString(), paidAt: null, note: '' }, ...this.demo.payouts] });
   }
   async receipt(id: string): Promise<string> {
+    this.reloadDemo();
     if (this.isDemo) {
       const receipt = this.demo.receipts[id];
       if (!receipt) throw new ApiError('Comprovante não encontrado.');

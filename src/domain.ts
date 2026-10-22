@@ -1,24 +1,29 @@
 export type Period = 'today' | 'yesterday' | 'week' | 'month' | 'all';
 export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
 export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
+export type SaleStatus = 'pending' | 'approved' | 'rejected';
+export const saleStatusLabels: Record<SaleStatus, string> = { pending: 'Em análise', approved: 'Aprovada', rejected: 'Recusada' };
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
 export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
 export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
 export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
-export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null }
-export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string }
+export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
+export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null }
+export interface AdminSale extends Sale { attendantId: string; attendantName: string }
+export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
+export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
 export interface Payout { id: string; amountCents: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
 export interface ReceiptInput { name: string; mime: string; base64: string }
 export interface SaleInput { amount: string; checkoutId: string; time: string; note: string; receipt: ReceiptInput | null }
 export interface SaleBatch { date: string; sales: SaleInput[] }
-export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; debtCents: number; count: number }
+export interface Finance { grossCents: number; feeCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
 export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
-export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[] }
+export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
 export interface Invitation { attendantId: string; name: string; token: string }
 export interface DemoData { version: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
@@ -57,19 +62,21 @@ export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 
 export function checkoutFee(amountCents: number, checkout: Checkout): number {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Informe um valor de venda válido.');
   if (amountCents < checkout.minAmountCents) throw new Error(`${checkout.name}: valor mínimo de ${money(checkout.minAmountCents)} por venda.`);
+  if (checkout.maxAmountCents != null && amountCents > checkout.maxAmountCents) throw new Error(`${checkout.name}: valor máximo de ${money(checkout.maxAmountCents)} por venda.`);
   const tariff = checkout.higherTier && amountCents > checkout.higherTier.aboveAmountCents ? checkout.higherTier : checkout;
   return Math.floor((amountCents * tariff.feeBps + 5000) / 10000) + tariff.fixedFeeCents;
 }
 export function checkoutRateLabel(checkout: Checkout, amountCents?: number): string {
   const label = (tariff: Pick<Checkout, 'feeBps' | 'fixedFeeCents'>) => `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(tariff.feeBps / 100)}% + ${money(tariff.fixedFeeCents)} por venda`;
   const tier = checkout.higherTier;
-  if (!tier) return label(checkout);
+  const maximum = checkout.maxAmountCents != null ? ` · Até ${money(checkout.maxAmountCents)} por venda` : '';
+  if (!tier) return label(checkout) + maximum;
   const limit = money(tier.aboveAmountCents);
-  if (amountCents === undefined) return `Até ${limit}: ${label(checkout)} · Acima de ${limit}: ${label(tier)}`;
-  return amountCents > tier.aboveAmountCents ? `${label(tier)} · Acima de ${limit}` : `${label(checkout)} · Até ${limit}`;
+  if (amountCents === undefined) return `Até ${limit}: ${label(checkout)} · Acima de ${limit}: ${label(tier)}${maximum}`;
+  return (amountCents > tier.aboveAmountCents ? `${label(tier)} · Acima de ${limit}` : `${label(checkout)} · Até ${limit}`) + maximum;
 }
-export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null };
-export const CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 } };
+export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null, maxAmountCents: null };
+export const CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: null, maxAmountCents: 100000 };
 export function percentageToBps(value: string): number {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error('Informe um percentual entre 0 e 100, com até duas casas decimais.');
   const [whole, fraction = ''] = value.trim().replace(',', '.').split('.');
@@ -108,6 +115,9 @@ export function inPeriod(date: string, period: Period, today: string) {
   return period === 'yesterday' ? date === lower : date >= lower && date <= today;
 }
 export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Payout[], period: Period, today: string): Finance {
+  const pending = sales.filter(sale => sale.status === 'pending' && inPeriod(sale.date, period, today));
+  const rejectedSalesCount = sales.filter(sale => sale.status === 'rejected' && inPeriod(sale.date, period, today)).length;
+  sales = sales.filter(sale => !sale.status || sale.status === 'approved');
   const dates = new Set([...sales.map(sale => sale.date), ...costs.map(cost => cost.date)]);
   let earned = 0, commissionCents = 0, debtCents = 0;
   for (const date of dates) {
@@ -124,7 +134,15 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   const filteredCosts = costs.filter(cost => inPeriod(cost.date, period, today));
   const pendingPayoutCents = payouts.filter(payout => payout.status === 'pending').reduce((sum, payout) => sum + payout.amountCents, 0);
   const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
-  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, debtCents, count: filtered.length };
+  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: filtered.reduce((sum, sale) => sum + sale.feeCents, 0) + filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0), adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
+}
+export function validateSaleReview(input: unknown): { status: 'approved' | 'rejected'; note: string } {
+  if (!input || typeof input !== 'object') throw new Error('Informe a decisão sobre a venda.');
+  const data = input as Record<string, unknown>;
+  if (data.status !== 'approved' && data.status !== 'rejected' || typeof data.note !== 'string' || data.note.length > 500) throw new Error('Informe uma decisão válida e uma observação de até 500 caracteres.');
+  const note = data.note.trim();
+  if (data.status === 'rejected' && !note) throw new Error('Informe o motivo da recusa.');
+  return { status: data.status, note };
 }
 export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> & Partial<Pick<Profile, 'photoUrl' | 'saleAlertTemplate'>> {
   if (!value || typeof value !== 'object') throw new Error('Dados de perfil inválidos.');

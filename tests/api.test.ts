@@ -20,7 +20,7 @@ const tokenB = 'fixture_attendant_b_012345678901234567890';
 const adminKey = 'fixture_admin_012345678901234567890123456789';
 const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
-async function fixture(t: TestContext, { defaultCheckoutRates = false } = {}) {
+async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSales = true } = {}) {
   const store = new PortalStore(':memory:');
   // General authorization and payout scenarios use an explicit fee-free checkout.
   if (!defaultCheckoutRates) store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null });
@@ -37,7 +37,11 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false } = {}) {
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close(); resolve(); }); server.closeAllConnections(); }));
   const call = (path: string, token = tokenA, init: RequestInit = {}) => fetch(base + path, { ...init, headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', ...init.headers } });
-  const submit = (payload: unknown = batch(), key = 'fixture_request_key_01', token = tokenA) => call('/api/sales', token, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(payload) });
+  const submit = async (payload: unknown = batch(), key = 'fixture_request_key_01', token = tokenA) => {
+    const response = await call('/api/sales', token, { method: 'POST', headers: { 'Idempotency-Key': key }, body: JSON.stringify(payload) });
+    if (response.ok && approveSales) for (const sale of store.sales(store.authenticate(token))) if (sale.status === 'pending') store.reviewSale(sale.id, { status: 'approved', note: 'Aprovação explícita do cenário de teste.' });
+    return response;
+  };
   return { store, a, b, call, submit, push, deliveries };
 }
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
@@ -87,24 +91,23 @@ test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador'
   assert.equal((await submit(invalid, 'fixture_pix_below_minimum')).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
 });
-test('API escolhe a faixa do checkout por venda, recalcula taxas e mantém o limite inclusivo de R$ 1.000', async t => {
+test('API limita o checkout a R$ 1.000, recalcula a taxa e rejeita o lote inteiro acima do limite', async t => {
   const { call, submit } = await fixture(t, { defaultCheckoutRates: true });
-  const payload = batch();
-  payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount, feeCents: 0, feeBps: 0, higherTier: null }));
+  const payload = batch(); payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount, feeCents: 0, maxAmountCents: null }));
+  assert.equal((await submit(payload)).status, 400);
+  assert.equal((await (await call('/api/portal')).json()).sales.length, 0);
+  payload.sales = [payload.sales[0]];
   assert.equal((await submit(payload)).status, 200);
-  const portal = await (await call('/api/portal')).json();
-  assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents).sort((a: number, b: number) => a - b), [15199, 25199]);
-  assert.equal(portal.finance.feeCents, 40398); assert.equal(portal.finance.availableCents, 15960);
-  const checkout = portal.checkouts.find((item: { id: string }) => item.id === 'main');
-  assert.equal(checkout.feeBps, 1500); assert.equal(checkout.fixedFeeCents, 199);
-  assert.deepEqual(checkout.higherTier, { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 });
-  await submit(payload); assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
+  const portal = await (await call('/api/portal')).json(), checkout = portal.checkouts.find((item: { id: string }) => item.id === 'main');
+  assert.equal(portal.sales[0].feeCents, 15199); assert.equal(portal.finance.availableCents, 8480);
+  assert.equal(checkout.feeBps, 1500); assert.equal(checkout.fixedFeeCents, 199); assert.equal(checkout.maxAmountCents, 100000); assert.equal(checkout.higherTier, null);
   const update = (body: unknown) => call('/api/admin/checkouts/main', adminKey, { method: 'PATCH', body: JSON.stringify(body) });
-  assert.equal((await update({ name: 'Checkout principal', fee: '16' })).status, 200);
+  assert.equal((await update({ name: 'Principal', fee: '15', higherTier: { aboveAmount: '400', fee: '20', fixedFee: '1.99' } })).status, 200);
+  assert.equal((await update({ name: 'Principal', fee: '16' })).status, 200);
   const next = await (await call('/api/portal')).json();
-  assert.deepEqual(next.checkouts.find((item: { id: string }) => item.id === 'main').higherTier, checkout.higherTier);
-  assert.equal(next.finance.feeCents, 40398);
-  for (const higherTier of [{ aboveAmount: '350', fee: '101', fixedFee: '1.99' }, { aboveAmount: '0', fee: '25', fixedFee: '1.99' }, { aboveAmount: '350', fee: '25', fixedFee: '-1' }, []]) assert.equal((await update({ name: 'Principal', fee: '15', higherTier })).status, 400);
+  assert.deepEqual(next.checkouts.find((item: { id: string }) => item.id === 'main').higherTier, { aboveAmountCents: 40000, feeBps: 2000, fixedFeeCents: 199 });
+  assert.equal(next.sales[0].feeCents, 15199);
+  for (const higherTier of [{ aboveAmount: '350', fee: '101', fixedFee: '1.99' }, { aboveAmount: '0', fee: '25', fixedFee: '1.99' }, { aboveAmount: '350', fee: '25', fixedFee: '-1' }, { aboveAmount: '1000', fee: '25', fixedFee: '1.99' }, []]) assert.equal((await update({ name: 'Principal', fee: '15', higherTier })).status, 400);
 });
 test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são salvas', async t => {
   const { call, submit } = await fixture(t);
@@ -194,19 +197,19 @@ test('atualização do checkout preserva vendas antigas e mantém faixas ajustad
     store.db.exec("ALTER TABLE checkouts DROP COLUMN tier_above_cents; ALTER TABLE checkouts DROP COLUMN tier_fee_bps; ALTER TABLE checkouts DROP COLUMN tier_fixed_fee_cents; DELETE FROM schema_migrations WHERE id = 'checkout-pix-tiered-tariff-v1';");
     store.close(); store = new PortalStore(file);
     assert.equal(store.sales({ id: account.id })[0].feeCents, 0);
-    const payload = batch(); payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount }));
+    const payload = batch(); payload.sales = ['100', '1000'].map(amount => ({ ...payload.sales[0], amount }));
     store.recordSales({ id: account.id }, payload, 'fixture_after_checkout_upgrade');
-    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 15199, 25199]);
+    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
     store.adminSetCheckout('main', { name: 'Checkout principal', fee: '16', fixedFee: '2', higherTier: { aboveAmount: '400', fee: '28', fixedFee: '3' } });
     store.close(); store = new PortalStore(file);
     const checkout = store.checkouts().find(item => item.id === 'main')!;
     assert.equal(checkout.feeBps, 1600); assert.equal(checkout.fixedFeeCents, 200);
     assert.deepEqual(checkout.higherTier, { aboveAmountCents: 40000, feeBps: 2800, fixedFeeCents: 300 });
     assert.equal(store.checkouts().find(item => item.id === 'pix')!.feeBps, 699);
-    const logs = execFileSync(process.execPath, ['server/manage.ts', 'set-checkout', '--id', 'main', '--name', 'Checkout principal', '--fee', '15', '--fixed-fee', '1.99', '--above', '1000', '--above-fee', '25', '--above-fixed-fee', '1.99'], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: file } });
+    const logs = execFileSync(process.execPath, ['server/manage.ts', 'set-checkout', '--id', 'main', '--name', 'Checkout principal', '--fee', '15', '--fixed-fee', '1.99', '--above', '400', '--above-fee', '25', '--above-fixed-fee', '1.99'], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: file } });
     assert.equal(logs.includes(tokenA), false);
-    assert.deepEqual(store.checkouts().find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 });
-    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 15199, 25199]);
+    assert.deepEqual(store.checkouts().find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 40000, feeBps: 2500, fixedFeeCents: 199 });
+    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('operador cria token e convite privados pelo comando de administração', () => {
@@ -367,4 +370,82 @@ test('push expirado é removido sem desfazer a venda; credenciais VAPID persiste
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey }));
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: webpush.generateVAPIDKeys().privateKey }));
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('só o administrador aprova ou recusa vendas; saldo e ranking usam apenas as aprovadas', async t => {
+  const { call, submit, a } = await fixture(t, { approveSales: false });
+  const forged = batch(); Object.assign(forged.sales[0], { status: 'approved', reviewNote: 'aprovada pelo navegador' });
+  assert.equal((await submit(forged)).status, 200);
+  let portal = await (await call('/api/portal')).json(); const sale = portal.sales[0];
+  assert.equal(sale.status, 'pending'); assert.equal(sale.reviewNote, ''); assert.equal(portal.finance.availableCents, 0);
+  assert.equal(portal.finance.pendingSalesCount, 1); assert.equal((await (await call('/api/ranking')).json()).length, 0);
+  await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana' }) });
+  assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '1' }) })).status, 400);
+  const review = (status: string, note = '', credential = adminKey) => call('/api/admin/sales/' + sale.id, credential, { method: 'PATCH', body: JSON.stringify({ status, note }) });
+  assert.equal((await review('approved', '', tokenA)).status, 401);
+  assert.equal((await call('/api/admin/receipts/' + sale.receiptId, tokenB)).status, 401);
+  const receipt = await call('/api/admin/receipts/' + sale.receiptId, adminKey);
+  assert.equal(receipt.status, 200); assert.equal(receipt.headers.get('content-type'), 'image/png'); assert.match(receipt.headers.get('cache-control')!, /no-store/);
+  assert.equal((await review('rejected', '   ')).status, 400);
+  assert.equal((await review('pending')).status, 400);
+  const concurrent = await Promise.all([review('approved', 'Print conferido'), review('approved', 'Outra tentativa')]);
+  assert.deepEqual(concurrent.map(response => response.status).sort(), [200, 409]);
+  portal = await (await call('/api/portal')).json();
+  assert.equal(portal.finance.availableCents, 3000); assert.equal(portal.finance.pendingSalesCount, 0); assert.ok(portal.sales[0].reviewedAt);
+  assert.equal((await (await call('/api/ranking')).json())[0].grossCents, 30000);
+  assert.equal((await review('rejected', 'Não pode desfazer uma aprovação')).status, 409);
+  await submit(batch(), 'fixture_rejected_sale_02');
+  const pending = await (await call('/api/admin/sales?status=pending', adminKey)).json();
+  assert.equal(pending.total, 1); assert.equal(pending.sales[0].attendantId, a.id);
+  assert.equal((await call('/api/admin/sales/' + pending.sales[0].id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'rejected', note: 'Comprovante não confere' }) })).status, 200);
+  await call(`/api/admin/attendants/${a.id}/costs`, adminKey, { method: 'POST', body: JSON.stringify({ date: businessToday(), ads: '5', withdrawalFee: '0' }) });
+  portal = await (await call('/api/portal')).json();
+  assert.equal(portal.finance.availableCents, 2500); assert.equal(portal.finance.count, 1); assert.equal(portal.finance.rejectedSalesCount, 1);
+  assert.ok(portal.sales.some((item: { reviewNote: string }) => item.reviewNote === 'Comprovante não confere'));
+  const dashboard = await (await call('/api/admin/dashboard', adminKey)).json();
+  assert.equal(dashboard.costs[0].adsCents, 500); assert.equal(dashboard.pendingSalesCount, 0);
+});
+test('fila administrativa pagina, filtra por atendente e não expõe tokens', async t => {
+  const { call, submit, a } = await fixture(t, { approveSales: false });
+  const payload = batch(); payload.sales = Array.from({ length: 10 }, () => ({ ...payload.sales[0] }));
+  for (let index = 0; index < 6; index++) assert.equal((await submit(payload, `fixture_pagination_${index}`)).status, 200);
+  const page = await (await call(`/api/admin/sales?status=pending&attendantId=${a.id}&page=2`, adminKey)).json();
+  assert.equal(page.total, 60); assert.equal(page.sales.length, 10); assert.equal(page.page, 2);
+  assert.equal(JSON.stringify(page).includes(tokenA), false);
+  assert.equal((await call('/api/admin/sales?status=invalid', adminKey)).status, 400);
+  assert.equal((await call('/api/admin/sales?page=0', adminKey)).status, 400);
+});
+test('migração mantém vendas anteriores aprovadas e persiste decisões e novos lançamentos pendentes', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-sale-review-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Histórico revisão', 1000, tokenA);
+    store.recordSales({ id: account.id }, batch(), 'fixture_legacy_sale_before_review');
+    store.db.exec('DROP INDEX sales_status_created; ALTER TABLE sales DROP COLUMN status; ALTER TABLE sales DROP COLUMN review_note; ALTER TABLE sales DROP COLUMN reviewed_at;');
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.sales({ id: account.id })[0].status, 'approved');
+    store.recordSales({ id: account.id }, batch(), 'fixture_sale_after_review_migration');
+    const pending = store.sales({ id: account.id }).find(sale => sale.status === 'pending')!;
+    store.reviewSale(pending.id, { status: 'rejected', note: 'Print ilegível' });
+    store.close(); store = new PortalStore(file);
+    const reviewed = store.sales({ id: account.id }).find(sale => sale.id === pending.id)!;
+    assert.equal(reviewed.status, 'rejected'); assert.equal(reviewed.reviewNote, 'Print ilegível'); assert.ok(reviewed.reviewedAt);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-limit-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Histórico limite', 1000, tokenA);
+    store.db.exec("UPDATE checkouts SET max_amount_cents = NULL, tier_above_cents = 100000, tier_fee_bps = 2500, tier_fixed_fee_cents = 199 WHERE id = 'main'; DELETE FROM schema_migrations WHERE id = 'checkout-maximum-1000-v1';");
+    const payload = batch(); payload.sales[0].amount = '1000,01';
+    store.recordSales({ id: account.id }, payload, 'fixture_sale_before_maximum');
+    const sale = store.sales({ id: account.id })[0]; store.reviewSale(sale.id, { status: 'approved', note: 'Histórico' });
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.sales({ id: account.id })[0].feeCents, 25199);
+    assert.equal(store.sales({ id: account.id })[0].status, 'approved');
+    assert.equal(store.checkouts().find(item => item.id === 'main')!.higherTier, null);
+    assert.throws(() => store!.recordSales({ id: account.id }, payload, 'fixture_sale_after_maximum'), /valor máximo/);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });

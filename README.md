@@ -40,11 +40,21 @@ O servidor também gera `.bravus/admin.key`, com permissão de leitura restrita 
 
 ## Administrar pelo navegador
 
-Somente a administração cadastra atendentes e define seus tokens. O painel permite criar atendentes com token escolhido pelo responsável ou gerado pelo sistema, gerar um novo token para o mesmo atendente, revogar ou reativar acessos, configurar taxas e custos diários e registrar pagamentos ou cancelamentos de repasses. O novo link individual aparece após a criação ou rotação; a lista de atendentes não revela tokens. A rotação invalida imediatamente o link anterior e preserva o histórico. Revogar bloqueia o acesso sem apagar vendas ou PIX; reativar volta a permitir o token mais recente.
+Somente a administração cadastra atendentes e define seus tokens. O painel permite criar atendentes com token escolhido pelo responsável ou gerado pelo sistema, gerar um novo token para o mesmo atendente, revogar ou reativar acessos, aprovar ou recusar vendas com comprovantes, lançar custos de ADS por atendente e dia, configurar taxas e registrar pagamentos ou cancelamentos de repasses. O novo link individual aparece após a criação ou rotação; a lista de atendentes não revela tokens. A rotação invalida imediatamente o link anterior e preserva o histórico. Revogar bloqueia o acesso sem apagar vendas ou PIX; reativar volta a permitir o token mais recente.
 
 O portal do atendente não tem cadastro nem formulário para digitar tokens. O acesso é feito pelo link individual entregue pela administração. O atendente pode atualizar seus dados pessoais e PIX e registrar vendas, mas não criar contas ou alterar tokens.
 
 Para um pagamento, confira o PIX apresentado, efetue a transferência no seu banco e só então registre a confirmação no BRAVUS. Cancelar uma solicitação pendente libera o saldo reservado. Essas operações exigem a chave administrativa; um token de atendente não tem permissão de administração.
+
+## Aprovar vendas e lançar ADS
+
+Abra `/#/admin` e entre com sua chave administrativa. A aba **Aprovar vendas** abre a fila de lançamentos pendentes, com filtros por atendente e situação, paginação de 50 itens e visualização privada dos prints. Cada venda mostra bruto, taxa, líquido e comissão. **Aprovar venda** libera a comissão; **Recusar venda** exige um motivo, exibido no histórico do atendente. A decisão registra data e observação e só pode ser aplicada uma vez. Um token de atendente não autoriza decisões ou leitura administrativa de comprovantes.
+
+Novas vendas entram **Em análise**. Apenas as aprovadas entram no faturamento consolidado, nas taxas financeiras, no ranking e na comissão disponível para repasse. Pendentes e recusadas continuam visíveis no histórico do atendente, com seu estado e motivo. As vendas existentes antes dessa funcionalidade são mantidas como aprovadas para preservar o histórico e os saldos; a migração não apaga nem recalcula suas taxas. Não há meta diária para liberar comissões.
+
+Na aba **Custos ADS**, selecione o atendente e a data, confira os valores carregados e salve o custo de anúncios e a taxa de saque daquele dia. O lançamento substitui o valor anterior para esse atendente e data, sem somá-lo novamente. O histórico mostra os últimos 100 registros e permite carregar um dia para edição; outros dias podem ser consultados pelos filtros. O custo entra no saldo desse atendente e pode gerar saldo negativo mesmo com vendas aguardando aprovação.
+
+O link público `https://luizesantos777.github.io/BRAVUS/#/admin` oferece **Ver painel de demonstração**, sem pedir a chave real. Essa prévia usa somente dados de exemplo do navegador e não autentica usuários reais nem faz chamadas administrativas à API. Ao abri-la pela primeira vez sem vendas de demonstração, são criados exemplos identificados e comprovantes marcados **SEM TRANSAÇÃO REAL**. Aprovações e ADS da prévia refletem no portal de demonstração do mesmo navegador. Cadastro de contas, tokens, configuração de tarifas e pagamentos reais continuam exclusivos do painel autenticado na API hospedada. O usuário adiou a hospedagem para a Vercel; a prévia não substitui essa implantação.
 
 ## Meus Dados e PIX
 
@@ -110,19 +120,19 @@ O PIX manual aplica automaticamente **6,99% + R$ 1,69 por venda**, conforme a ta
 
 A tela mostra a tarifa, a taxa calculada e o líquido antes de enviar. O servidor recalcula usando a configuração do checkout e grava a taxa na venda; valores de taxa enviados pelo navegador não são usados. O extrato soma as taxas gravadas e o histórico mostra bruto, taxa e líquido.
 
-O **Checkout principal** aplica automaticamente as faixas informadas pelo responsável:
+O **Checkout principal** recebe vendas de **até R$ 1.000,00**, inclusive, com a tarifa informada pelo responsável:
 
 | Valor de cada venda | Taxa variável | Taxa fixa por transação |
 | --- | --- | --- |
 | Até R$ 1.000,00, inclusive | 15% | R$ 1,99 |
-| Acima de R$ 1.000,00 | 25% | R$ 1,99 |
+| Acima de R$ 1.000,00 | Não disponível neste checkout | — |
 
-A faixa depende do valor de cada venda, inclusive em lotes. R$ 1.000,00 gera taxa de R$ 151,99 e líquido de R$ 848,01; R$ 1.000,01 gera taxa de R$ 251,99 e líquido de R$ 748,02. O percentual incide sobre o valor integral da transação na faixa correspondente, com arredondamento em centavos, e soma uma taxa fixa por venda. Reserva financeira informada: 0%.
+Uma venda de R$ 1.000,00 gera taxa de R$ 151,99 e líquido de R$ 848,01. Valores maiores são recusados tanto na interface quanto na API. A validação se aplica a cada venda e rejeita todo o lote se algum item ultrapassar o limite; o navegador não pode remover esse limite enviando dados manipulados. O percentual é arredondado em centavos e a taxa fixa é adicionada por transação. Reserva financeira informada: 0%.
 
-O cartão do checkout mostra as duas faixas e o lançamento exibe a tarifa escolhida, a taxa e o líquido. A API recalcula esses valores. Taxas variáveis, fixas, mínimo e faixa superior podem ser ajustados na administração. O limite da faixa inicial é inclusivo; deixar esse campo vazio configura taxa única. Mudanças se aplicam apenas aos próximos lançamentos; as vendas antigas mantêm seus valores. A migração do banco configura essas faixas uma única vez e preserva os ajustes administrativos posteriores.
+O cartão do checkout mostra a tarifa e o limite. O cartão do PIX manual também informa **6,99% + R$ 1,69 por venda**. Antes de enviar, cada lançamento exibe a taxa e o líquido; o servidor recalcula usando sua configuração. O painel permite ajustar tarifas sem alterar o limite de recebimento do checkout. Faixas opcionais devem começar abaixo desse limite. As migrações preservam taxas e decisões já registradas; o limite e a retirada da antiga faixa acima de R$ 1.000 são aplicados uma única vez.
 
 ```sh
-npm run manage -- set-checkout --id main --name "Checkout principal" --fee 15 --fixed-fee 1.99 --minimum 0.01 --above 1000 --above-fee 25 --above-fixed-fee 1.99
+npm run manage -- set-checkout --id main --name "Checkout principal" --fee 15 --fixed-fee 1.99 --minimum 0.01 --above ""
 npm run manage -- set-costs --attendant ID_DO_ATENDENTE --date 2026-10-21 --ads 20 --withdrawal-fee 2
 npm run manage -- mark-payout --id ID_DO_REPASSE --status paid --note "Pagamento conferido pela administração"
 ```
@@ -133,10 +143,10 @@ Para cancelar uma solicitação pendente, use `--status cancelled`. Marcar um re
 
 - Valores são armazenados em centavos inteiros. São aceitos `197,00`, `197.00` e `1.250,50`.
 - A comissão configurada por atendente incide sobre o bruto menos a taxa do checkout. O percentual fica registrado nas vendas.
-- Todas as vendas geram comissão, sem meta diária ou faturamento mínimo. O cálculo se aplica também às vendas já registradas. Os dias seguem o fuso America/Sao_Paulo.
+- Todas as vendas aprovadas geram comissão, sem meta diária ou faturamento mínimo. Novos lançamentos aguardam análise; o histórico anterior à aprovação manual permanece aprovado. Os dias seguem o fuso America/Sao_Paulo.
 - Custos ADS e a taxa diária de saque são descontados normalmente e podem gerar saldo negativo.
 - Solicitações pendentes reservam o saldo; confirmar o pagamento não desconta o valor novamente. O saldo não permite solicitar um repasse maior que o disponível.
-- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas de atendentes ativos, sem tokens ou PIX.
+- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas aprovadas de atendentes ativos, sem tokens ou PIX.
 - Cada venda exige um print PNG, JPEG ou WEBP de até 2 MB. Cada envio aceita até 10 vendas e 12 MB no total, de forma atômica.
 - Um identificador de envio evita duplicar vendas em tentativas repetidas com o mesmo conteúdo.
 
@@ -186,6 +196,9 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `GET /api/receipts/:id` | Token do proprietário | Obter comprovante privado |
 | `GET /api/ranking?period=today` | Token do atendente | Ranking sem dados privados |
 | `POST /api/payouts` | Token do atendente | Solicitar e reservar valor disponível |
+| `GET /api/admin/sales?status=pending&attendantId=&page=1` | Chave administrativa | Fila de vendas paginada; status `pending`, `approved`, `rejected` ou `all` |
+| `PATCH /api/admin/sales/:id` | Chave administrativa | Aprovar ou recusar venda pendente; registra data e observação |
+| `GET /api/admin/receipts/:id` | Chave administrativa | Obter print privado de qualquer venda para análise |
 | `GET /api/admin/dashboard` | Chave administrativa | Atendentes, checkouts e repasses com destino PIX |
 | `POST /api/admin/attendants` | Chave administrativa | Criar atendente; retorna token uma vez |
 | `POST /api/admin/attendants/:id/token` | Chave administrativa | Trocar token preservando histórico |
@@ -195,7 +208,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/admin/checkouts/:id` | Chave administrativa | Definir nome e taxa do checkout |
 | `PATCH /api/admin/payouts/:id` | Chave administrativa | Confirmar pagamento ou cancelar solicitação |
 
-A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "15", "fixedFee": "1.99", "minimum": "0.01", "higherTier": { "aboveAmount": "1000", "fee": "25", "fixedFee": "1.99" } }`; omitir `fixedFee`, `minimum` ou `higherTier` preserva a configuração existente. `higherTier: null` remove a faixa superior e aplica a tarifa principal a todas as vendas. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
+A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "15", "fixedFee": "1.99", "minimum": "0.01", "higherTier": null }`; omitir `fixedFee`, `minimum` ou `higherTier` preserva a configuração existente. `higherTier: null` remove a faixa superior e aplica a tarifa principal às vendas aceitas pelo limite do checkout. Decisões recebem `{ "status": "approved", "note": "Print conferido" }` ou `{ "status": "rejected", "note": "Motivo obrigatório" }`; tentativas de alterar uma decisão concluída retornam 409. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
 
 ## GitHub Pages: atualizar a demonstração
 
@@ -215,7 +228,9 @@ BRAVUS_CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e
 
 Os testes cobrem comissões sem faturamento mínimo, compatibilidade com registros antigos, regras financeiras, dias no fuso brasileiro, validação de PIX, isolamento entre tokens, comprovantes privados, idempotência, saldo de repasses e persistência após reiniciar o banco. O Playwright testa desktop e celular contra a API real com um banco temporário e tokens sintéticos, removidos ao encerrar o teste. Não são utilizados dados de atendentes reais.
 
-Também são verificados os limites de R$ 1.000,00 e R$ 1.000,01 do checkout, escolha de faixa por venda, preservação de taxas históricas e faixas administrativas após migração e reinício, todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
+Também são verificados os limites de R$ 1.000,00 e R$ 1.000,01 do checkout, recusa atômica de lotes acima do limite, preservação de taxas históricas e faixas administrativas após migração e reinício, todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
+
+Também há testes de autorização de decisões e comprovantes, aprovação única sob tentativas concorrentes, saldo bloqueado enquanto pendente, recusa com motivo, paginação e compatibilidade de vendas antigas. O fluxo completo de aprovação, recusa e lançamento de ADS é exercitado no desktop e no celular, incluindo seu efeito no saldo do atendente e a prévia pública.
 
 O perfil tem cobertura de upload, prévia, persistência após recarregar, PIX, foto no ranking e mensagem personalizada. Os testes de navegador ativam/desativam notificações de demonstração e consultam os alertas locais do service worker, com permissão concedida no Chromium. Os testes da API validam inscrições por atendente, rejeição de endpoints externos arbitrários, criptografia real do payload e limpeza de inscrições expiradas; o transporte externo é substituído por uma função de teste. Isso não valida a entrega em aparelhos físicos pelos provedores.
 
@@ -228,7 +243,8 @@ Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navega
 - `src/Profile.tsx`, `src/profile.css`, `src/notifications.ts`: perfil BRAVUS, foto, PIX, alerta e ativação de notificações.
 - `src/domain.ts`: tipos e regras financeiras compartilhados.
 - `src/client.ts`: acesso à API e demonstração isolada.
-- `src/Admin.tsx`, `src/admin-client.ts`: painel administrativo e cliente autenticado.
+- `src/Admin.tsx`, `src/AdminSales.tsx`, `src/admin.css`, `src/admin-client.ts`: painel administrativo, fila de aprovação, custos de ADS e cliente autenticado.
+- `src/demo-admin.ts`, `src/demo-store.ts`: prévia administrativa com dados locais de demonstração, isolada da API real.
 - `server/store.ts`: SQLite e regras de autorização por atendente.
 - `server/http.ts`, `server/index.ts`: API e servidor da interface.
 - `server/manage.ts`: administração dos atendentes, taxas, custos e repasses pelo operador.
@@ -239,4 +255,4 @@ Para outro Chromium instalado, ajuste `BRAVUS_CHROMIUM_PATH`; para usar o navega
 
 Os dados da antiga demonstração de gestão (`bravus.data.v1`) não são apagados nem migrados automaticamente. A nova demonstração usa uma chave separada; atendentes reais usam o banco no servidor.
 
-As colunas antigas de meta permanecem no SQLite para preservar a compatibilidade dos bancos existentes, mas não são lidas, expostas pela API ou usadas nos cálculos. Dados antigos da demonstração continuam na mesma chave do navegador e suas vendas passam a gerar comissão sem mínimo de faturamento.
+As colunas antigas de meta permanecem no SQLite para preservar a compatibilidade dos bancos existentes, mas não são lidas, expostas pela API ou usadas nos cálculos. Dados antigos da demonstração continuam na mesma chave do navegador e suas vendas antigas permanecem aprovadas e geram comissão sem mínimo de faturamento; novos lançamentos aguardam a aprovação administrativa.

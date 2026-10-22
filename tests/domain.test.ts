@@ -3,7 +3,7 @@ import test from 'node:test';
 import { amountToCents, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, renderSaleAlert, validateAvatar, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
-const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z' });
+const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z', status: 'approved', reviewNote: '', reviewedAt: null });
 test('valores brasileiros são convertidos em centavos inteiros', () => {
   for (const [value, expected] of [['197,00', 19700], ['1.250,50', 125050], ['0.29', 29], ['1.000', 100000], ['12,3', 1230]] as const) assert.equal(amountToCents(value), expected);
   for (const value of ['0', '-10', '1e3', 'NaN', '1000001', '1,234', '1.25,50']) assert.throws(() => amountToCents(value));
@@ -19,15 +19,15 @@ test('PIX manual aplica 6,99% mais R$ 1,69 em todas as faixas, arredondando cada
   assert.equal(checkoutFee(2000, pix), 309);
   assert.throws(() => checkoutFee(499, pix), /valor mínimo/);
 });
-test('checkout usa 15% até R$ 1.000 e 25% acima, com R$ 1,99 por transação em ambas as faixas', () => {
+test('checkout aplica 15% + R$ 1,99 até R$ 1.000 e recusa valores acima do limite', () => {
   const checkout = demoCheckouts.find(item => item.id === 'main')!;
-  for (const [gross, fee] of [[10000, 1699], [19700, 3154], [30000, 4699], [35000, 5449], [35001, 5449], [40000, 6199], [50000, 7699], [99999, 15199], [100000, 15199], [100001, 25199], [100002, 25200], [150000, 37699]]) assert.equal(checkoutFee(gross, checkout), fee);
+  for (const [gross, fee] of [[10000, 1699], [19700, 3154], [35000, 5449], [50000, 7699], [99999, 15199], [100000, 15199]]) assert.equal(checkoutFee(gross, checkout), fee);
   assert.equal(checkoutFee(10000, checkout) * 2, 3398);
   assert.equal(checkoutFee(20000, checkout), 3199);
-  assert.match(checkoutRateLabel(checkout, 100000), /15,00%/);
-  assert.match(checkoutRateLabel(checkout, 100001), /25,00%/);
+  assert.throws(() => checkoutFee(100001, checkout), /valor máximo/);
+  assert.match(checkoutRateLabel(checkout), /15,00%/);
+  assert.doesNotMatch(checkoutRateLabel(checkout), /25,00%/);
   assert.equal(100000 - checkoutFee(100000, checkout), 84801);
-  assert.equal(100001 - checkoutFee(100001, checkout), 74802);
 });
 test('toda venda gera comissão, sem exigir faturamento mínimo ou aplicar metas antigas', () => {
   const legacy = { ...sale(19700), goalCents: 20000 };
@@ -84,4 +84,11 @@ test('campo único de PIX identifica os tipos e mantém disponível a confirmaç
   assert.equal(detectPixType('11987654321'), 'phone');
   assert.equal(detectPixType('12.345.678/0001-90'), 'cnpj');
   assert.equal(detectPixType('c4870728-df71-4ef2-b073-98c118c5a683'), 'random');
+});
+
+test('somente vendas aprovadas liberam comissão; pendentes e recusadas não entram no saldo', () => {
+  const approved = sale(10000), pending = { ...sale(20000), status: 'pending' as const }, rejected = { ...sale(30000), status: 'rejected' as const };
+  const summary = calculateFinance([approved, pending, rejected], [{ date: '2026-10-21', adsCents: 200, withdrawalFeeCents: 0 }], [], 'today', '2026-10-21');
+  assert.equal(summary.grossCents, 10000); assert.equal(summary.availableCents, 800); assert.equal(summary.count, 1);
+  assert.equal(summary.pendingSalesCount, 1); assert.equal(summary.pendingSalesCents, 20000); assert.equal(summary.rejectedSalesCount, 1);
 });

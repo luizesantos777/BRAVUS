@@ -45,6 +45,7 @@ try {
     const above = flag('above', current?.higherTier ? String(current.higherTier.aboveAmountCents / 100) : '');
     const higherTier = above.trim() === '' ? null : { aboveAmountCents: amountToCents(above), feeBps: percent(flag('above-fee', current?.higherTier ? String(current.higherTier.feeBps / 100) : '')), fixedFeeCents: cost(flag('above-fixed-fee', String((current?.higherTier?.fixedFeeCents ?? 0) / 100))) };
     if (higherTier && higherTier.aboveAmountCents < minimum) throw new Error('O limite da faixa inicial deve ser maior ou igual ao mínimo por venda.');
+    if (current?.maxAmountCents != null && (minimum > current.maxAmountCents || higherTier && higherTier.aboveAmountCents >= current.maxAmountCents)) throw new Error('Configuração incompatível com o limite de recebimento do checkout.');
     store.db.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, tier_above_cents, tier_fee_bps, tier_fixed_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET name=excluded.name, fee_bps=excluded.fee_bps, fixed_fee_cents=excluded.fixed_fee_cents, min_amount_cents=excluded.min_amount_cents, tier_above_cents=excluded.tier_above_cents, tier_fee_bps=excluded.tier_fee_bps, tier_fixed_fee_cents=excluded.tier_fixed_fee_cents').run(id, name.trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null);
     console.log('Checkout atualizado. Novas taxas se aplicam apenas às próximas vendas.');
   } else if (command === 'mark-payout') {

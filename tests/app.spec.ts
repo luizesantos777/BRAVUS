@@ -1,6 +1,20 @@
 import { expect, test } from '@playwright/test';
+import type { Page } from '@playwright/test';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
+async function approveDemoSales(page: Page) {
+  await page.goto('/#/admin');
+  await page.getByRole('button', { name: 'Ver painel de demonstração' }).click();
+  await expect(page.getByRole('heading', { name: 'Aprovação de vendas' })).toBeVisible();
+  await expect(page.locator('.loading-state')).toHaveCount(0);
+  let count = await page.locator('.review-sale').count();
+  while (count > 0) {
+    await page.getByRole('button', { name: 'Aprovar venda', exact: true }).first().click();
+    await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
+    await expect(page.locator('.review-sale')).toHaveCount(--count);
+  }
+  await page.getByRole('link', { name: 'Portal do Atendente', exact: true }).click();
+}
 test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ page, browser }, info) => {
   const token = `fixture_${info.project.name}_primary_01234567890123456789`;
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message));
@@ -22,6 +36,11 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   await page.getByLabel('Print da venda 2', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('status')).toContainText('100,00');
+  await expect(page.locator('.pending-sales-notice')).toContainText('2 venda(s) em análise');
+  await expect(page.locator('.metric.balance')).toContainText('0,00');
+  const submitted = await (await page.request.get('/api/portal', { headers: { Authorization: `Bearer ${token}` } })).json();
+  for (const sale of submitted.sales) expect((await page.request.patch('/api/admin/sales/' + sale.id, { headers: { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' }, data: { status: 'approved', note: 'Print conferido no teste' } })).status()).toBe(200);
+  await page.getByRole('button', { name: 'Atualizar vendas' }).click();
   await expect(page.locator('.metric').first()).toContainText(/100,00/);
   await expect(page.locator('.metric').nth(1)).toContainText(/14,43/);
   await expect(page.locator('.metric.balance')).toContainText(/8,56/);
@@ -68,10 +87,22 @@ test('demonstração reproduz a interface e tokens inválidos impedem envio', as
   await expect(page.getByLabel('Taxas da venda 1')).toContainText('91,32');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
+  await expect(page.locator('.pending-sales-notice')).toContainText('1 venda(s) em análise');
+  await approveDemoSales(page);
   await expect(page.locator('.metric').nth(1)).toContainText('8,68');
   await expect(page.locator('.metric.balance')).toContainText('9,13');
   await page.reload();
   await expect(page.locator('.metric.balance')).toContainText('9,13');
+  await page.goto('/#/admin');
+  await page.getByRole('button', { name: 'Ver painel de demonstração' }).click();
+  await page.getByRole('button', { name: 'Custos ADS', exact: true }).click();
+  await page.getByLabel('Atendente', { exact: true }).selectOption('demo');
+  await expect(page.getByLabel('Custo ADS (R$)')).toBeEnabled();
+  await page.getByLabel('Custo ADS (R$)').fill('2');
+  await page.getByRole('button', { name: 'Salvar custos do dia' }).click();
+  await expect(page.getByRole('status')).toContainText('Custos diários salvos');
+  await page.getByRole('link', { name: 'Portal do Atendente', exact: true }).click();
+  await expect(page.locator('.metric.balance')).toContainText('7,13');
   await expect(page.getByRole('button', { name: /Como acessar/i })).toHaveCount(0);
   await expect(page.locator('.demo-banner')).toHaveCount(0);
   await expect(page.getByLabel('Seu token de acesso')).toHaveCount(0);
@@ -87,6 +118,7 @@ test('administrador cria atendente, configura custos, troca e revoga o token', a
   await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');
   await page.getByRole('button', { name: 'Entrar na administração' }).click();
   await expect(page.getByRole('heading', { name: 'Visão administrativa' })).toBeVisible();
+  await page.getByRole('button', { name: 'Atendentes', exact: true }).click();
   await page.getByRole('button', { name: 'Novo atendente', exact: true }).click();
   const name = `Nova pessoa ${info.project.name}`;
   await page.getByLabel('Nome do atendente', { exact: true }).fill(name);
@@ -104,14 +136,13 @@ test('administrador cria atendente, configura custos, troca e revoga o token', a
   const response = await page.request.get('/api/portal', { headers: { Authorization: `Bearer ${oldToken}` } });
   expect(response.status()).toBe(200);
   const id = (await response.json()).profile.id;
-  await page.getByRole('button', { name: 'Taxas e custos' }).click();
+  await page.getByRole('button', { name: 'Taxas', exact: true }).click();
   const checkoutForm = page.locator('.admin-checkout').first();
-  await expect(checkoutForm.getByLabel('Faixa inicial até (R$)')).toHaveValue('1000.00');
+  await expect(checkoutForm.getByLabel('Faixa inicial até (R$)')).toHaveValue('');
   await checkoutForm.getByLabel('Taxa fixa (R$)', { exact: true }).fill('1,99');
-  await checkoutForm.getByLabel('Taxa acima da faixa (%)').fill('25');
-  await checkoutForm.getByLabel('Taxa fixa acima da faixa (R$)').fill('1,99');
   await checkoutForm.getByRole('button', { name: 'Salvar checkout', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Taxa do checkout atualizada');
+  await page.getByRole('button', { name: 'Custos ADS', exact: true }).click();
   await page.getByLabel('Atendente', { exact: true }).selectOption(id);
   await expect(page.getByLabel('Custo ADS (R$)')).toBeEnabled();
   await page.getByLabel('Custo ADS (R$)').fill('5');
@@ -139,26 +170,32 @@ test('administrador cria atendente, configura custos, troca e revoga o token', a
   await expect(page.getByLabel('Chave administrativa')).toHaveValue('');
 });
 
-test('checkout calcula automaticamente as duas faixas, inclusive o limite de R$ 1.000', async ({ page }) => {
+test('checkout aceita até R$ 1.000 e mostra também a tarifa do PIX manual', async ({ page }) => {
   await page.goto('/');
+  await expect(page.locator('.checkout-tariff')).toContainText('15,00%');
+  await expect(page.locator('.checkout-tariff')).not.toContainText('25,00%');
+  await expect(page.locator('.manual-pix-tariff')).toContainText('6,99%');
+  await expect(page.locator('.manual-pix-tariff')).toContainText('1,69');
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('1000');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('15,00%');
   await expect(page.getByLabel('Taxas da venda 1')).toContainText('151,99');
   await expect(page.getByLabel('Taxas da venda 1')).toContainText('848,01');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
   await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('1000,01');
   await page.getByLabel('Checkout venda 2', { exact: true }).selectOption('main');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('25,00%');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('251,99');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('748,02');
   await page.getByLabel('Print da venda 2', { exact: true }).setInputFiles(image);
+  await expect(page.getByLabel('Taxas da venda 2')).toContainText('valor máximo');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
-  await expect(page.locator('.metric').nth(1)).toContainText('403,98');
-  await expect(page.locator('.metric.balance')).toContainText('159,60');
+  await expect(page.getByRole('alert')).toContainText('valor máximo');
+  await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('999,99');
+  await expect(page.getByLabel('Taxas da venda 2')).toContainText('151,99');
+  await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
+  await approveDemoSales(page);
+  await expect(page.locator('.metric').nth(1)).toContainText('303,98');
+  await expect(page.locator('.metric.balance')).toContainText('169,60');
   await page.reload();
-  await expect(page.locator('.metric').nth(1)).toContainText('403,98');
+  await expect(page.locator('.metric').nth(1)).toContainText('303,98');
 });
 
 test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelho', async ({ page, context }, info) => {
@@ -197,10 +234,58 @@ test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelh
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('status')).toContainText(`${name}: 1 venda(s), total R$`);
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.body).join('\n'))).toContain(`${name}: 1 venda(s), total R$`);
+  await approveDemoSales(page);
   await page.getByRole('tab', { name: 'Ranking', exact: true }).click();
   await expect(page.locator('.ranking-row.mine img')).toBeVisible();
   await page.getByRole('tab', { name: 'Meus Dados e PIX' }).click();
   await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('admin confere prints, aprova, recusa e lança ADS com reflexo no portal do atendente', async ({ page }, info) => {
+  const token = `fixture_${info.project.name}_review_01234567890123456789`;
+  await page.goto(`/#/atendente/${token}`);
+  await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100');
+  await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('pix');
+  await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
+  await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
+  await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('200');
+  await page.getByLabel('Checkout venda 2', { exact: true }).selectOption('pix');
+  await page.getByLabel('Print da venda 2', { exact: true }).setInputFiles(image);
+  await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
+  await expect(page.locator('.pending-sales-notice')).toContainText('2 venda(s) em análise');
+  await expect(page.locator('.metric.balance')).toContainText('0,00');
+  const own = await (await page.request.get('/api/portal', { headers: { Authorization: `Bearer ${token}` } })).json();
+  await page.goto('/#/admin');
+  await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByLabel('Filtrar por atendente').selectOption(own.profile.id);
+  await expect(page.locator('.review-sale')).toHaveCount(2);
+  const first = page.locator('.review-sale').filter({ hasText: '100,00' });
+  await first.getByRole('button', { name: 'Ver comprovante' }).click();
+  await expect(page.getByRole('img', { name: 'Comprovante enviado pelo atendente' })).toBeVisible();
+  await page.getByRole('button', { name: 'Fechar janela' }).click();
+  await page.screenshot({ path: info.outputPath('admin-aprovar-vendas.png'), fullPage: true });
+  await first.getByRole('button', { name: 'Aprovar venda', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
+  await expect(page.locator('.review-sale')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Recusar venda', exact: true }).click();
+  await page.getByLabel('Motivo da recusa').fill('Comprovante não confere');
+  await page.getByRole('button', { name: 'Confirmar recusa' }).click();
+  await expect(page.locator('.review-sale')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Custos ADS', exact: true }).click();
+  await page.getByLabel('Atendente', { exact: true }).selectOption(own.profile.id);
+  await expect(page.getByLabel('Custo ADS (R$)')).toBeEnabled();
+  await page.getByLabel('Custo ADS (R$)').fill('2');
+  await page.getByRole('button', { name: 'Salvar custos do dia' }).click();
+  await expect(page.getByRole('status')).toContainText('Custos diários salvos');
+  await page.screenshot({ path: info.outputPath('admin-custos-ads.png'), fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.goto(`/#/atendente/${token}`);
+  await expect(page.locator('.metric.balance')).toContainText('7,13');
+  await expect(page.getByRole('cell', { name: 'Aprovada', exact: true })).toBeVisible();
+  await expect(page.getByText('Comprovante não confere', { exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.locator('.metric.balance')).toContainText('7,13');
 });

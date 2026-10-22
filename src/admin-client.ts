@@ -1,5 +1,7 @@
+import { demoAdminRequest } from './demo-admin.ts';
+import { readDemoData } from './demo-store.ts';
 import { ApiError } from './client.ts';
-import type { AdminDashboard, CheckoutTierInput, DailyCost, Invitation } from './domain.ts';
+import type { AdminDashboard, AdminSalesPage, CheckoutTierInput, DailyCost, Invitation, SaleStatus } from './domain.ts';
 
 export const adminUnavailable = !import.meta.env.VITE_API_URL && window.location.hostname.endsWith('.github.io');
 
@@ -7,9 +9,11 @@ export const adminUnavailable = !import.meta.env.VITE_API_URL && window.location
 export class AdminClient {
   private key: string;
   private base = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '/api';
-  constructor(key: string) { this.key = key; }
+  readonly isDemo: boolean;
+  constructor(key: string, isDemo = false) { this.key = key; this.isDemo = isDemo; }
   clear() { this.key = ''; }
   private async request<T>(path: string, method = 'GET', payload?: unknown): Promise<T> {
+    if (this.isDemo) return await demoAdminRequest(path, method, payload) as T;
     if (adminUnavailable) throw new ApiError('A administração estará disponível no endereço do servidor após a hospedagem da API.', 503);
     const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), 20_000);
     try {
@@ -24,6 +28,17 @@ export class AdminClient {
     } finally { window.clearTimeout(timer); }
   }
   dashboard() { return this.request<AdminDashboard>('/dashboard'); }
+  sales(status: SaleStatus | 'all', attendantId = '', page = 1) { return this.request<AdminSalesPage>(`/sales?${new URLSearchParams({ status, attendantId, page: String(page) })}`); }
+  reviewSale(id: string, status: 'approved' | 'rejected', note: string) { return this.request(`/sales/${id}`, 'PATCH', { status, note }); }
+  async receipt(id: string): Promise<string> {
+    if (this.isDemo) {
+      const receipt = readDemoData().receipts[id]; if (!receipt) throw new Error('Comprovante não encontrado.');
+      return `data:${receipt.mime};base64,${receipt.base64}`;
+    }
+    const response = await fetch(`${this.base}/admin/receipts/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${this.key}` } });
+    if (!response.ok) throw new ApiError('Não foi possível abrir o comprovante.', response.status);
+    return URL.createObjectURL(await response.blob());
+  }
   createAttendant(name: string, commission: string, token = '') { return this.request<Invitation>('/attendants', 'POST', { name, commission, ...(token.trim() ? { token: token.trim() } : {}) }); }
   rotateToken(id: string) { return this.request<Invitation>(`/attendants/${id}/token`, 'POST'); }
   setActive(id: string, active: boolean) { return this.request(`/attendants/${id}`, 'PATCH', { active }); }

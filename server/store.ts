@@ -2,8 +2,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
-import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validateSaleReview, validDate } from '../src/domain.ts';
+import type { AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
@@ -33,6 +33,11 @@ export class PortalStore {
     `);
     this.db.exec('BEGIN IMMEDIATE');
     try {
+      const saleColumns = new Set(this.db.prepare('PRAGMA table_info(sales)').all().map(column => column.name));
+      if (!saleColumns.has('status')) this.db.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected'))");
+      if (!saleColumns.has('review_note')) this.db.exec("ALTER TABLE sales ADD COLUMN review_note TEXT NOT NULL DEFAULT ''");
+      if (!saleColumns.has('reviewed_at')) this.db.exec('ALTER TABLE sales ADD COLUMN reviewed_at TEXT');
+      this.db.exec('CREATE INDEX IF NOT EXISTS sales_status_created ON sales(status, created_at)');
       const profileColumns = new Set(this.db.prepare('PRAGMA table_info(attendants)').all().map(column => column.name));
       if (!profileColumns.has('photo_url')) this.db.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
       if (!profileColumns.has('sale_alert_template')) this.db.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '✅ Venda de {valor} lançada com sucesso!'");
@@ -43,15 +48,20 @@ export class PortalStore {
       if (!columns.has('tier_above_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_above_cents INTEGER CHECK(tier_above_cents IS NULL OR tier_above_cents > 0)');
       if (!columns.has('tier_fee_bps')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_fee_bps INTEGER CHECK(tier_fee_bps IS NULL OR tier_fee_bps BETWEEN 0 AND 10000)');
       if (!columns.has('tier_fixed_fee_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_fixed_fee_cents INTEGER CHECK(tier_fixed_fee_cents IS NULL OR tier_fixed_fee_cents >= 0)');
+      if (!columns.has('max_amount_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN max_amount_cents INTEGER CHECK(max_amount_cents IS NULL OR max_amount_cents > 0)');
       this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY)');
       if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('manual-pix-tariff-v1')) {
         this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run(MANUAL_PIX_TARIFF.feeBps, MANUAL_PIX_TARIFF.fixedFeeCents, MANUAL_PIX_TARIFF.minAmountCents, 'pix');
         this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('manual-pix-tariff-v1');
       }
       if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-pix-tiered-tariff-v1')) {
-        const tariff = CHECKOUT_PIX_TARIFF, tier = tariff.higherTier;
-        this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run(tariff.feeBps, tariff.fixedFeeCents, tariff.minAmountCents, tier.aboveAmountCents, tier.feeBps, tier.fixedFeeCents, 'main');
+        const tariff = CHECKOUT_PIX_TARIFF;
+        this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run(tariff.feeBps, tariff.fixedFeeCents, tariff.minAmountCents, 'main');
         this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-pix-tiered-tariff-v1');
+      }
+      if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-maximum-1000-v1')) {
+        this.db.prepare('UPDATE checkouts SET max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?').run(CHECKOUT_PIX_TARIFF.maxAmountCents, 'main');
+        this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-maximum-1000-v1');
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
@@ -61,7 +71,34 @@ export class PortalStore {
     const rows = this.db.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all();
     const attendants = rows.map(row => ({ ...row, active: row.active === 1 })) as unknown as AdminAttendant[];
     const payouts = this.db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
-    return { attendants, payouts, checkouts: this.checkouts() };
+    const costs = this.db.prepare('SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name LIMIT 100').all() as unknown as AdminCost[];
+    const pendingSalesCount = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sales WHERE status = 'pending'").get()!.count);
+    const todayAdsCents = Number(this.db.prepare('SELECT COALESCE(SUM(ads_cents), 0) AS total FROM costs WHERE date = ?').get(businessToday())!.total);
+    return { attendants, payouts, checkouts: this.checkouts(), costs, pendingSalesCount, todayAdsCents };
+  }
+  adminSales(status = 'pending', attendantId = '', pageValue = '1'): AdminSalesPage {
+    if (!['pending', 'approved', 'rejected', 'all'].includes(status) || !/^\d{1,6}$/.test(pageValue) || Number(pageValue) < 1 || attendantId.length > 100) invalid('Filtro de vendas inválido.');
+    const page = Number(pageValue), pageSize = 50;
+    const where = "WHERE (? = 'all' OR s.status = ?) AND (? = '' OR s.attendant_id = ?)";
+    const args = [status, status, attendantId, attendantId];
+    const total = Number(this.db.prepare('SELECT COUNT(*) AS count FROM sales s ' + where).get(...args)!.count);
+    const sales = this.db.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.commission_bps AS commissionBps, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as unknown as AdminSale[];
+    return { sales, total, page, pageSize };
+  }
+  reviewSale(id: string, input: unknown) {
+    let review: ReturnType<typeof validateSaleReview>;
+    try { review = validateSaleReview(input); } catch (error) { return invalid((error as Error).message); }
+    const result = this.db.prepare("UPDATE sales SET status = ?, review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(review.status, review.note, new Date().toISOString(), id);
+    if (!result.changes) {
+      if (!this.db.prepare('SELECT id FROM sales WHERE id = ?').get(id)) throw new PortalError(404, 'Venda não encontrada.');
+      throw new PortalError(409, 'Esta venda já foi analisada. Atualize a lista para conferir a decisão.');
+    }
+    return { saved: true };
+  }
+  adminReceipt(id: string) {
+    const row = this.db.prepare('SELECT mime, bytes FROM receipts WHERE id = ?').get(id);
+    if (!row) throw new PortalError(404, 'Comprovante não encontrado.');
+    return { mime: String(row.mime), bytes: row.bytes as Uint8Array };
   }
   adminCreateAttendant(input: unknown): Invitation {
     const data = this.adminFields(input);
@@ -129,6 +166,8 @@ export class PortalStore {
         }
       }
       if (higherTier && higherTier.aboveAmountCents < minimum) throw new Error('O limite da faixa inicial deve ser maior ou igual ao mínimo por venda.');
+      if (current.maxAmountCents !== null && minimum > current.maxAmountCents) throw new Error('O mínimo não pode ultrapassar o limite de recebimento do checkout.');
+      if (higherTier && current.maxAmountCents !== null && higherTier.aboveAmountCents >= current.maxAmountCents) throw new Error('A faixa superior deve começar abaixo do limite de recebimento do checkout.');
     } catch (error) { return invalid((error as Error).message); }
     this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id);
   }
@@ -154,9 +193,9 @@ export class PortalStore {
     return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
   checkouts(): Checkout[] {
-    return this.db.prepare('SELECT * FROM checkouts ORDER BY rowid').all().map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
+    return this.db.prepare('SELECT * FROM checkouts ORDER BY rowid').all().map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }
-  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
+  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
   costs(auth: Authenticated): DailyCost[] { return this.db.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id) as unknown as DailyCost[]; }
   payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }
   portal(auth: Authenticated, period: Period = 'today'): Portal {
@@ -211,7 +250,7 @@ export class PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID();
         this.db.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        this.db.prepare('INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt);
+        this.db.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt);
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -225,7 +264,7 @@ export class PortalStore {
   ranking(auth: Authenticated, period: Period): RankingEntry[] {
     const attendants = this.db.prepare('SELECT id, name, photo_url FROM attendants WHERE active = 1').all();
     return attendants.map(attendant => {
-      const sales = this.sales({ id: String(attendant.id) }).filter(sale => inPeriod(sale.date, period, businessToday()));
+      const sales = this.sales({ id: String(attendant.id) }).filter(sale => sale.status === 'approved').filter(sale => inPeriod(sale.date, period, businessToday()));
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
     }).filter(item => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name));
   }

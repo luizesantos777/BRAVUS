@@ -1267,9 +1267,8 @@ var PushService = class {
     await this.sendTo({ role: "attendant", id: auth.id }, { title: "BRAVUS Brasil \xB7 Venda registrada", body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
   }
   async notifyAdminSale(scope, auth, batch) {
-    const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    const detail = batch.sales.length === 1 ? `venda de ${money(amount)}` : `${batch.sales.length} vendas, total de ${money(amount)}`;
-    await this.sendTo({ role: "admin", id: scope }, { title: "BRAVUS Brasil \xB7 Nova venda", body: `${profile.name}: ${detail}. Aguardando sua aprova\xE7\xE3o.`, target: "admin", tag: `bravus-admin-venda-${randomUUID3()}` });
+    const amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
+    await this.sendTo({ role: "admin", id: scope }, { title: "Nova venda aprovada", body: `Voc\xEA recebeu ${money(amount)}`, target: "admin", tag: `bravus-admin-venda-${randomUUID3()}` });
   }
   async sendTo(target, message) {
     const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);

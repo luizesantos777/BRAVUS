@@ -293,6 +293,9 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   expect(manifestHref).toContain('/admin.webmanifest');
   const response = await page.request.get(manifestHref!); expect(response.headers()['content-type']).toContain('application/manifest+json');
   const manifest = await response.json(); expect(new URL(manifest.start_url, manifestHref!).hash).toBe('#/admin'); expect(manifest.display).toBe('standalone');
+  expect(manifest.name).toBe('FireBot'); expect(manifest.short_name).toBe('FireBot');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'FireBot');
+  await expect(page).toHaveTitle('FireBot — Administração BRAVUS');
   expect(JSON.stringify(manifest)).not.toContain(adminKey);
   for (const icon of manifest.icons) {
     const result = await page.request.get(new URL(icon.src, manifestHref!).href), png = await result.body();
@@ -300,9 +303,12 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
     expect(`${png.readUInt32BE(16)}x${png.readUInt32BE(20)}`).toBe(icon.sizes);
   }
   const appleHref = await page.locator('link[rel="apple-touch-icon"]').getAttribute('href');
+  expect(appleHref).toContain('/firebot-apple-touch-icon.png');
   const appleIcon = await (await page.request.get(appleHref!)).body(); expect(appleIcon.readUInt32BE(16)).toBe(180);
   await page.screenshot({ path: info.outputPath('iphone-instalar-alertas.png'), fullPage: true });
   await page.goto(`/?aba=perfil#/atendente/${token}`); await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'BRAVUS');
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /\/apple-touch-icon\.png$/);
   const personalManifest = await (await page.request.get('/manifest.webmanifest')).json();
   // Omitting start_url preserves the document's individual link rather than opening the public demo.
   expect(personalManifest.start_url).toBeUndefined(); expect(JSON.stringify(personalManifest)).not.toContain(token);
@@ -411,6 +417,12 @@ test('notificações com permissão liberada ativam na API e continuam ativas ap
 });
 test('administrador ativa alertas no celular sem perder a inscrição ao desativar o portal pessoal', async ({ page, context }, info) => {
   const adminKey = 'fixture_browser_admin_012345678901234567890123456789', token = `fixture_${info.project.name}_owner_notify_01234567890123456789`;
+  await page.addInitScript(() => {
+    const update = ServiceWorkerRegistration.prototype.update;
+    (window as any).fixtureWorkerUpdates = 0;
+    ServiceWorkerRegistration.prototype.update = function () { (window as any).fixtureWorkerUpdates++; return update.call(this); };
+    Object.defineProperty(Notification, 'requestPermission', { value: () => { throw new Error('Atualizar o alerta não deve pedir permissão novamente.'); } });
+  });
   await context.grantPermissions(['notifications']); await mockBrowserSubscription(page, `admin-${info.project.name}`);
   async function login() {
     await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
@@ -433,6 +445,8 @@ test('administrador ativa alertas no celular sem perder a inscrição ao desativ
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');
   expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(1);
   await login(); await expect(page.locator('.notification-badge')).toHaveText('Ativado');
+  await expect.poll(() => page.evaluate(() => (window as any).fixtureWorkerUpdates)).toBeGreaterThan(0);
+  expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(1);
   await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');
   expect((await (await page.request.get('/api/admin/push/config', { headers })).json()).subscriptionIds).toHaveLength(0);

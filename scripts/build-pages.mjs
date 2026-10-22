@@ -23,7 +23,7 @@ await writeFile(path.join(root, 'docs/index.html'), html);
 await writeFile(path.join(root, 'docs/.nojekyll'), '');
 await writeFile(path.join(root, 'docs/notifications-worker.js'), await readFile(path.join(dist, 'notifications-worker.js')));
 await writeFile(path.join(root, 'docs/favicon.svg'), favicon);
-for (const filename of ['manifest.webmanifest', 'admin.webmanifest', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png']) {
+for (const filename of ['manifest.webmanifest', 'admin.webmanifest', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'firebot-apple-touch-icon.png', 'firebot-icon-192.png', 'firebot-icon-512.png']) {
   await writeFile(path.join(root, 'docs', filename), await readFile(path.join(dist, filename)));
 }
 console.log('GitHub Pages build ready in docs/: self-contained HTML and .nojekyll.');

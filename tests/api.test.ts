@@ -396,8 +396,8 @@ test('administrador recebe novas vendas de todos os atendentes uma vez, ainda em
   await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-attendant')) });
   assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 2);
   const ownerAlerts = () => deliveries.map(item => JSON.parse(item.payload)).filter(item => item.target === 'admin');
-  assert.equal(ownerAlerts().length, 1); assert.equal(ownerAlerts()[0].title, 'BRAVUS Brasil · Nova venda');
-  assert.match(ownerAlerts()[0].body, /Ana Teste.*300,00.*Aguardando sua aprovação/);
+  assert.equal(ownerAlerts().length, 1); assert.equal(ownerAlerts()[0].title, 'Nova venda aprovada');
+  assert.match(ownerAlerts()[0].body, /^Você recebeu R\$\s300,00$/);
   for (const secret of [tokenA, tokenB, adminKey, image.base64]) assert.equal(JSON.stringify(ownerAlerts()).includes(secret), false);
   const portal = await (await call('/api/portal')).json(); assert.equal(portal.sales[0].status, 'pending'); assert.equal(portal.finance.availableCents, 0);
   await submit(); assert.equal(deliveries.length, 2);
@@ -406,8 +406,14 @@ test('administrador recebe novas vendas de todos os atendentes uma vez, ainda em
   const invalid = batch(); invalid.sales[0].amount = '-10'; assert.equal((await submit(invalid, 'fixture_invalid_owner_sale')).status, 400); assert.equal(deliveries.length, 2);
   const another = batch(); another.sales[0].amount = '200,00';
   assert.equal((await submit(another, 'fixture_other_owner_sale', tokenB)).status, 200);
-  assert.equal(deliveries.length, 3); assert.equal(ownerAlerts().length, 2); assert.match(ownerAlerts()[1].body, /Bruno Teste.*200,00/);
+  assert.equal(deliveries.length, 3); assert.equal(ownerAlerts().length, 2); assert.match(ownerAlerts()[1].body, /^Você recebeu R\$\s200,00$/);
   assert.notEqual(ownerAlerts()[0].tag, ownerAlerts()[1].tag);
+  const example = batch(); example.sales[0].amount = '149,90';
+  await submit(example, 'fixture_notification_example');
+  assert.match(ownerAlerts()[2].body, /^Você recebeu R\$\s149,90$/);
+  const multiple = batch(); multiple.sales = [{ ...multiple.sales[0], amount: '100' }, { ...multiple.sales[0], amount: '49,90' }];
+  await submit(multiple, 'fixture_notification_batch');
+  assert.match(ownerAlerts()[3].body, /^Você recebeu R\$\s149,90$/);
   const currentScope = createHash('sha256').update(adminKey).digest('hex'), differentScope = createHash('sha256').update('fixture_rotated_admin_012345678901234567890123456789').digest('hex');
   assert.equal((await store.sql.prepare('SELECT COUNT(*) AS count FROM admin_push_subscriptions WHERE admin_scope = ?').get(currentScope))!.count, 1);
   let outdatedDeliveries = 0;
@@ -429,8 +435,9 @@ test('notificação administrativa abre o painel e mantém os alertas pessoais n
   let focused = 0, pending: Promise<unknown> = Promise.resolve();
   const personal = { url: 'https://portal.example/#/atendente/fixture-token', focus: async () => { focused++; } };
   runInNewContext(readFileSync('public/notifications-worker.js', 'utf8'), { URL, self: { addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler; }, registration: { scope: 'https://portal.example/', showNotification: async (title: string, options: any) => { shown.push({ title, options }); } }, clients: { matchAll: async () => [personal], openWindow: async (url: string) => { opened.push(url); } } } });
-  handlers.push({ data: { json: () => ({ target: 'admin', body: 'Ana: venda de R$ 100,00 aguardando aprovação.', tag: 'bravus-admin-venda-fixture' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
-  assert.equal(shown[0].title, 'BRAVUS Brasil · Nova venda'); assert.equal(shown[0].options.data.target, 'admin');
+  handlers.push({ data: { json: () => ({ target: 'admin', body: 'Você recebeu R$ 149,90', tag: 'bravus-admin-venda-fixture' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.equal(shown[0].title, 'Nova venda aprovada'); assert.equal(shown[0].options.body, 'Você recebeu R$ 149,90'); assert.equal(shown[0].options.data.target, 'admin');
+  assert.equal(shown[0].options.icon, 'https://portal.example/firebot-icon-192.png'); assert.equal(shown[0].options.badge, 'https://portal.example/firebot-icon-192.png');
   handlers.notificationclick({ notification: { ...shown[0].options, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
   handlers.notificationclick({ notification: { data: { target: 'attendant' }, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;

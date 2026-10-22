@@ -14,7 +14,7 @@ export function notificationUnsupportedMessage() {
   if (!window.isSecureContext) return 'Abra o BRAVUS pelo endereço HTTPS para ativar as notificações.';
   return isAppleMobile() && isInstalledApp() ? 'O BRAVUS está aberto como app, mas o iPhone não disponibilizou o serviço de notificações. Toque em Verificar notificações para conferir o impedimento.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
 }
-function blockedMessage() { return isAppleMobile() ? 'No iPhone, abra Ajustes > Notificações > BRAVUS e ative Permitir Notificações. Depois volte ao painel.' : 'As notificações estão bloqueadas. Permita as notificações nas configurações deste site no navegador e volte ao painel.'; }
+function blockedMessage() { return isAppleMobile() ? 'No iPhone, abra Ajustes > Notificações, selecione o app instalado e ative Permitir Notificações. Depois volte ao painel.' : 'As notificações estão bloqueadas. Permita as notificações nas configurações deste site no navegador e volte ao painel.'; }
 export function notificationErrorMessage(cause: unknown) {
   if (cause instanceof DOMException) {
     if (cause.name === 'NotAllowedError') return typeof window.Notification !== 'undefined' && Notification.permission === 'denied' ? blockedMessage() : 'O aparelho recusou a ativação. Toque em Verificar notificações para conferir a permissão e o serviço neste aparelho.';

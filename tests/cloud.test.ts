@@ -28,8 +28,14 @@ test('Vercel sem configuração responde 503 em JSON e nunca cria um banco tempo
   let opened = 0;
   const call = await serve(t, createVercelHandler({ environment: () => ({}), openStore: async () => { opened++; throw new Error(); } }));
   const response = await call('/api/health');
-  assert.equal(response.status, 503); assert.equal((await response.json()).status, 'configuration_required'); assert.equal(opened, 0);
+  const body = await response.json();
+  assert.equal(response.status, 503); assert.equal(body.status, 'configuration_required'); assert.equal(opened, 0);
+  assert.deepEqual(body.missingVariables, ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'BRAVUS_ADMIN_KEY']);
   assert.equal((await call('/api/admin/dashboard', adminKey)).status, 503);
+  const partial = await serve(t, createVercelHandler({ environment: () => ({ ...env, BRAVUS_ADMIN_KEY: '' }), openStore: async () => { opened++; throw new Error(); } }));
+  const partialResponse = await partial('/api/health'), partialText = await partialResponse.text();
+  assert.deepEqual(JSON.parse(partialText).missingVariables, ['BRAVUS_ADMIN_KEY']);
+  assert.equal(partialText.includes(env.TURSO_AUTH_TOKEN), false); assert.equal(partialText.includes(env.TURSO_DATABASE_URL), false); assert.equal(opened, 0);
 });
 test('Vercel recusa configuração insegura sem revelar credenciais ou cair para SQLite local', async t => {
   const call = await serve(t, createVercelHandler({ environment: () => ({ ...env, TURSO_DATABASE_URL: 'file:/tmp/invalid.sqlite' }) }));

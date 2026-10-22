@@ -1049,9 +1049,11 @@ function createVercelHandler(options = {}) {
         response.end();
         return;
       }
-      const env = environment(), missing = !env.TURSO_DATABASE_URL || !env.TURSO_AUTH_TOKEN || !env.BRAVUS_ADMIN_KEY;
+      const env = environment();
+      const missingVariables = ["TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "BRAVUS_ADMIN_KEY"].filter((name) => !env[name]);
+      const missing = missingVariables.length > 0;
       response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Retry-After": "30" });
-      response.end(JSON.stringify({ status: missing ? "configuration_required" : "unavailable", error: missing ? "A API precisa da conex\xE3o com o banco e da chave administrativa configuradas na hospedagem." : "O servi\xE7o de atendentes n\xE3o conseguiu acessar sua configura\xE7\xE3o ou o banco de dados. Tente novamente em instantes." }));
+      response.end(JSON.stringify({ status: missing ? "configuration_required" : "unavailable", ...missing ? { missingVariables } : {}, error: missing ? "A API precisa da conex\xE3o com o banco e da chave administrativa configuradas na hospedagem." : "O servi\xE7o de atendentes n\xE3o conseguiu acessar sua configura\xE7\xE3o ou o banco de dados. Tente novamente em instantes." }));
     }
   };
 }

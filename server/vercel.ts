@@ -46,9 +46,11 @@ export function createVercelHandler(options: Options = {}) {
       await handler(request, response);
     } catch {
       if (response.headersSent) { response.end(); return; }
-      const env = environment(), missing = !env.TURSO_DATABASE_URL || !env.TURSO_AUTH_TOKEN || !env.BRAVUS_ADMIN_KEY;
+      const env = environment();
+      const missingVariables = ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'BRAVUS_ADMIN_KEY'].filter(name => !env[name]);
+      const missing = missingVariables.length > 0;
       response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Retry-After': '30' });
-      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', error: missing ? 'A API precisa da conexão com o banco e da chave administrativa configuradas na hospedagem.' : 'O serviço de atendentes não conseguiu acessar sua configuração ou o banco de dados. Tente novamente em instantes.' }));
+      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', ...(missing ? { missingVariables } : {}), error: missing ? 'A API precisa da conexão com o banco e da chave administrativa configuradas na hospedagem.' : 'O serviço de atendentes não conseguiu acessar sua configuração ou o banco de dados. Tente novamente em instantes.' }));
     }
   };
 }

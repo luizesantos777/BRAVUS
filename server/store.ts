@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, splitGatewayFee, validateProfile, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
@@ -39,8 +39,13 @@ export class PortalStore {
       if (!saleColumns.has('reviewed_at')) this.db.exec('ALTER TABLE sales ADD COLUMN reviewed_at TEXT');
       this.db.exec('CREATE INDEX IF NOT EXISTS sales_status_created ON sales(status, created_at)');
       if (!saleColumns.has('commission_mode')) this.db.exec("ALTER TABLE sales ADD COLUMN commission_mode TEXT NOT NULL DEFAULT 'net-share' CHECK(commission_mode IN ('net-share','gross-share-less-fees'))");
+      if (!saleColumns.has('attendant_fee_cents')) this.db.exec('ALTER TABLE sales ADD COLUMN attendant_fee_cents INTEGER CHECK(attendant_fee_cents IS NULL OR attendant_fee_cents >= 0 AND attendant_fee_cents <= fee_cents)');
       const payoutColumns = new Set(this.db.prepare('PRAGMA table_info(payouts)').all().map(column => column.name));
       if (!payoutColumns.has('withdrawal_fee_cents')) this.db.exec('ALTER TABLE payouts ADD COLUMN withdrawal_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(withdrawal_fee_cents >= 0 AND withdrawal_fee_cents < amount_cents)');
+      if (!payoutColumns.has('gateway_fee_cents')) {
+        this.db.exec('ALTER TABLE payouts ADD COLUMN gateway_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(gateway_fee_cents >= 0)');
+        this.db.exec("UPDATE payouts SET gateway_fee_cents = withdrawal_fee_cents WHERE status = 'paid'");
+      }
       const profileColumns = new Set(this.db.prepare('PRAGMA table_info(attendants)').all().map(column => column.name));
       if (!profileColumns.has('photo_url')) this.db.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
       if (!profileColumns.has('sale_alert_template')) this.db.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '✅ Venda de {valor} lançada com sucesso!'");
@@ -81,7 +86,7 @@ export class PortalStore {
   adminDashboard(): AdminDashboard {
     const rows = this.db.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all();
     const attendants = rows.map(row => ({ ...row, active: row.active === 1 })) as unknown as AdminAttendant[];
-    const payouts = this.db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
+    const payouts = this.db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
     const costs = this.db.prepare('SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name LIMIT 100').all() as unknown as AdminCost[];
     const pendingSalesCount = Number(this.db.prepare("SELECT COUNT(*) AS count FROM sales WHERE status = 'pending'").get()!.count);
     const todayAdsCents = Number(this.db.prepare('SELECT COALESCE(SUM(ads_cents), 0) AS total FROM costs WHERE date = ?').get(businessToday())!.total);
@@ -93,7 +98,7 @@ export class PortalStore {
     const where = "WHERE (? = 'all' OR s.status = ?) AND (? = '' OR s.attendant_id = ?)";
     const args = [status, status, attendantId, attendantId];
     const total = Number(this.db.prepare('SELECT COUNT(*) AS count FROM sales s ' + where).get(...args)!.count);
-    const sales = this.db.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as unknown as AdminSale[];
+    const sales = this.db.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize) as unknown as AdminSale[];
     return { sales, total, page, pageSize };
   }
   reviewSale(id: string, input: unknown) {
@@ -206,9 +211,9 @@ export class PortalStore {
   checkouts(): Checkout[] {
     return this.db.prepare('SELECT * FROM checkouts ORDER BY rowid').all().map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }
-  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
+  sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
   costs(auth: Authenticated): DailyCost[] { return this.db.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id) as unknown as DailyCost[]; }
-  payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }
+  payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }
   portal(auth: Authenticated, period: Period = 'today'): Portal {
     const profile = this.profile(auth), sales = this.sales(auth), costs = this.costs(auth), payouts = this.payouts(auth), today = businessToday();
     return { profile, checkouts: this.checkouts(), sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
@@ -261,7 +266,7 @@ export class PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID();
         this.db.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        this.db.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees')").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt);
+        this.db.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, splitGatewayFee(row.feeCents));
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
@@ -289,9 +294,9 @@ export class PortalStore {
       if (!profile.pixKey || !profile.pixOwner) invalid('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
       try { validatePayoutAmount(amountCents, portal.finance.availableCents); } catch (error) { return invalid((error as Error).message); }
       const id = randomUUID(), requestedAt = new Date().toISOString();
-      this.db.prepare('INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, auth.id, amountCents, 'pending', requestedAt, null, '', profile.pixType, profile.pixKey, profile.pixOwner, 0);
+      this.db.prepare('INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, auth.id, amountCents, 'pending', requestedAt, null, '', profile.pixType, profile.pixKey, profile.pixOwner, 0, 0);
       this.db.exec('COMMIT');
-      return { id, amountCents, withdrawalFeeCents: 0, status: 'pending', requestedAt, paidAt: null, note: '' };
+      return { id, amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: 'pending', requestedAt, paidAt: null, note: '' };
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
   setCosts(attendantId: string, date: string, adsCents: number, withdrawalFeeCents: number) {
@@ -302,9 +307,9 @@ export class PortalStore {
     if (!['paid', 'cancelled'].includes(status) || note.length > 500) invalid('Status ou observação inválidos.');
     if (status === 'paid') {
       const pending = this.db.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id);
-      if (pending && Number(pending.amount_cents) <= GATEWAY_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a taxa de ${GATEWAY_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
+      if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
     }
-    const result = this.db.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
+    const result = this.db.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
     if (!result.changes) invalid('Repasse pendente não encontrado.');
   }
 }

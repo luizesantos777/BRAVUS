@@ -9,16 +9,16 @@ export interface Profile { id: string; name: string; email: string; phone: strin
 export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
 export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
-export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null }
+export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; attendantFeeCents?: number | null; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null }
 export interface AdminSale extends Sale { attendantId: string; attendantName: string }
 export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
 export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
-export interface Payout { id: string; amountCents: number; withdrawalFeeCents?: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
+export interface Payout { id: string; amountCents: number; withdrawalFeeCents?: number; gatewayFeeCents?: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
 export interface ReceiptInput { name: string; mime: string; base64: string }
 export interface SaleInput { amount: string; checkoutId: string; time: string; note: string; receipt: ReceiptInput | null }
 export interface SaleBatch { date: string; sales: SaleInput[] }
-export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
+export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
 export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number }
@@ -30,6 +30,8 @@ export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;
 export const GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
+export const ATTENDANT_GATEWAY_FEE_BPS = 5000;
+export const ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
 export const DEMO_KEY = 'bravus.attendant.demo.v1';
 export const DEFAULT_SALE_ALERT = '✅ Venda de {valor} lançada com sucesso!';
 export const MAX_AVATAR_BYTES = 256 * 1024;
@@ -61,17 +63,19 @@ export function validateAvatar(value: string): string {
   return value;
 }
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
-/** Historical sales keep their original formula; new sales deduct the full transaction fee from the gross share. */
-export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'commissionBps' | 'commissionMode'>): number {
-  if (sale.commissionMode === 'gross-share-less-fees') return sale.amountCents - Math.floor((sale.amountCents * (10000 - sale.commissionBps) + 5000) / 10000) - sale.feeCents;
+export function splitGatewayFee(feeCents: number): number { return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5000) / 10000); }
+export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }
+/** Every sale keeps its own formula and allocated fee; missing allocations preserve historical full-fee records. */
+export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'attendantFeeCents' | 'commissionBps' | 'commissionMode'>): number {
+  if (sale.commissionMode === 'gross-share-less-fees') return sale.amountCents - Math.floor((sale.amountCents * (10000 - sale.commissionBps) + 5000) / 10000) - attendantSaleFee(sale);
   return Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000);
 }
 export function payoutNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents'>): number { return payout.amountCents - (payout.withdrawalFeeCents ?? 0); }
 export function payoutExpectedNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents' | 'status'>): number {
-  return payout.status === 'pending' ? payout.amountCents - GATEWAY_WITHDRAWAL_FEE_CENTS : payoutNet(payout);
+  return payout.status === 'pending' ? payout.amountCents - ATTENDANT_WITHDRAWAL_FEE_CENTS : payoutNet(payout);
 }
 export function validatePayoutAmount(amountCents: number, availableCents: number): void {
-  if (amountCents <= GATEWAY_WITHDRAWAL_FEE_CENTS) throw new Error(`O saque deve ser maior que a taxa de ${money(GATEWAY_WITHDRAWAL_FEE_CENTS)} do gateway.`);
+  if (amountCents <= ATTENDANT_WITHDRAWAL_FEE_CENTS) throw new Error(`O saque deve ser maior que sua parte da taxa: ${money(ATTENDANT_WITHDRAWAL_FEE_CENTS)}.`);
   if (amountCents > availableCents) throw new Error('O valor ultrapassa seu saldo disponível para repasse.');
 }
 export function checkoutFee(amountCents: number, checkout: Checkout): number {
@@ -149,11 +153,12 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   const filteredCosts = costs.filter(cost => inPeriod(cost.date, period, today));
   const pendingPayoutCents = payouts.filter(payout => payout.status === 'pending').reduce((sum, payout) => sum + payout.amountCents, 0);
   const paidPayoutCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payout.amountCents, 0);
-  const transactionFeeCents = filtered.reduce((sum, sale) => sum + sale.feeCents, 0);
+  const transactionFeeCents = filtered.reduce((sum, sale) => sum + attendantSaleFee(sale), 0);
+  const gatewayFeeCents = filtered.reduce((sum, sale) => sum + sale.feeCents, 0), businessGatewayFeeCents = gatewayFeeCents - transactionFeeCents;
   const withdrawalFeeCents = filteredCosts.reduce((sum, cost) => sum + cost.withdrawalFeeCents, 0) + payouts.filter(payout => payout.status === 'paid' && inPeriod(businessToday(new Date(payout.paidAt ?? payout.requestedAt)), period, today)).reduce((sum, payout) => sum + (payout.withdrawalFeeCents ?? 0), 0);
   const businessShareCents = filtered.reduce((sum, sale) => sum + sale.amountCents - sale.feeCents - saleEarnings(sale), 0);
   const paidPayoutNetCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payoutNet(payout), 0);
-  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
+  return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, gatewayFeeCents, businessGatewayFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
 }
 export function validateSaleReview(input: unknown): { status: 'approved' | 'rejected'; note: string } {
   if (!input || typeof input !== 'object') throw new Error('Informe a decisão sobre a venda.');

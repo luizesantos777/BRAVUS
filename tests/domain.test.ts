@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, payoutExpectedNet, payoutNet, renderSaleAlert, saleEarnings, validateAvatar, validatePayoutAmount, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, attendantSaleFee, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, payoutExpectedNet, payoutNet, renderSaleAlert, saleEarnings, splitGatewayFee, validateAvatar, validatePayoutAmount, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
 const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z', status: 'approved', reviewNote: '', reviewedAt: null });
@@ -93,7 +93,7 @@ test('somente vendas aprovadas liberam comissão; pendentes e recusadas não ent
   assert.equal(summary.pendingSalesCount, 1); assert.equal(summary.pendingSalesCents, 20000); assert.equal(summary.rejectedSalesCount, 1);
 });
 
-test('novas vendas descontam 50% do bruto e a taxa inteira antes do valor do atendente', () => {
+test('vendas históricas preservam o desconto de 50% do bruto e a taxa inteira', () => {
   for (const [checkoutId, amountCents, expected] of [['main', 10000, 3301], ['main', 19700, 6696], ['main', 100000, 34801], ['pix', 10000, 4132], ['main', 10001, 3301]] as const) {
     const feeCents = checkoutFee(amountCents, demoCheckouts.find(checkout => checkout.id === checkoutId)!);
     const item = { ...sale(amountCents, '2026-10-21', feeCents), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
@@ -108,19 +108,19 @@ test('novas vendas descontam 50% do bruto e a taxa inteira antes do valor do ate
   assert.equal(saleEarnings(tiny), -199);
 });
 
-test('saque só cobra R$ 5 no pagamento; pedido pendente ou cancelado não gera taxa', () => {
+test('saque só cobra a metade de R$ 2,50 no pagamento; pedido pendente ou cancelado não gera taxa', () => {
   const item = { ...sale(10000, '2026-10-21', 1699), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
   const payout = { id: 'payout', amountCents: 3301, withdrawalFeeCents: 0, status: 'pending' as const, requestedAt: '2026-10-21T12:00:00Z', paidAt: null, note: '' };
-  assert.equal(payoutExpectedNet(payout), 2801); assert.equal(payout.withdrawalFeeCents, 0);
+  assert.equal(payoutExpectedNet(payout), 3051); assert.equal(payout.withdrawalFeeCents, 0);
   const pending = calculateFinance([item], [], [payout], 'today', item.date);
   assert.equal(pending.availableCents, 0); assert.equal(pending.feeCents, 1699); assert.equal(pending.withdrawalFeeCents, 0); assert.equal(pending.pendingPayoutCents, 3301);
-  const paid = calculateFinance([item], [], [{ ...payout, status: 'paid', withdrawalFeeCents: 500, paidAt: '2026-10-21T15:00:00Z' }], 'today', item.date);
-  assert.equal(paid.availableCents, 0); assert.equal(paid.withdrawalFeeCents, 500); assert.equal(paid.paidPayoutNetCents, 2801);
-  const cancelled = calculateFinance([item], [], [{ ...payout, status: 'cancelled', withdrawalFeeCents: 500 }], 'today', item.date);
+  const paid = calculateFinance([item], [], [{ ...payout, status: 'paid', withdrawalFeeCents: 250, paidAt: '2026-10-21T15:00:00Z' }], 'today', item.date);
+  assert.equal(paid.availableCents, 0); assert.equal(paid.withdrawalFeeCents, 250); assert.equal(paid.paidPayoutNetCents, 3051);
+  const cancelled = calculateFinance([item], [], [{ ...payout, status: 'cancelled', withdrawalFeeCents: 250 }], 'today', item.date);
   assert.equal(cancelled.availableCents, 3301); assert.equal(cancelled.feeCents, 1699);
-  assert.throws(() => validatePayoutAmount(500, 3301), /taxa/);
+  assert.throws(() => validatePayoutAmount(250, 3301), /taxa/);
   assert.throws(() => validatePayoutAmount(3302, 3301), /saldo/);
-  assert.doesNotThrow(() => validatePayoutAmount(501, 3301));
+  assert.doesNotThrow(() => validatePayoutAmount(251, 3301));
   assert.equal(payoutNet({ amountCents: 2000 }), 2000);
 });
 
@@ -130,4 +130,22 @@ test('taxa de saque entra na data do pagamento em São Paulo, em vez da solicita
   const yesterday = calculateFinance([sale(30000)], [], [payout], 'yesterday', '2026-10-22');
   assert.equal(today.withdrawalFeeCents, 500); assert.equal(yesterday.withdrawalFeeCents, 0);
   assert.equal(today.availableCents, 2000); assert.equal(yesterday.availableCents, 2000);
+});
+
+test('novos lançamentos dividem a taxa total do gateway em 50% para cada parte por venda', () => {
+  for (const [checkoutId, amountCents, expectedFee, expectedEarnings] of [['main', 10000, 850, 4150], ['main', 19700, 1577, 8273], ['main', 100000, 7600, 42400], ['pix', 10000, 434, 4566], ['main', 10001, 850, 4150]] as const) {
+    const feeCents = checkoutFee(amountCents, demoCheckouts.find(checkout => checkout.id === checkoutId)!);
+    const item = { ...sale(amountCents, '2026-10-21', feeCents), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const, attendantFeeCents: splitGatewayFee(feeCents) };
+    assert.equal(attendantSaleFee(item), expectedFee); assert.equal(saleEarnings(item), expectedEarnings);
+    const finance = calculateFinance([item], [], [], 'all', item.date);
+    assert.equal(finance.feeCents, expectedFee); assert.equal(finance.gatewayFeeCents, feeCents);
+    assert.equal(finance.businessGatewayFeeCents + finance.transactionFeeCents, feeCents);
+    assert.equal(finance.grossCents, finance.businessShareCents + finance.gatewayFeeCents + finance.commissionCents);
+  }
+  // Round the attendant's half per transaction, with the remaining cents assigned to BRAVUS.
+  assert.equal(splitGatewayFee(239) * 2, 240); assert.equal(splitGatewayFee(478), 239);
+  assert.equal(splitGatewayFee(1), 1); assert.equal(splitGatewayFee(0), 0);
+  const historical = { ...sale(10000, '2026-10-21', 1699), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
+  assert.equal(saleEarnings(historical), 3301);
+  assert.equal(saleEarnings({ ...historical, attendantFeeCents: 850 }), 4150);
 });

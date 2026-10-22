@@ -15,7 +15,7 @@
 .sale-status.pending { color: #e6cb75; border-color: #66572c; background: #302a15; }
 .sale-status.approved { color: #b2d5a4; border-color: #456739; background: #20331b; }
 .sale-status.rejected { color: #f5abb1; border-color: #723d45; background: #331c21; }
-.review-values { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin: 22px 0 17px; }
+.review-values { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin: 22px 0 17px; }
 .review-values > div { min-width: 0; }
 .review-values dt { color: #a3b294; font-size: 10px; line-height: 1.7; }
 .review-values dd { color: #e8d797; font-size: 16px; margin: 6px 0 0; font-weight: 700; overflow-wrap: anywhere; }

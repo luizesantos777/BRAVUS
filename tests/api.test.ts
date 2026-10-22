@@ -84,9 +84,9 @@ test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador'
   assert.equal((await submit(payload)).status, 200);
   const portal = await (await call('/api/portal')).json();
   assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents), [239, 239]);
-  assert.equal(portal.finance.feeCents, 478); assert.equal(portal.finance.availableCents, -278);
+  assert.equal(portal.finance.feeCents, 240); assert.equal(portal.finance.availableCents, -40);
   assert.equal((await submit(payload)).status, 200);
-  assert.equal((await (await call('/api/portal')).json()).finance.feeCents, 478);
+  assert.equal((await (await call('/api/portal')).json()).finance.feeCents, 240);
   const invalid = batch(); invalid.sales[0].checkoutId = 'pix'; invalid.sales[0].amount = '4,99';
   assert.equal((await submit(invalid, 'fixture_pix_below_minimum')).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
@@ -99,7 +99,7 @@ test('API limita o checkout a R$ 1.000, recalcula a taxa e rejeita o lote inteir
   payload.sales = [payload.sales[0]];
   assert.equal((await submit(payload)).status, 200);
   const portal = await (await call('/api/portal')).json(), checkout = portal.checkouts.find((item: { id: string }) => item.id === 'main');
-  assert.equal(portal.sales[0].feeCents, 15199); assert.equal(portal.finance.availableCents, -5199);
+  assert.equal(portal.sales[0].feeCents, 15199); assert.equal(portal.finance.availableCents, 2400);
   assert.equal(checkout.feeBps, 1500); assert.equal(checkout.fixedFeeCents, 199); assert.equal(checkout.maxAmountCents, 100000); assert.equal(checkout.higherTier, null);
   const update = (body: unknown) => call('/api/admin/checkouts/main', adminKey, { method: 'PATCH', body: JSON.stringify(body) });
   assert.equal((await update({ name: 'Principal', fee: '15', higherTier: { aboveAmount: '400', fee: '20', fixedFee: '1.99' } })).status, 200);
@@ -450,39 +450,41 @@ test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
-test('padrão de 50% desconta taxas integrais e saque de R$ 5 sem aceitar valores manipulados', async t => {
+test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte sem aceitar valores manipulados', async t => {
   const { call, submit } = await fixture(t, { defaultCheckoutRates: true });
   const token = 'fixture_fifty_percent_attendant_01234567890123456789';
   const created = await call('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Regra de 50%', token }) });
   assert.equal(created.status, 201);
   const account = await created.json();
   assert.equal((await (await call('/api/portal', token)).json()).profile.commissionBps, 5000);
-  const payload = batch(); payload.sales = ['main', 'pix'].map(checkoutId => ({ ...payload.sales[0], amount: '100', checkoutId, commissionBps: 10000, commissionMode: 'net-share', feeCents: 0 }));
+  const payload = batch(); payload.sales = ['main', 'pix'].map(checkoutId => ({ ...payload.sales[0], amount: '100', checkoutId, commissionBps: 10000, commissionMode: 'net-share', feeCents: 0, attendantFeeCents: 0 }));
   assert.equal((await submit(payload, 'fixture_fifty_percent_sale', token)).status, 200);
   let portal = await (await call('/api/portal', token)).json();
-  assert.equal(portal.finance.availableCents, 7433); assert.equal(portal.finance.businessShareCents, 10000); assert.equal(portal.finance.transactionFeeCents, 2567);
+  assert.equal(portal.finance.availableCents, 8716); assert.equal(portal.finance.businessShareCents, 8717); assert.equal(portal.finance.transactionFeeCents, 1284); assert.equal(portal.finance.gatewayFeeCents, 2567); assert.equal(portal.finance.businessGatewayFeeCents, 1283);
+  assert.deepEqual(portal.sales.map((sale: { attendantFeeCents: number }) => sale.attendantFeeCents).sort((a: number, b: number) => a - b), [434, 850]);
   assert.ok(portal.sales.every((sale: { commissionBps: number; commissionMode: string }) => sale.commissionBps === 5000 && sale.commissionMode === 'gross-share-less-fees'));
   await call(`/api/admin/attendants/${account.attendantId}/costs`, adminKey, { method: 'POST', body: JSON.stringify({ date: businessToday(), ads: '2', withdrawalFee: '0' }) });
   await call('/api/profile', token, { method: 'PATCH', body: JSON.stringify({ name: 'Regra 50', email: '', phone: '', pixType: 'email', pixKey: 'fifty@example.com', pixOwner: 'Regra 50' }) });
   const request = (amount: string) => call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount, withdrawalFeeCents: 0, status: 'paid' }) });
-  assert.equal((await request('5')).status, 400);
-  assert.equal((await request('72,34')).status, 400);
-  const concurrent = await Promise.all([request('72,33'), request('72,33')]);
+  assert.equal((await request('2,50')).status, 400);
+  assert.equal((await request('85,17')).status, 400);
+  const concurrent = await Promise.all([request('85,16'), request('85,16')]);
   assert.deepEqual(concurrent.map(response => response.status).sort(), [201, 400]);
   const payout = await concurrent.find(response => response.status === 201)!.json();
-  assert.equal(payout.withdrawalFeeCents, 0); assert.equal(payout.amountCents, 7233); assert.equal(payout.status, 'pending');
+  assert.equal(payout.withdrawalFeeCents, 0); assert.equal(payout.amountCents, 8516); assert.equal(payout.status, 'pending');
   portal = await (await call('/api/portal', token)).json();
   assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.withdrawalFeeCents, 0);
   const finish = (id: string, status: string) => call('/api/admin/payouts/' + id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Teste sintético', withdrawalFeeCents: 0 }) });
   assert.equal((await finish(payout.id, 'cancelled')).status, 200);
   portal = await (await call('/api/portal', token)).json();
-  assert.equal(portal.finance.availableCents, 7233); assert.equal(portal.finance.withdrawalFeeCents, 0);
-  const second = await (await request('72,33')).json();
+  assert.equal(portal.finance.availableCents, 8516); assert.equal(portal.finance.withdrawalFeeCents, 0);
+  const second = await (await request('85,16')).json();
   const paidTwice = await Promise.all([finish(second.id, 'paid'), finish(second.id, 'paid')]);
   assert.deepEqual(paidTwice.map(response => response.status).sort(), [200, 400]);
   portal = await (await call('/api/portal', token)).json();
-  assert.equal(portal.finance.withdrawalFeeCents, 500); assert.equal(portal.payouts.find((item: { id: string }) => item.id === second.id).withdrawalFeeCents, 500);
-  assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.paidPayoutNetCents, 6733); assert.equal(portal.finance.feeCents, 3067);
+  assert.equal(portal.finance.withdrawalFeeCents, 250); assert.equal(portal.payouts.find((item: { id: string }) => item.id === second.id).withdrawalFeeCents, 250);
+  assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.paidPayoutNetCents, 8266); assert.equal(portal.finance.feeCents, 1534);
+  assert.equal(portal.payouts.find((item: { id: string }) => item.id === second.id).gatewayFeeCents, 500);
   assert.equal((await finish(second.id, 'paid')).status, 400);
 });
 
@@ -497,7 +499,7 @@ test('migração mantém regras e saques históricos e aplica 50% apenas aos pr�
     store.saveProfile(auth, { name: 'Histórico', email: '', phone: '', pixType: 'email', pixKey: 'legacy@example.com', pixOwner: 'Histórico' });
     store.db.exec("UPDATE sales SET commission_mode = 'net-share'");
     const historical = store.requestPayout(auth, { amount: '8' });
-    store.db.exec('ALTER TABLE sales DROP COLUMN commission_mode; ALTER TABLE payouts DROP COLUMN withdrawal_fee_cents;');
+    store.db.exec('ALTER TABLE sales DROP COLUMN commission_mode; ALTER TABLE sales DROP COLUMN attendant_fee_cents; ALTER TABLE payouts DROP COLUMN withdrawal_fee_cents;');
     store.db.prepare('DELETE FROM schema_migrations WHERE id = ?').run('attendant-gross-share-50-v1');
     store.close(); store = new PortalStore(file);
     assert.equal(store.profile(auth).commissionBps, 5000);
@@ -506,11 +508,11 @@ test('migração mantém regras e saques históricos e aplica 50% apenas aos pr�
     assert.equal(store.portal(auth).finance.availableCents, 30);
     store.recordSales(auth, payload, 'fixture_new_earnings_sale');
     const next = store.sales(auth).find(item => item.id !== sale.id)!; store.reviewSale(next.id, { status: 'approved', note: '' });
-    assert.equal(store.portal(auth).finance.availableCents, 3331);
+    assert.equal(store.portal(auth).finance.availableCents, 4180);
     // Restarting never resets a later administrative override or changes stored sale snapshots.
     store.db.prepare('UPDATE attendants SET commission_bps = 6000 WHERE id = ?').run(account.id);
     store.close(); store = new PortalStore(file);
-    assert.equal(store.profile(auth).commissionBps, 6000); assert.equal(store.portal(auth).finance.availableCents, 3331);
+    assert.equal(store.profile(auth).commissionBps, 6000); assert.equal(store.portal(auth).finance.availableCents, 4180);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -523,6 +525,7 @@ test('migração remove tarifas antecipadas de pedidos em análise sem alterar r
     store.reviewSale(store.sales(auth)[0].id, { status: 'approved', note: '' });
     store.saveProfile(auth, { name: 'Repasse de teste', email: '', phone: '', pixType: 'email', pixKey: 'payout@example.com', pixOwner: 'Teste' });
     const paid = store.requestPayout(auth, { amount: '10' }); store.markPayout(paid.id, 'paid', 'Pagamento sintético');
+    store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id = ?').run(paid.id);
     const pending = store.requestPayout(auth, { amount: '10' });
     const cancelled = store.requestPayout(auth, { amount: '10' }); store.markPayout(cancelled.id, 'cancelled', 'Cancelamento sintético');
     store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id IN (?, ?)').run(pending.id, cancelled.id);
@@ -538,7 +541,35 @@ test('migração remove tarifas antecipadas de pedidos em análise sem alterar r
     assert.equal(store.portal(auth).finance.withdrawalFeeCents, 500);
     store.markPayout(pending.id, 'paid', 'Pagamento posterior');
     store.close(); store = new PortalStore(file);
-    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 1000);
+    assert.equal(store.portal(auth).finance.withdrawalFeeCents, 750);
     assert.equal(store.portal(auth).finance.availableCents, balance);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('migração mantém taxas inteiras históricas e salva o rateio das próximas vendas e repasses', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-gateway-share-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Rateio gateway', 5000, tokenA), auth = { id: account.id };
+    const payload = batch(); payload.sales[0].amount = '100';
+    store.recordSales(auth, payload, 'fixture_gateway_before_share');
+    const historical = store.sales(auth)[0]; store.reviewSale(historical.id, { status: 'approved', note: '' });
+    store.db.exec('UPDATE sales SET attendant_fee_cents = fee_cents');
+    store.saveProfile(auth, { name: 'Rateio gateway', email: '', phone: '', pixType: 'email', pixKey: 'share@example.com', pixOwner: 'Teste' });
+    const payout = store.requestPayout(auth, { amount: '30' }); store.markPayout(payout.id, 'paid', 'Repasse histórico sintético');
+    store.db.prepare('UPDATE payouts SET withdrawal_fee_cents = 500 WHERE id = ?').run(payout.id);
+    store.db.exec('ALTER TABLE sales DROP COLUMN attendant_fee_cents; ALTER TABLE payouts DROP COLUMN gateway_fee_cents;');
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.sales(auth)[0].attendantFeeCents, null); assert.equal(store.portal(auth).finance.availableCents, 301);
+    assert.equal(store.payouts(auth)[0].withdrawalFeeCents, 500); assert.equal(store.payouts(auth)[0].gatewayFeeCents, 500);
+    store.recordSales(auth, payload, 'fixture_gateway_after_share');
+    const next = store.sales(auth).find(item => item.id !== historical.id)!;
+    assert.equal(next.attendantFeeCents, 850); store.reviewSale(next.id, { status: 'approved', note: '' });
+    assert.equal(store.portal(auth).finance.availableCents, 4451);
+    store.adminSetCheckout('main', { name: 'Nova tarifa', fee: '20' });
+    store.close(); store = new PortalStore(file);
+    const saved = store.sales(auth).find(item => item.id === next.id)!;
+    assert.equal(saved.feeCents, 1699); assert.equal(saved.attendantFeeCents, 850);
+    assert.equal(store.portal(auth).finance.availableCents, 4451);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });

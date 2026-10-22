@@ -1,5 +1,5 @@
 import { readDemoData, writeDemoData } from './demo-store.ts';
-import { amountToCents, businessToday, checkoutFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validatePayoutAmount, validateProfile, validDate } from './domain.ts';
+import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validatePayoutAmount, validateProfile, validDate } from './domain.ts';
 import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -62,7 +62,7 @@ export class PortalClient {
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) throw new ApiError('Informe o horário de cada venda.');
       const amountCents = amountToCents(row.amount), receiptId = crypto.randomUUID();
       receipts[receiptId] = row.receipt;
-      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), commissionBps: current.profile.commissionBps, commissionMode: 'gross-share-less-fees', note: row.note.trim(), receiptId, createdAt: new Date().toISOString(), status: 'pending', reviewNote: '', reviewedAt: null };
+      return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), attendantFeeCents: splitGatewayFee(checkoutFee(amountCents, checkout)), commissionBps: current.profile.commissionBps, commissionMode: 'gross-share-less-fees', note: row.note.trim(), receiptId, createdAt: new Date().toISOString(), status: 'pending', reviewNote: '', reviewedAt: null };
     });
     this.persist({ ...this.demo, receipts, sales: [...sales, ...this.demo.sales] });
     return { duplicate: false, count: sales.length };
@@ -88,7 +88,7 @@ export class PortalClient {
     const current = demoPortal(this.demo, 'all'), amountCents = amountToCents(amount);
     if (!current.profile.pixKey || !current.profile.pixOwner) throw new ApiError('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
     validatePayoutAmount(amountCents, current.finance.availableCents);
-    this.persist({ ...this.demo, payouts: [{ id: crypto.randomUUID(), amountCents, withdrawalFeeCents: 0, status: 'pending', requestedAt: new Date().toISOString(), paidAt: null, note: '' }, ...this.demo.payouts] });
+    this.persist({ ...this.demo, payouts: [{ id: crypto.randomUUID(), amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: 'pending', requestedAt: new Date().toISOString(), paidAt: null, note: '' }, ...this.demo.payouts] });
   }
   async receipt(id: string): Promise<string> {
     this.reloadDemo();

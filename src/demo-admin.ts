@@ -1,4 +1,4 @@
-import { amountToCents, businessToday, checkoutFee, demoCheckouts, validateSaleReview, validDate } from './domain.ts';
+import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoCheckouts, validateSaleReview, validDate } from './domain.ts';
 import type { AdminDashboard, AdminSale, AdminSalesPage, Sale } from './domain.ts';
 import { readDemoData, writeDemoData } from './demo-store.ts';
 
@@ -15,7 +15,7 @@ export function prepareAdminDemo() {
   const now = new Date().toISOString();
   const sales: Sale[] = [19700, 35000, 100000].map((amountCents, index) => {
     const receiptId = crypto.randomUUID(); data.receipts[receiptId] = receipt;
-    return { id: crypto.randomUUID(), date: businessToday(), time: '12:00', checkoutId: 'main', checkoutName: 'Checkout principal', amountCents, feeCents: checkoutFee(amountCents, demoCheckouts[0]), commissionBps: data.profile.commissionBps, commissionMode: 'gross-share-less-fees', note: 'Venda de exemplo para conhecer o painel.', receiptId, createdAt: now, status: index === 2 ? 'approved' : 'pending', reviewNote: index === 2 ? 'Exemplo aprovado' : '', reviewedAt: index === 2 ? now : null };
+    return { id: crypto.randomUUID(), date: businessToday(), time: '12:00', checkoutId: 'main', checkoutName: 'Checkout principal', amountCents, feeCents: checkoutFee(amountCents, demoCheckouts[0]), attendantFeeCents: splitGatewayFee(checkoutFee(amountCents, demoCheckouts[0])), commissionBps: data.profile.commissionBps, commissionMode: 'gross-share-less-fees', note: 'Venda de exemplo para conhecer o painel.', receiptId, createdAt: now, status: index === 2 ? 'approved' : 'pending', reviewNote: index === 2 ? 'Exemplo aprovado' : '', reviewedAt: index === 2 ? now : null };
   });
   writeDemoData({ ...data, sales });
 }

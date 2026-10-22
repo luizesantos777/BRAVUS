@@ -6,6 +6,102 @@ import { gunzipSync } from 'node:zlib';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
 const iPhoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+test('prints grandes da galeria são reduzidos e chegam com imagem ao administrador', async ({ page }, info) => {
+  const admin = { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' };
+  const token = `fixture_${info.project.name}_large_receipt_01234567890123456789`, name = `Print grande ${info.project.name}`;
+  expect((await page.request.post('/api/admin/attendants', { headers: admin, data: { name, token } })).ok()).toBe(true);
+  await page.addInitScript(() => { Reflect.deleteProperty(window, 'createImageBitmap'); });
+  await page.goto(`/#/atendente/${token}`);
+  const base64 = await page.evaluate(() => {
+    const canvas = document.createElement('canvas'); canvas.width = 1200; canvas.height = 1800;
+    const context = canvas.getContext('2d')!, pixels = context.createImageData(canvas.width, canvas.height);
+    let seed = 123456789;
+    for (let i = 0; i < pixels.data.length; i += 4) {
+      for (let channel = 0; channel < 3; channel++) { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; pixels.data[i + channel] = seed >>> 24; }
+      pixels.data[i + 3] = 255;
+    }
+    context.putImageData(pixels, 0, 0); context.fillStyle = '#fff'; context.fillRect(250, 300, 700, 1200);
+    context.fillStyle = '#111'; context.font = '48px sans-serif'; context.fillText('COMPROVANTE DE TESTE', 280, 420, 640); context.fillText('R$ 100,00', 280, 550);
+    return canvas.toDataURL('image/png').split(',')[1];
+  });
+  const original = Buffer.from(base64, 'base64'); expect(original.length).toBeGreaterThan(2 * 1024 * 1024);
+  for (let number = 1; number <= 2; number++) {
+    if (number === 2) await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
+    await page.getByLabel(`Valor bruto venda ${number}`, { exact: true }).fill('100');
+    await page.getByLabel(`Checkout venda ${number}`, { exact: true }).selectOption('main');
+    const chooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: `Anexar print venda ${number}`, exact: true }).click();
+    await (await chooserPromise).setFiles({ name: `galeria-${number}.png`, mimeType: 'image/png', buffer: original });
+    await expect(page.locator('.attachment-detail').nth(number - 1)).toContainText(`galeria-${number}.jpg`);
+  }
+  await page.getByRole('button', { name: 'galeria-1.jpg', exact: true }).click();
+  const preview = page.getByRole('img', { name: 'Print do comprovante da venda' });
+  await expect(preview).toBeVisible(); expect(await preview.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThanOrEqual(768);
+  await page.getByRole('button', { name: 'Fechar janela', exact: true }).click();
+  const sent = page.waitForRequest(request => request.url().endsWith('/api/sales') && request.method() === 'POST');
+  await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
+  const request = await sent, payload = request.postDataJSON(); expect(Buffer.byteLength(request.postData()!)).toBeLessThan(4 * 1024 * 1024);
+  for (const sale of payload.sales) { expect(sale.receipt.mime).toBe('image/jpeg'); expect(Buffer.from(sale.receipt.base64, 'base64').length).toBeLessThanOrEqual(2 * 1024 * 1024); }
+  await expect(page.locator('.pending-sales-notice')).toContainText('2 venda(s) em análise');
+  const portal = await (await page.request.get('/api/portal', { headers: { Authorization: `Bearer ${token}` } })).json();
+  expect(portal.sales).toHaveLength(2);
+  for (const sale of portal.sales) {
+    const receipt = await page.request.get(`/api/admin/receipts/${sale.receiptId}`, { headers: admin });
+    expect(receipt.ok()).toBe(true); expect(receipt.headers()['content-type']).toBe('image/jpeg');
+    expect(await receipt.body()).toEqual(Buffer.from(payload.sales[0].receipt.base64, 'base64'));
+  }
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');
+  await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByLabel('Filtrar por atendente').selectOption({ label: name });
+  await expect(page.locator('.review-sale')).toHaveCount(2);
+  await page.locator('.review-sale').first().getByRole('button', { name: 'Ver comprovante' }).click();
+  const received = page.getByRole('img', { name: 'Comprovante enviado pelo atendente' }); await expect(received).toBeVisible();
+  expect(await received.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThanOrEqual(768);
+  await page.screenshot({ path: info.outputPath('comprovante-reduzido-admin.png'), fullPage: true });
+});
+test('galeria sem MIME aceita o print, erros de anexo ficam na venda e substituição inválida não reaproveita o anterior', async ({ page }) => {
+  await page.goto('/');
+  const input = page.getByLabel('Print da venda 1', { exact: true });
+  for (const mimeType of ['', 'application/octet-stream']) {
+    await input.setInputFiles({ ...image, name: 'galeria.jpg', mimeType });
+    await expect(page.locator('.attachment-detail')).toContainText('galeria.jpg');
+    await page.getByRole('button', { name: 'galeria.jpg', exact: true }).click();
+    await expect(page.getByRole('img', { name: 'Print do comprovante da venda' })).toHaveAttribute('src', /^data:image\/png;base64,/);
+    await page.getByRole('button', { name: 'Fechar janela', exact: true }).click();
+  }
+  await input.setInputFiles({ name: 'falso.jpg', mimeType: 'image/jpeg', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>') });
+  await expect(page.locator('.attachment-error')).toContainText('Escolha um print PNG, JPG ou WEBP'); await expect(page.locator('.attachment-detail')).toHaveCount(0);
+  await input.setInputFiles({ name: 'quebrado.png', mimeType: 'image/png', buffer: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3]) });
+  await expect(page.locator('.attachment-error')).toContainText('Não foi possível abrir essa imagem');
+  await input.setInputFiles({ name: 'vazio.png', mimeType: 'image/png', buffer: Buffer.alloc(0) });
+  await expect(page.locator('.attachment-error')).toContainText('imagem está vazia');
+  await input.setInputFiles({ name: 'grande.jpg', mimeType: 'image/jpeg', buffer: Buffer.alloc(20 * 1024 * 1024 + 1) });
+  await expect(page.locator('.attachment-error')).toContainText('até 20 MB');
+  await input.setInputFiles({ name: 'foto.heic', mimeType: 'image/heic', buffer: Buffer.from('0000ftypheic0000mif1') });
+  await expect(page.locator('.attachment-error')).toContainText('captura de tela');
+  await input.setInputFiles(image); await expect(page.locator('.attachment-detail')).toContainText('print.png');
+  await expect(page.locator('.attachment-error')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+test('venda aguarda o processamento do print e a última seleção prevalece', async ({ page }) => {
+  await page.addInitScript(() => {
+    const original = FileReader.prototype.readAsDataURL;
+    let reads = 0;
+    FileReader.prototype.readAsDataURL = function (blob: Blob) { setTimeout(() => original.call(this, blob), ++reads === 1 ? 700 : 100); };
+  });
+  await page.goto('/');
+  await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100'); await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
+  const input = page.getByLabel('Print da venda 1', { exact: true });
+  await input.setInputFiles({ ...image, name: 'antigo.png' });
+  await expect(page.getByRole('button', { name: 'Preparando imagens...' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Anexar print venda 1', exact: true })).toHaveText('Preparando print...');
+  await input.setInputFiles({ ...image, name: 'atual.png' });
+  await expect(page.locator('.attachment-detail')).toContainText('atual.png'); await expect(page.locator('.attachment-detail')).not.toContainText('antigo.png');
+  await page.waitForTimeout(800); // Let the slower, older selection finish after the replacement.
+  await expect(page.locator('.attachment-detail')).toContainText('atual.png');
+  await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('100,00');
+});
 test('venda de outro aparelho aparece na fila administrativa aberta sem atualizar manualmente', async ({ page, browser }, info) => {
   const token = `fixture_${info.project.name}_live_01234567890123456789`, name = `Vendas ao vivo ${info.project.name}`;
   await page.clock.install();

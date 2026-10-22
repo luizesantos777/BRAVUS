@@ -1,6 +1,6 @@
 import { readDemoData, writeDemoData } from './demo-store.ts';
 import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validatePayoutAmount, validateProfile, validDate } from './domain.ts';
-import type { DemoData, Period, Portal, Profile, RankingEntry, ReceiptInput, Sale, SaleBatch } from './domain.ts';
+import type { DemoData, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
 export function currentToken() {
@@ -120,12 +120,4 @@ export async function readAvatar(file: File): Promise<string> {
     return validateAvatar(canvas.toDataURL('image/webp', .85));
   } finally { bitmap.close(); }
 }
-export function readReceipt(file: File): Promise<ReceiptInput> {
-  if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || !file.size || file.size > MAX_RECEIPT_BYTES) return Promise.reject(new ApiError('Use um print PNG, JPG ou WEBP de até 2 MB.'));
-  return new Promise((accept, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => accept({ name: file.name.slice(0, 180), mime: file.type, base64: String(reader.result).split(',')[1] });
-    reader.onerror = () => reject(new ApiError('Não foi possível ler a imagem.'));
-    reader.readAsDataURL(file);
-  });
-}
+export { readReceipt } from './receipts.ts';

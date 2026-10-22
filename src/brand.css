@@ -138,6 +138,7 @@ input, select { border-color: #35402b; }
 input::placeholder { color: #8a957d; }
 .attach-button { color: #cad2bf; background: #11180e; border-color: #35432a; }
 .attach-button:hover { background: #24301b; }
+.attachment-error { grid-column: 1 / -1; grid-row: auto; margin: 0; }
 .mandatory { color: #edcc75; background: #282415; border-color: #635321; }
 .demo-banner { background: #172016; color: #aebfa3; border-color: #354c2a; }
 .demo-banner > svg { color: #c4ab56; }

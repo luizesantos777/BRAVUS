@@ -57,15 +57,38 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const [date, setDate] = useState(businessToday());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [preparing, setPreparing] = useState<Set<string>>(new Set());
+  const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
+  const attachments = useRef(new Map<string, symbol>());
+  useEffect(() => () => { attachments.current.clear(); }, []);
   const key = useRef(crypto.randomUUID());
   const update = (id: string, patch: Partial<SaleRow>) => setRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));
   async function attach(id: string, file?: File) {
     if (!file) return;
-    try { update(id, { receipt: await readReceipt(file) }); setError(''); }
-    catch (cause) { setError((cause as Error).message); }
+    const operation = Symbol(); attachments.current.set(id, operation);
+    setPreparing(previous => new Set(previous).add(id));
+    update(id, { receipt: null }); setError('');
+    setAttachmentErrors(previous => ({ ...previous, [id]: '' }));
+    try {
+      const receipt = await readReceipt(file);
+      if (attachments.current.get(id) === operation) update(id, { receipt });
+    } catch (cause) {
+      if (attachments.current.get(id) === operation) setAttachmentErrors(previous => ({ ...previous, [id]: (cause as Error).message }));
+    } finally {
+      if (attachments.current.get(id) === operation) {
+        attachments.current.delete(id);
+        setPreparing(previous => { const next = new Set(previous); next.delete(id); return next; });
+      }
+    }
+  }
+  function removeRow(id: string) {
+    attachments.current.delete(id);
+    setPreparing(previous => { const next = new Set(previous); next.delete(id); return next; });
+    setAttachmentErrors(previous => { const next = { ...previous }; delete next[id]; return next; });
+    setRows(previous => previous.filter(row => row.id !== id));
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || disabled) return; setError('');
+    event.preventDefault(); if (busy || disabled || attachments.current.size) return; setError('');
     try {
       for (const [index, row] of rows.entries()) {
         amountToCents(row.amount);
@@ -99,16 +122,17 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
         <div className="amount-input"><span>R$</span><input aria-label={`Valor bruto venda ${index + 1}`} placeholder="Valor Bruto (Ex: 197,00)" inputMode="decimal" required maxLength={16} value={row.amount} onChange={event => update(row.id, { amount: event.target.value })} /></div>
         <div className="select-wrap"><select aria-label={`Checkout venda ${index + 1}`} required value={row.checkoutId} onChange={event => update(row.id, { checkoutId: event.target.value })}><option value="" disabled>Checkout *</option>{portal.checkouts.map(checkout => <option key={checkout.id} value={checkout.id}>{checkout.name}</option>)}</select><ChevronDown size={13} /></div>
         <input type="time" aria-label={`Horário venda ${index + 1}`} required value={row.time} onChange={event => update(row.id, { time: event.target.value })} />
-        <button type="button" className={`attach-button ${row.receipt ? 'attached' : ''}`} aria-label={`Anexar print venda ${index + 1}`} onClick={() => document.getElementById(`receipt-${row.id}`)?.click()}><Camera size={14} />{row.receipt ? 'Print anexado' : 'Anexar Print *'}</button>
-        <input className="sr-only" tabIndex={-1} id={`receipt-${row.id}`} type="file" aria-label={`Print da venda ${index + 1}`} accept="image/png,image/jpeg,image/webp" onChange={event => { void attach(row.id, event.target.files?.[0]); event.target.value = ''; }} />
-        <button className="icon-button delete-row" type="button" aria-label={`Remover venda ${index + 1}`} disabled={rows.length === 1} onClick={() => setRows(previous => previous.filter(item => item.id !== row.id))}><Trash2 size={16} /></button>
+        <button type="button" className={`attach-button ${row.receipt ? 'attached' : ''}`} aria-label={`Anexar print venda ${index + 1}`} aria-busy={preparing.has(row.id)} disabled={preparing.has(row.id)} onClick={() => document.getElementById(`receipt-${row.id}`)?.click()}>{preparing.has(row.id) ? <LoaderCircle className="spin" size={14} /> : <Camera size={14} />}{preparing.has(row.id) ? 'Preparando print...' : row.receipt ? 'Print anexado' : 'Anexar Print *'}</button>
+        <input className="sr-only" tabIndex={-1} id={`receipt-${row.id}`} type="file" aria-label={`Print da venda ${index + 1}`} accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.heic,.heif" onChange={event => { void attach(row.id, event.target.files?.[0]); event.target.value = ''; }} />
+        <button className="icon-button delete-row" type="button" aria-label={`Remover venda ${index + 1}`} disabled={rows.length === 1} onClick={() => removeRow(row.id)}><Trash2 size={16} /></button>
         <input className="observation" aria-label={`Observação venda ${index + 1}`} placeholder="Observação (Ex: Cliente pagou via PIX manual após falha no checkout)..." maxLength={500} value={row.note} onChange={event => update(row.id, { note: event.target.value })} />
         <SaleFeePreview row={row} checkout={portal.checkouts.find(checkout => checkout.id === row.checkoutId)} index={index} commissionBps={portal.profile.commissionBps} />
+        {attachmentErrors[row.id] && <div role="alert" className="form-error attachment-error"><AlertCircle size={14} />{attachmentErrors[row.id]}</div>}
         {row.receipt && <div className="attachment-detail"><FileImage size={12} /><button type="button" onClick={() => preview(`data:${row.receipt!.mime};base64,${row.receipt!.base64}`)}>{row.receipt.name}</button><button className="remove-attachment" type="button" aria-label={`Remover print venda ${index + 1}`} onClick={() => update(row.id, { receipt: null })}><X size={12} /></button></div>}
       </div>)}</div>
       {error && <div role="alert" className="form-error"><AlertCircle size={14} />{error}</div>}
-      <div className="sales-actions"><button type="button" className="button secondary" disabled={rows.length >= 10} onClick={() => setRows(previous => [...previous, blankRow()])}><Plus size={15} />Adicionar Outra Venda</button><button type="submit" className="button primary">{busy ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{busy ? 'Enviando vendas...' : 'Salvar e Enviar Vendas'}</button></div>
-      <p className="form-caption">Até 10 vendas por envio · Prints em PNG, JPG ou WEBP de até 2 MB.</p>
+      <div className="sales-actions"><button type="button" className="button secondary" disabled={rows.length >= 10} onClick={() => setRows(previous => [...previous, blankRow()])}><Plus size={15} />Adicionar Outra Venda</button><button type="submit" className="button primary" disabled={preparing.size > 0}>{busy || preparing.size ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{busy ? 'Enviando vendas...' : preparing.size ? 'Preparando imagens...' : 'Salvar e Enviar Vendas'}</button></div>
+      <p className="form-caption">Até 10 vendas por envio · Imagens de até 20 MB, reduzidas automaticamente quando necessário. Confira a prévia do print antes de enviar.</p>
     </fieldset></form>
   </section>;
 }

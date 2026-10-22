@@ -107,13 +107,24 @@ export class PortalStore {
   }
   close() { this.sql.close(); }
   async adminDashboard(): Promise<AdminDashboard> {
-    const rows = (await this.sql.prepare(`SELECT a.id, a.name, a.active, a.commission_bps AS commissionBps, a.created_at AS createdAt, COUNT(s.id) AS salesCount, COALESCE(SUM(s.amount_cents), 0) AS grossCents FROM attendants a LEFT JOIN sales s ON s.attendant_id = a.id GROUP BY a.id ORDER BY a.created_at DESC`).all());
-    const attendants = rows.map(row => ({ ...row, active: row.active === 1 })) as unknown as AdminAttendant[];
-    const payouts = (await this.sql.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all()) as unknown as AdminPayout[];
-    const costs = (await this.sql.prepare('SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name LIMIT 100').all()) as unknown as AdminCost[];
-    const pendingSalesCount = Number((await this.sql.prepare("SELECT COUNT(*) AS count FROM sales WHERE status = 'pending'").get())!.count);
-    const todayAdsCents = Number((await this.sql.prepare('SELECT COALESCE(SUM(ads_cents), 0) AS total FROM costs WHERE date = ?').get(businessToday()))!.total);
-    return { attendants, payouts, checkouts: (await this.checkouts()), costs, pendingSalesCount, todayAdsCents };
+    return this.sql.transaction(async db => {
+      const rows = await db.prepare('SELECT id, name, active, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC').all();
+      // Read all financial records together. Display pagination must never truncate balances.
+      const sales = await db.prepare('SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales').all() as unknown as AdminSale[];
+      const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
+      const costs = await db.prepare('SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name').all() as unknown as AdminCost[];
+      function byAttendant<T extends { attendantId: string }>(records: T[]) {
+        const grouped = new Map<string, T[]>();
+        for (const record of records) { const group = grouped.get(record.attendantId); if (group) group.push(record); else grouped.set(record.attendantId, [record]); }
+        return grouped;
+      }
+      const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), today = businessToday();
+      const attendants = rows.map(row => {
+        const records = ownSales.get(String(row.id)) ?? [];
+        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance: calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], 'all', today) };
+      }) as unknown as AdminAttendant[];
+      return { attendants, payouts, checkouts: await new PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter(sale => sale.status === 'pending').length, todayAdsCents: costs.filter(cost => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
+    }, 'read');
   }
   async adminSales(status = 'pending', attendantId = '', pageValue = '1'): Promise<AdminSalesPage> {
     if (!['pending', 'approved', 'rejected', 'all'].includes(status) || !/^\d{1,6}$/.test(pageValue) || Number(pageValue) < 1 || attendantId.length > 100) invalid('Filtro de vendas inválido.');

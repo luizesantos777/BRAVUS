@@ -297,6 +297,46 @@ test('administração confere destino PIX e confirma ou cancela repasse uma úni
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 1000);
 });
 
+test('administração mostra faturamento e saldo acumulados por atendente antes de solicitar repasse, sem truncar custos', async t => {
+  const { store, call, submit } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
+  const token = 'fixture_raposo_balance_012345678901234567890';
+  const account = await store.createAttendant('Raposo de teste', 5000, token);
+  for (const [amount, date, status] of [['300', '2025-01-10', 'approved'], ['100', businessToday(), 'approved'], ['200', businessToday(), 'pending'], ['50', businessToday(), 'rejected']]) {
+    const input = batch(); input.date = date; input.sales[0].amount = amount;
+    assert.equal((await submit(input, `fixture_balance_${amount}`, token)).status, 200);
+    if (status !== 'pending') {
+      const sale = (await store.sales({ id: account.id })).find(item => item.amountCents === Number(amount) * 100)!;
+      await store.reviewSale(sale.id, { status, note: 'Conferência de teste' });
+    }
+  }
+  for (let index = 0; index < 101; index++) {
+    const date = new Date('2025-01-01T12:00:00Z'); date.setUTCDate(date.getUTCDate() + index);
+    await store.setCosts(account.id, date.toISOString().slice(0, 10), 10, 2);
+  }
+  const dashboard = async () => {
+    const response = await call('/api/admin/dashboard?refresh=1', adminKey); assert.equal(response.status, 200); return response.json();
+  };
+  let view = await dashboard(), own = view.attendants.find((item: { id: string }) => item.id === account.id);
+  assert.equal(view.costs.length, 100); assert.equal(view.payouts.length, 0);
+  assert.equal(own.finance.count, 2); assert.equal(own.finance.grossCents, 40000); assert.equal(own.finance.commissionCents, 16800);
+  assert.equal(own.finance.adsCents, 1010); assert.equal(own.finance.withdrawalFeeCents, 202); assert.equal(own.finance.availableCents, 15588);
+  assert.equal(own.finance.pendingSalesCount, 1); assert.equal(own.finance.rejectedSalesCount, 1);
+  assert.equal(view.attendants.find((item: { name: string }) => item.name === 'Bruno Teste').finance.grossCents, 0);
+  await store.saveProfile({ id: account.id }, { name: 'Raposo de teste', email: '', phone: '', pixType: 'email', pixKey: 'raposo-fixture@example.com', pixOwner: 'Pessoa de teste' });
+  for (const [amount, status] of [['10', 'paid'], ['20', 'pending'], ['30', 'cancelled']]) {
+    const response = await call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount }) }); assert.equal(response.status, 201);
+    const payout = await response.json();
+    if (status !== 'pending') assert.equal((await call('/api/admin/payouts/' + payout.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Repasse sintético' }) })).status, 200);
+  }
+  const portal = await (await call('/api/portal?period=all', token)).json();
+  view = await dashboard(); own = view.attendants.find((item: { id: string }) => item.id === account.id);
+  assert.deepEqual(own.finance, portal.finance); assert.equal(own.finance.availableCents, 12588);
+  assert.equal(own.finance.pendingPayoutCents, 2000); assert.equal(own.finance.paidPayoutNetCents, 750); assert.equal(own.finance.withdrawalFeeCents, 452);
+  await store.setAttendantActive(account.id, { active: false });
+  own = (await dashboard()).attendants.find((item: { id: string }) => item.id === account.id);
+  assert.equal(own.active, false); assert.deepEqual(own.finance, portal.finance);
+});
+
 test('chave administrativa persiste com permissão privada e backup contém vendas e comprovantes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-backup-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'backup.sqlite'), keyPath = join(directory, 'admin.key');
   try {

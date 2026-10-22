@@ -97,6 +97,11 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
   portal = await (await second('/api/portal', token)).json();
   assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.paidPayoutNetCents, 3700); assert.equal(portal.payouts[0].withdrawalFeeCents, 250);
   assert.equal(portal.payouts[0].gatewayFeeCents, 500); assert.equal(JSON.stringify(portal).includes(env.TURSO_AUTH_TOKEN), false);
+  for (const api of [call, second]) {
+    const response = await api('/api/admin/dashboard?refresh=1', adminKey); assert.equal(response.status, 200);
+    const dashboard = await response.json(); assert.deepEqual(dashboard.attendants[0].finance, portal.finance);
+    assert.equal(dashboard.attendants[0].finance.grossCents, 10000); assert.equal(dashboard.attendants[0].finance.paidPayoutNetCents, 3700);
+  }
 });
 test('handler aceita corpo já interpretado pela Vercel e aplica o limite de envio', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-body-'));

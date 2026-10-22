@@ -6,6 +6,48 @@ import { gunzipSync } from 'node:zlib';
 
 const image = { name: 'print.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=', 'base64') };
 const iPhoneAgent = 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+test('admin encontra faturamento e saldo de Raposo, acompanha repasses e atualiza o fechamento aprovado', async ({ page }, info) => {
+  const key = 'fixture_browser_admin_012345678901234567890123456789', admin = { Authorization: `Bearer ${key}` };
+  const token = `fixture_${info.project.name}_raposo_balance_01234567890123456789`, name = `Raposo teste ${info.project.name}`, personal = { Authorization: `Bearer ${token}` };
+  const created = await page.request.post('/api/admin/attendants', { headers: admin, data: { name, token } }); expect(created.status()).toBe(201);
+  const id = (await created.json()).attendantId;
+  await page.request.patch('/api/profile', { headers: personal, data: { name, email: '', phone: '', pixType: 'email', pixKey: 'raposo-test@example.com', pixOwner: 'Pessoa de teste' } });
+  const initial = await (await page.request.get('/api/portal', { headers: personal })).json();
+  for (const [amount, date] of [['100', '2025-01-10'], ['50', initial.today]]) {
+    const result = await page.request.post('/api/sales', { headers: { ...personal, 'Idempotency-Key': `fixture_raposo_${info.project.name}_${amount}` }, data: { date, sales: [{ amount, checkoutId: 'main', time: '12:00', note: 'Teste do saldo administrativo', receipt: { name: image.name, mime: image.mimeType, base64: image.buffer.toString('base64') } }] } }); expect(result.ok()).toBe(true);
+  }
+  const sales = (await (await page.request.get('/api/portal?period=all', { headers: personal })).json()).sales;
+  await page.request.patch('/api/admin/sales/' + sales.find((sale: { amountCents: number }) => sale.amountCents === 10000).id, { headers: admin, data: { status: 'approved', note: 'Conferida' } });
+  await page.clock.install();
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(key); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByRole('button', { name: 'Atendentes', exact: true }).click();
+  const account = page.locator('.admin-attendants tbody tr').filter({ hasText: name }); await expect(account).toContainText('100,00');
+  await account.getByRole('button', { name: 'Ver faturamento e repasses' }).click();
+  await expect(page.getByLabel('Atendente dos saldos')).toHaveValue(id);
+  const balance = page.locator('.attendant-balance');
+  const value = (label: string) => balance.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) });
+  await expect(balance).toHaveCount(1); await expect(value('Faturamento aprovado')).toContainText('100,00');
+  await expect(value('Saldo disponível para repasse')).toContainText('41,50');
+  await expect(balance).toContainText('1 venda(s) em análise:'); await expect(balance).toContainText('ainda não tem pedido de repasse');
+  const payout = await page.request.post('/api/payouts', { headers: personal, data: { amount: '20' } }); expect(payout.status()).toBe(201);
+  await page.clock.runFor(10_100);
+  await expect(value('Pedidos de repasse em análise')).toContainText('20,00'); await expect(value('Saldo disponível para repasse')).toContainText('21,50');
+  const request = page.locator('.admin-payout'); await expect(request).toHaveCount(1);
+  await request.getByRole('button', { name: 'Registrar pagamento' }).click(); await page.getByLabel('Observação do repasse').fill('PIX sintético conferido');
+  await page.getByRole('button', { name: 'Confirmar que já paguei' }).click();
+  await expect(value('PIX já pagos')).toContainText('17,50'); await expect(value('Pedidos de repasse em análise')).toContainText('0,00');
+  await expect(value('Saldo disponível para repasse')).toContainText('21,50');
+  await page.getByRole('button', { name: 'Fechamento', exact: true }).click();
+  await page.getByLabel('Início do período').fill('2025-01-01'); await page.getByLabel('Atendente do relatório').selectOption(id); await page.getByRole('button', { name: 'Consultar fechamento' }).click();
+  const row = page.locator('.financial-table tbody tr'); await expect(row).toHaveCount(1); await expect(row.locator('td').nth(2)).toHaveText(/100,00/);
+  await page.request.patch('/api/admin/sales/' + sales.find((sale: { amountCents: number }) => sale.amountCents === 5000).id, { headers: admin, data: { status: 'approved', note: 'Segunda conferida' } });
+  await page.getByRole('button', { name: 'Atualizar', exact: true }).click();
+  await expect(row.locator('td').nth(2)).toHaveText(/150,00/); await expect(page.getByLabel('Atendente do relatório')).toHaveValue(id); await expect(page.getByLabel('Início do período')).toHaveValue('2025-01-01');
+  await page.getByRole('button', { name: 'Repasses', exact: true }).click();
+  await expect(value('Faturamento aprovado')).toContainText('150,00'); await expect(value('Saldo disponível para repasse')).toContainText('41,75');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('raposo-faturamento-repasses.png'), fullPage: true });
+});
 test('prints grandes da galeria são reduzidos e chegam com imagem ao administrador', async ({ page }, info) => {
   const admin = { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' };
   const token = `fixture_${info.project.name}_large_receipt_01234567890123456789`, name = `Print grande ${info.project.name}`;

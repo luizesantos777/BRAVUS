@@ -1,18 +1,24 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, RefreshCw } from 'lucide-react';
 import { businessToday, money } from './domain.ts';
 import type { AdminAttendant } from './domain.ts';
 import type { FinancialReport } from './admin-domain.ts';
 import type { AdminClient } from './admin-client.ts';
 
-export default function AdminReports({ client, attendants }: { client: AdminClient; attendants: AdminAttendant[] }) {
+export default function AdminReports({ client, attendants, refreshKey }: { client: AdminClient; attendants: AdminAttendant[]; refreshKey?: unknown }) {
   const today = businessToday(), [start, setStart] = useState(today.slice(0, 8) + '01'), [end, setEnd] = useState(today), [attendant, setAttendant] = useState('');
   const [filter, setFilter] = useState({ start, end, attendant, refresh: 0 }), [report, setReport] = useState<FinancialReport | null>(null), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  useEffect(() => {
-    let cancelled = false; setBusy(true); setError('');
-    client.financial(filter.start, filter.end, filter.attendant).then(value => { if (!cancelled) setReport(value); }).catch(cause => { if (!cancelled) { setError((cause as Error).message); setReport(null); } }).finally(() => { if (!cancelled) setBusy(false); });
-    return () => { cancelled = true; };
+  const generation = useRef(0), running = useRef(false);
+  const load = useCallback(async () => {
+    if (running.current) return;
+    const version = generation.current; running.current = true; setBusy(true); setError('');
+    try { const value = await client.financial(filter.start, filter.end, filter.attendant); if (version === generation.current) setReport(value); }
+    catch (cause) { if (version === generation.current) { setError((cause as Error).message); setReport(null); } }
+    finally { if (version === generation.current) { running.current = false; setBusy(false); } }
   }, [client, filter]);
+  useEffect(() => { ++generation.current; running.current = false; void load(); return () => { ++generation.current; }; }, [load]);
+  // A dashboard refresh updates the applied report without resetting its filters.
+  useEffect(() => { if (!busy) void load(); }, [refreshKey, load]);
   async function download() { if (busy || !report) return; setBusy(true); setError(''); try { await client.downloadFinancial(report.start, report.end, filter.attendant); } catch (cause) { setError((cause as Error).message); } finally { setBusy(false); } }
   const metrics = report ? [ ['Faturamento aprovado', report.totals.grossCents], ['Taxas das vendas', report.totals.gatewayFeeCents], ['Custos de ADS', report.totals.adsCents], ['Comissões após descontos', report.totals.netCommissionCents], ['PIX pagos aos atendentes', report.totals.paidPayoutNetCents], ['Lucro BRAVUS', report.totals.businessProfitCents] ] as const : [];
   return <section className="panel admin-report" aria-busy={busy}>

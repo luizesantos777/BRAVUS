@@ -55,7 +55,7 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
 });
 test('demonstração reproduz a interface e tokens inválidos impedem envio', async ({ page }, info) => {
   await page.goto('/');
-  await expect(page.getByText('Você está na demonstração.')).toBeVisible();
+  await expect(page.locator('.access-status')).toHaveText('Demonstração');
   await expect(page.getByRole('heading', { name: 'Portal do Atendente.' })).toBeVisible();
   await expect(page.getByRole('heading', { name: /Meta Diária/i })).toHaveCount(0);
   await expect(page.getByRole('tab', { name: 'Lançar Vendas' })).toHaveAttribute('aria-selected', 'true');
@@ -71,12 +71,12 @@ test('demonstração reproduz a interface e tokens inválidos impedem envio', as
   await expect(page.locator('.metric.balance')).toContainText('9,13');
   await page.reload();
   await expect(page.locator('.metric.balance')).toContainText('9,13');
-  await page.getByRole('button', { name: 'Como acessar', exact: true }).click();
-  await expect(page.getByText('O cadastro do atendente e o token são definidos pela administração.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Como acessar/i })).toHaveCount(0);
+  await expect(page.locator('.demo-banner')).toHaveCount(0);
   await expect(page.getByLabel('Seu token de acesso')).toHaveCount(0);
-  await page.getByRole('button', { name: 'Entendi' }).click();
   await page.goto('/#/atendente/invalid_attendant_token_0123456789');
   await expect(page.getByRole('alert')).toContainText('Atendente não encontrado pelo token informado.');
+  await expect(page.getByRole('alert')).toContainText('Peça um novo link ao responsável pelo BRAVUS.');
   await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeDisabled();
   await page.screenshot({ path: info.outputPath('portal-token-invalido.png'), fullPage: true });
 });

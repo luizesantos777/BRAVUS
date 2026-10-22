@@ -219,10 +219,8 @@ input::placeholder { color: #8a957d; }
   .brand-intro h1 { font-size: 21px; }
   .brand-sectors { gap: 7px; }
 }
-.settlement-rule{margin:18px 0;padding:17px 18px;border:1px solid #3c542c;border-left:3px solid #d7ad37;border-radius:12px;background:#141e13;font-size:12px;line-height:1.8}
-.settlement-rule>strong{color:#e4c873}.settlement-rule p{color:#c3ccba;margin:6px 0}.settlement-rule small{color:#9fab91}
 .finance-breakdown{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:17px;padding-top:17px;border-top:1px solid #343e2b}
 .finance-breakdown dt{color:#aebba1;font-size:10px;line-height:1.7}.finance-breakdown dd{font-size:13px;font-weight:700;color:#e3eadc;margin:6px 0 0}
 .payout-calculation{margin:18px 0;border:1px solid #3b4a30;background:#162013;border-radius:11px;padding:5px 15px}.payout-calculation>div{display:flex;justify-content:space-between;gap:15px;padding:11px 0;font-size:12px;color:#c4ceb9}.payout-calculation dd{margin:0;white-space:nowrap;font-weight:700}.payout-calculation>div:last-child{border-top:1px solid #3b4a30;color:#e8ca70}
 .payout-help{font-size:11px;color:#acb99e;line-height:1.8;margin:12px 0 18px}.sale-fee-preview>span{flex-wrap:wrap}
-@media(max-width:600px){.finance-breakdown{grid-template-columns:1fr 1fr;gap:14px}.settlement-rule{padding:13px 14px;font-size:11px}.payout-calculation>div{font-size:11px}.payout-help{font-size:10px}}
+@media(max-width:600px){.finance-breakdown{grid-template-columns:1fr 1fr;gap:14px}.payout-calculation>div{font-size:11px}.payout-help{font-size:10px}}

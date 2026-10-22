@@ -89,7 +89,6 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   }
   return <section className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
-    <div className="settlement-rule"><strong>Como seu dinheiro é calculado</strong><p>Sua parte é {portal.profile.commissionBps / 100}% da venda, menos metade da taxa do gateway. A BRAVUS paga a outra metade da taxa. Custos de ADS são descontados do saldo. No repasse, o gateway cobra {money(GATEWAY_WITHDRAWAL_FEE_CENTS)}: {money(ATTENDANT_WITHDRAWAL_FEE_CENTS)} ficam com você e {money(GATEWAY_WITHDRAWAL_FEE_CENTS - ATTENDANT_WITHDRAWAL_FEE_CENTS)} com a BRAVUS, somente quando a administração confirma o pagamento.</p><small>Seu valor é liberado após a aprovação da venda.</small></div>
     <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main')} />
     <ManualPixCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'pix')} />
     <form onSubmit={submit}><fieldset disabled={busy || disabled}>

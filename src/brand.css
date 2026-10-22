@@ -96,6 +96,21 @@ body {
 .button.secondary { background: #10150e; color: #c6cebb; border-color: #34402b; }
 .button.secondary:hover { background: #222d1b; }
 .button.secondary > svg { color: #9fae8e; }
+.checkout-card { padding: 16px; margin-bottom: 13px; border: 1px solid #51482b; border-radius: 12px; background: linear-gradient(120deg, #211e13, #141a10); }
+.checkout-heading { display: flex; align-items: flex-start; gap: 10px; }
+.checkout-heading > svg { color: var(--brand-gold); flex-shrink: 0; margin-top: 2px; }
+.checkout-heading h3 { color: #e4d69d; font-size: 12px; line-height: 1.6; }
+.checkout-heading p { color: #a7b598; font-size: 11px; line-height: 1.7; margin-top: 3px; }
+.checkout-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; align-items: center; margin-top: 12px; }
+.checkout-controls input { width: 100%; min-width: 0; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; background: #10140c; border-color: #49462c; }
+.checkout-controls .button { min-height: 34px; }
+@media (max-width: 700px) {
+  .checkout-card { padding: 13px; }
+  .checkout-heading p { font-size: 10px; }
+  .checkout-controls { grid-template-columns: 1fr 1fr; gap: 9px; }
+  .checkout-controls input { grid-column: 1 / -1; height: 36px; font-size: 10px; padding: 9px 7px; }
+  .checkout-controls .button { min-height: 36px; font-size: 10px; padding: 8px; }
+}
 .manual-pix-card { padding: 16px; margin-bottom: 19px; border: 1px solid #405331; border-radius: 12px; background: linear-gradient(120deg, #142317, #151b11); }
 .manual-pix-heading { display: flex; align-items: flex-start; gap: 10px; }
 .manual-pix-heading > svg { color: var(--brand-gold); flex-shrink: 0; margin-top: 2px; }

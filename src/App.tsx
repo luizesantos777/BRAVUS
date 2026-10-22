@@ -22,13 +22,13 @@ function Dialog({ title, close, children }: { title: string; close: () => void; 
   return <dialog ref={ref} className="dialog" aria-labelledby="dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}><header><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Fechar janela" onClick={close}><X size={19} /></button></header>{children}</dialog>;
 }
 function Empty({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) { return <div className="empty"><span>{icon}</span><h3>{title}</h3><p>{children}</p></div>; }
-function CheckoutCard({ notify }: { notify: (notice: Notice) => void }) {
+function CheckoutCard({ notify, checkout }: { notify: (notice: Notice) => void; checkout?: Checkout }) {
   const input = useRef<HTMLInputElement>(null);
   async function copy() {
     try { await navigator.clipboard.writeText(CHECKOUT_URL); notify({ text: 'Link do checkout copiado!' }); }
     catch { input.current?.focus(); input.current?.select(); notify({ text: 'O link foi selecionado. Use a opção Copiar do seu aparelho.' }); }
   }
-  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout BRAVUS</h3><p>Copie o link para enviar ao cliente ou abra o checkout.</p></div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout BRAVUS</label><input ref={input} id="checkout-link" readOnly value={CHECKOUT_URL} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={CHECKOUT_URL} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
+  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout BRAVUS</h3><p>Copie o link para enviar ao cliente ou abra o checkout.</p>{checkout && <small className="checkout-tariff">{checkoutRateLabel(checkout)}</small>}</div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout BRAVUS</label><input ref={input} id="checkout-link" readOnly value={CHECKOUT_URL} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={CHECKOUT_URL} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
 }
 function ManualPixCard({ notify }: { notify: (notice: Notice) => void }) {
   const input = useRef<HTMLInputElement>(null);
@@ -45,12 +45,12 @@ function ManualPixCard({ notify }: { notify: (notice: Notice) => void }) {
 }
 function SaleFeePreview({ row, checkout, index }: { row: SaleRow; checkout?: Checkout; index: number }) {
   if (!checkout) return null;
-  let amounts: { fee: number; net: number } | null = null, error = '';
+  let amounts: { fee: number; net: number; gross: number } | null = null, error = '';
   if (row.amount.trim()) {
-    try { const amount = amountToCents(row.amount), fee = checkoutFee(amount, checkout); amounts = { fee, net: amount - fee }; }
+    try { const amount = amountToCents(row.amount), fee = checkoutFee(amount, checkout); amounts = { fee, net: amount - fee, gross: amount }; }
     catch (cause) { error = (cause as Error).message; }
   }
-  return <div className="sale-fee-preview" aria-label={`Taxas da venda ${index + 1}`}><span>{checkout.name} · {checkoutRateLabel(checkout)}</span>{amounts && <span>Taxa: <strong>{money(amounts.fee)}</strong><i />Líquido da venda: <strong>{money(amounts.net)}</strong></span>}{error && <span className="fee-validation">{error}</span>}</div>;
+  return <div className="sale-fee-preview" aria-label={`Taxas da venda ${index + 1}`}><span>{checkout.name} · {checkoutRateLabel(checkout, amounts?.gross)}</span>{amounts && <span>Taxa: <strong>{money(amounts.fee)}</strong><i />Líquido da venda: <strong>{money(amounts.net)}</strong></span>}{error && <span className="fee-validation">{error}</span>}</div>;
 }
 function SalesForm({ client, portal, disabled, refresh, notify, preview }: { client: PortalClient; portal: Portal; disabled: boolean; refresh: () => Promise<void>; notify: (notice: Notice) => void; preview: (url: string) => void }) {
   const [rows, setRows] = useState<SaleRow[]>([blankRow()]);
@@ -88,7 +88,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   }
   return <section className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
-    <CheckoutCard notify={notify} />
+    <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main')} />
     <ManualPixCard notify={notify} />
     <form onSubmit={submit}><fieldset disabled={busy || disabled}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />

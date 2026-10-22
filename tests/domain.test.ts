@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, demoCheckouts, detectPixType, inPeriod, percentageToBps, renderSaleAlert, validateAvatar, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, renderSaleAlert, validateAvatar, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
 const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z' });
@@ -18,7 +18,16 @@ test('PIX manual aplica 6,99% mais R$ 1,69 em todas as faixas, arredondando cada
   assert.equal(checkoutFee(1000, pix) + checkoutFee(1000, pix), 478);
   assert.equal(checkoutFee(2000, pix), 309);
   assert.throws(() => checkoutFee(499, pix), /valor mínimo/);
-  assert.equal(checkoutFee(10000, demoCheckouts.find(checkout => checkout.id === 'main')!), 0);
+});
+test('checkout usa 15% até R$ 1.000 e 25% acima, com R$ 1,99 por transação em ambas as faixas', () => {
+  const checkout = demoCheckouts.find(item => item.id === 'main')!;
+  for (const [gross, fee] of [[10000, 1699], [19700, 3154], [30000, 4699], [35000, 5449], [35001, 5449], [40000, 6199], [50000, 7699], [99999, 15199], [100000, 15199], [100001, 25199], [100002, 25200], [150000, 37699]]) assert.equal(checkoutFee(gross, checkout), fee);
+  assert.equal(checkoutFee(10000, checkout) * 2, 3398);
+  assert.equal(checkoutFee(20000, checkout), 3199);
+  assert.match(checkoutRateLabel(checkout, 100000), /15,00%/);
+  assert.match(checkoutRateLabel(checkout, 100001), /25,00%/);
+  assert.equal(100000 - checkoutFee(100000, checkout), 84801);
+  assert.equal(100001 - checkoutFee(100001, checkout), 74802);
 });
 test('toda venda gera comissão, sem exigir faturamento mínimo ou aplicar metas antigas', () => {
   const legacy = { ...sale(19700), goalCents: 20000 };

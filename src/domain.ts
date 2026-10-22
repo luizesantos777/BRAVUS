@@ -4,7 +4,9 @@ export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
 export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
-export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number }
+export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
+export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
+export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null }
 export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; commissionBps: number; note: string; receiptId: string; createdAt: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
 export interface Payout { id: string; amountCents: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
@@ -55,13 +57,19 @@ export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 
 export function checkoutFee(amountCents: number, checkout: Checkout): number {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Informe um valor de venda válido.');
   if (amountCents < checkout.minAmountCents) throw new Error(`${checkout.name}: valor mínimo de ${money(checkout.minAmountCents)} por venda.`);
-  return Math.floor((amountCents * checkout.feeBps + 5000) / 10000) + checkout.fixedFeeCents;
+  const tariff = checkout.higherTier && amountCents > checkout.higherTier.aboveAmountCents ? checkout.higherTier : checkout;
+  return Math.floor((amountCents * tariff.feeBps + 5000) / 10000) + tariff.fixedFeeCents;
 }
-export function checkoutRateLabel(checkout: Checkout): string {
-  const percent = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(checkout.feeBps / 100);
-  return `${percent}% + ${money(checkout.fixedFeeCents)} por venda`;
+export function checkoutRateLabel(checkout: Checkout, amountCents?: number): string {
+  const label = (tariff: Pick<Checkout, 'feeBps' | 'fixedFeeCents'>) => `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(tariff.feeBps / 100)}% + ${money(tariff.fixedFeeCents)} por venda`;
+  const tier = checkout.higherTier;
+  if (!tier) return label(checkout);
+  const limit = money(tier.aboveAmountCents);
+  if (amountCents === undefined) return `Até ${limit}: ${label(checkout)} · Acima de ${limit}: ${label(tier)}`;
+  return amountCents > tier.aboveAmountCents ? `${label(tier)} · Acima de ${limit}` : `${label(checkout)} · Até ${limit}`;
 }
-export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500 };
+export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null };
+export const CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 } };
 export function percentageToBps(value: string): number {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error('Informe um percentual entre 0 e 100, com até duas casas decimais.');
   const [whole, fraction = ''] = value.trim().replace(',', '.').split('.');
@@ -153,7 +161,7 @@ export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' 
 export function demoInitial(): DemoData {
   return { version: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: 1000, photoUrl: '', saleAlertTemplate: DEFAULT_SALE_ALERT }, sales: [], payouts: [], costs: [], receipts: {} };
 }
-export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', feeBps: 0, fixedFeeCents: 0, minAmountCents: 1 }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }];
+export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', ...CHECKOUT_PIX_TARIFF }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }];
 export function demoPortal(data: DemoData, period: Period): Portal {
   const today = businessToday();
   return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), today };

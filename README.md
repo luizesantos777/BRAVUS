@@ -110,10 +110,19 @@ O PIX manual aplica automaticamente **6,99% + R$ 1,69 por venda**, conforme a ta
 
 A tela mostra a tarifa, a taxa calculada e o líquido antes de enviar. O servidor recalcula usando a configuração do checkout e grava a taxa na venda; valores de taxa enviados pelo navegador não são usados. O extrato soma as taxas gravadas e o histórico mostra bruto, taxa e líquido.
 
-O Checkout principal permanece sem taxa até ser configurado pelo responsável. Taxas variáveis, fixas e mínimo por venda podem ser ajustados na administração. Mudanças se aplicam apenas aos próximos lançamentos; as vendas antigas mantêm seus valores.
+O **Checkout principal** aplica automaticamente as faixas informadas pelo responsável:
+
+| Valor de cada venda | Taxa variável | Taxa fixa por transação |
+| --- | --- | --- |
+| Até R$ 1.000,00, inclusive | 15% | R$ 1,99 |
+| Acima de R$ 1.000,00 | 25% | R$ 1,99 |
+
+A faixa depende do valor de cada venda, inclusive em lotes. R$ 1.000,00 gera taxa de R$ 151,99 e líquido de R$ 848,01; R$ 1.000,01 gera taxa de R$ 251,99 e líquido de R$ 748,02. O percentual incide sobre o valor integral da transação na faixa correspondente, com arredondamento em centavos, e soma uma taxa fixa por venda. Reserva financeira informada: 0%.
+
+O cartão do checkout mostra as duas faixas e o lançamento exibe a tarifa escolhida, a taxa e o líquido. A API recalcula esses valores. Taxas variáveis, fixas, mínimo e faixa superior podem ser ajustados na administração. O limite da faixa inicial é inclusivo; deixar esse campo vazio configura taxa única. Mudanças se aplicam apenas aos próximos lançamentos; as vendas antigas mantêm seus valores. A migração do banco configura essas faixas uma única vez e preserva os ajustes administrativos posteriores.
 
 ```sh
-npm run manage -- set-checkout --id main --name "Checkout principal" --fee 3.5 --fixed-fee 0 --minimum 0.01
+npm run manage -- set-checkout --id main --name "Checkout principal" --fee 15 --fixed-fee 1.99 --minimum 0.01 --above 1000 --above-fee 25 --above-fixed-fee 1.99
 npm run manage -- set-costs --attendant ID_DO_ATENDENTE --date 2026-10-21 --ads 20 --withdrawal-fee 2
 npm run manage -- mark-payout --id ID_DO_REPASSE --status paid --note "Pagamento conferido pela administração"
 ```
@@ -186,7 +195,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `PATCH /api/admin/checkouts/:id` | Chave administrativa | Definir nome e taxa do checkout |
 | `PATCH /api/admin/payouts/:id` | Chave administrativa | Confirmar pagamento ou cancelar solicitação |
 
-A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "3.5", "fixedFee": "0", "minimum": "0.01" }`; omitir `fixedFee` ou `minimum` preserva a configuração existente. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
+A criação recebe `{ "name": "Nome", "commission": "10" }`, opcionalmente com o campo `token` escolhido pela administração. Tokens escolhidos devem ter de 32 a 160 letras, números, hífen ou sublinhado; valores já usados são recusados. Sem esse campo, o servidor gera um token aleatório. Custos recebem `{ "date": "AAAA-MM-DD", "ads": "20", "withdrawalFee": "2" }`. Taxas recebem `{ "name": "Checkout", "fee": "15", "fixedFee": "1.99", "minimum": "0.01", "higherTier": { "aboveAmount": "1000", "fee": "25", "fixedFee": "1.99" } }`; omitir `fixedFee`, `minimum` ou `higherTier` preserva a configuração existente. `higherTier: null` remove a faixa superior e aplica a tarifa principal a todas as vendas. Ativação recebe `{ "active": false }`. Repasse recebe `{ "status": "paid", "note": "Pagamento conferido" }` ou status `cancelled`. Valores monetários e percentuais entram como texto para validação decimal. Períodos aceitos: `today`, `yesterday`, `week`, `month` e `all`.
 
 ## GitHub Pages: atualizar a demonstração
 
@@ -206,7 +215,7 @@ BRAVUS_CHROMIUM_PATH=/usr/bin/chromium npm run test:e2e
 
 Os testes cobrem comissões sem faturamento mínimo, compatibilidade com registros antigos, regras financeiras, dias no fuso brasileiro, validação de PIX, isolamento entre tokens, comprovantes privados, idempotência, saldo de repasses e persistência após reiniciar o banco. O Playwright testa desktop e celular contra a API real com um banco temporário e tokens sintéticos, removidos ao encerrar o teste. Não são utilizados dados de atendentes reais.
 
-Também são verificados todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
+Também são verificados os limites de R$ 1.000,00 e R$ 1.000,01 do checkout, escolha de faixa por venda, preservação de taxas históricas e faixas administrativas após migração e reinício, todas as faixas de tarifa PIX, arredondamento, taxa fixa por transação em lotes, recusa de taxas manipuladas pelo cliente, atualização de bancos antigos sem alterar vendas registradas, autorização administrativa, a criação/rotação/revogação de tokens, a persistência da chave privada, as taxas sem efeito retroativo, a confirmação/cancelamento de repasses e a leitura de um backup com vendas e comprovantes.
 
 O perfil tem cobertura de upload, prévia, persistência após recarregar, PIX, foto no ranking e mensagem personalizada. Os testes de navegador ativam/desativam notificações de demonstração e consultam os alertas locais do service worker, com permissão concedida no Chromium. Os testes da API validam inscrições por atendente, rejeição de endpoints externos arbitrários, criptografia real do payload e limpeza de inscrições expiradas; o transporte externo é substituído por uma função de teste. Isso não valida a entrega em aparelhos físicos pelos provedores.
 

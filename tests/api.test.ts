@@ -20,8 +20,10 @@ const tokenB = 'fixture_attendant_b_012345678901234567890';
 const adminKey = 'fixture_admin_012345678901234567890123456789';
 const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
-async function fixture(t: TestContext) {
+async function fixture(t: TestContext, { defaultCheckoutRates = false } = {}) {
   const store = new PortalStore(':memory:');
+  // General authorization and payout scenarios use an explicit fee-free checkout.
+  if (!defaultCheckoutRates) store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null });
   const a = store.createAttendant('Ana Teste', 1000, tokenA), b = store.createAttendant('Bruno Teste', 1000, tokenB);
   const deliveries: { endpoint: string; payload: string }[] = [];
   const push = new PushService(store, webpush.generateVAPIDKeys(), async (subscription, payload, options) => {
@@ -84,6 +86,25 @@ test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador'
   const invalid = batch(); invalid.sales[0].checkoutId = 'pix'; invalid.sales[0].amount = '4,99';
   assert.equal((await submit(invalid, 'fixture_pix_below_minimum')).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
+});
+test('API escolhe a faixa do checkout por venda, recalcula taxas e mantém o limite inclusivo de R$ 1.000', async t => {
+  const { call, submit } = await fixture(t, { defaultCheckoutRates: true });
+  const payload = batch();
+  payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount, feeCents: 0, feeBps: 0, higherTier: null }));
+  assert.equal((await submit(payload)).status, 200);
+  const portal = await (await call('/api/portal')).json();
+  assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents).sort((a: number, b: number) => a - b), [15199, 25199]);
+  assert.equal(portal.finance.feeCents, 40398); assert.equal(portal.finance.availableCents, 15960);
+  const checkout = portal.checkouts.find((item: { id: string }) => item.id === 'main');
+  assert.equal(checkout.feeBps, 1500); assert.equal(checkout.fixedFeeCents, 199);
+  assert.deepEqual(checkout.higherTier, { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 });
+  await submit(payload); assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
+  const update = (body: unknown) => call('/api/admin/checkouts/main', adminKey, { method: 'PATCH', body: JSON.stringify(body) });
+  assert.equal((await update({ name: 'Checkout principal', fee: '16' })).status, 200);
+  const next = await (await call('/api/portal')).json();
+  assert.deepEqual(next.checkouts.find((item: { id: string }) => item.id === 'main').higherTier, checkout.higherTier);
+  assert.equal(next.finance.feeCents, 40398);
+  for (const higherTier of [{ aboveAmount: '350', fee: '101', fixedFee: '1.99' }, { aboveAmount: '0', fee: '25', fixedFee: '1.99' }, { aboveAmount: '350', fee: '25', fixedFee: '-1' }, []]) assert.equal((await update({ name: 'Principal', fee: '15', higherTier })).status, 400);
 });
 test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são salvas', async t => {
   const { call, submit } = await fixture(t);
@@ -161,6 +182,31 @@ test('atualização do banco configura PIX uma vez e preserva taxas já registra
     store.close(); store = new PortalStore(file);
     assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
     assert.equal(store.checkouts().find(checkout => checkout.id === 'pix')!.feeBps, 700);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+});
+test('atualização do checkout preserva vendas antigas e mantém faixas ajustadas após reiniciar', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-upgrade-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = new PortalStore(file); const account = store.createAttendant('Histórico checkout', 1000, tokenA);
+    store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null });
+    store.recordSales({ id: account.id }, batch(), 'fixture_before_checkout_upgrade');
+    store.db.exec("ALTER TABLE checkouts DROP COLUMN tier_above_cents; ALTER TABLE checkouts DROP COLUMN tier_fee_bps; ALTER TABLE checkouts DROP COLUMN tier_fixed_fee_cents; DELETE FROM schema_migrations WHERE id = 'checkout-pix-tiered-tariff-v1';");
+    store.close(); store = new PortalStore(file);
+    assert.equal(store.sales({ id: account.id })[0].feeCents, 0);
+    const payload = batch(); payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount }));
+    store.recordSales({ id: account.id }, payload, 'fixture_after_checkout_upgrade');
+    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 15199, 25199]);
+    store.adminSetCheckout('main', { name: 'Checkout principal', fee: '16', fixedFee: '2', higherTier: { aboveAmount: '400', fee: '28', fixedFee: '3' } });
+    store.close(); store = new PortalStore(file);
+    const checkout = store.checkouts().find(item => item.id === 'main')!;
+    assert.equal(checkout.feeBps, 1600); assert.equal(checkout.fixedFeeCents, 200);
+    assert.deepEqual(checkout.higherTier, { aboveAmountCents: 40000, feeBps: 2800, fixedFeeCents: 300 });
+    assert.equal(store.checkouts().find(item => item.id === 'pix')!.feeBps, 699);
+    const logs = execFileSync(process.execPath, ['server/manage.ts', 'set-checkout', '--id', 'main', '--name', 'Checkout principal', '--fee', '15', '--fixed-fee', '1.99', '--above', '1000', '--above-fee', '25', '--above-fixed-fee', '1.99'], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: file } });
+    assert.equal(logs.includes(tokenA), false);
+    assert.deepEqual(store.checkouts().find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 100000, feeBps: 2500, fixedFeeCents: 199 });
+    assert.deepEqual(store.sales({ id: account.id }).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 15199, 25199]);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('operador cria token e convite privados pelo comando de administração', () => {

@@ -2,7 +2,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync, chmodSync } from 'node:fs';
 import { dirname } from 'node:path';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, DEFAULT_SALE_ALERT, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, validateProfile, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminDashboard, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
@@ -40,10 +40,18 @@ export class PortalStore {
       const columns = new Set(this.db.prepare('PRAGMA table_info(checkouts)').all().map(column => column.name));
       if (!columns.has('fixed_fee_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN fixed_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(fixed_fee_cents >= 0)');
       if (!columns.has('min_amount_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN min_amount_cents INTEGER NOT NULL DEFAULT 1 CHECK(min_amount_cents > 0)');
+      if (!columns.has('tier_above_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_above_cents INTEGER CHECK(tier_above_cents IS NULL OR tier_above_cents > 0)');
+      if (!columns.has('tier_fee_bps')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_fee_bps INTEGER CHECK(tier_fee_bps IS NULL OR tier_fee_bps BETWEEN 0 AND 10000)');
+      if (!columns.has('tier_fixed_fee_cents')) this.db.exec('ALTER TABLE checkouts ADD COLUMN tier_fixed_fee_cents INTEGER CHECK(tier_fixed_fee_cents IS NULL OR tier_fixed_fee_cents >= 0)');
       this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (id TEXT PRIMARY KEY)');
       if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('manual-pix-tariff-v1')) {
         this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run(MANUAL_PIX_TARIFF.feeBps, MANUAL_PIX_TARIFF.fixedFeeCents, MANUAL_PIX_TARIFF.minAmountCents, 'pix');
         this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('manual-pix-tariff-v1');
+      }
+      if (!this.db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-pix-tiered-tariff-v1')) {
+        const tariff = CHECKOUT_PIX_TARIFF, tier = tariff.higherTier;
+        this.db.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run(tariff.feeBps, tariff.fixedFeeCents, tariff.minAmountCents, tier.aboveAmountCents, tier.feeBps, tier.fixedFeeCents, 'main');
+        this.db.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-pix-tiered-tariff-v1');
       }
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); this.db.close(); throw error; }
@@ -107,13 +115,22 @@ export class PortalStore {
     if (!current) throw new PortalError(404, 'Checkout não encontrado.');
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
     if (data.fixedFee !== undefined && typeof data.fixedFee !== 'string' || data.minimum !== undefined && typeof data.minimum !== 'string') invalid('Informe valores válidos para a taxa fixa e o mínimo por venda.');
-    let fee: number, fixedFee: number, minimum: number;
+    let fee: number, fixedFee: number, minimum: number, higherTier = current.higherTier;
     try {
       fee = percentageToBps(data.fee as string);
       fixedFee = data.fixedFee === undefined ? current.fixedFeeCents : /^0+(?:[.,]0{1,2})?$/.test((data.fixedFee as string).trim()) ? 0 : amountToCents(data.fixedFee as string);
       minimum = data.minimum === undefined ? current.minAmountCents : amountToCents(data.minimum as string);
+      if (data.higherTier !== undefined) {
+        if (data.higherTier === null) higherTier = null;
+        else {
+          const tier = this.adminFields(data.higherTier);
+          if (typeof tier.aboveAmount !== 'string' || typeof tier.fee !== 'string' || typeof tier.fixedFee !== 'string') throw new Error('Preencha o limite, o percentual e a taxa fixa da faixa superior.');
+          higherTier = { aboveAmountCents: amountToCents(tier.aboveAmount as string), feeBps: percentageToBps(tier.fee as string), fixedFeeCents: /^0+(?:[.,]0{1,2})?$/.test((tier.fixedFee as string).trim()) ? 0 : amountToCents(tier.fixedFee as string) };
+        }
+      }
+      if (higherTier && higherTier.aboveAmountCents < minimum) throw new Error('O limite da faixa inicial deve ser maior ou igual ao mínimo por venda.');
     } catch (error) { return invalid((error as Error).message); }
-    this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, id);
+    this.db.prepare('UPDATE checkouts SET name = ?, fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ?, tier_above_cents = ?, tier_fee_bps = ?, tier_fixed_fee_cents = ? WHERE id = ?').run((data.name as string).trim(), fee, fixedFee, minimum, higherTier?.aboveAmountCents ?? null, higherTier?.feeBps ?? null, higherTier?.fixedFeeCents ?? null, id);
   }
   createAttendant(name: string, commissionBps: number, providedToken?: string) {
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 10000) invalid('Nome e comissão são obrigatórios e devem ser válidos.');
@@ -136,7 +153,9 @@ export class PortalStore {
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
     return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
-  checkouts(): Checkout[] { return this.db.prepare('SELECT id, name, fee_bps AS feeBps, fixed_fee_cents AS fixedFeeCents, min_amount_cents AS minAmountCents FROM checkouts ORDER BY rowid').all() as unknown as Checkout[]; }
+  checkouts(): Checkout[] {
+    return this.db.prepare('SELECT * FROM checkouts ORDER BY rowid').all().map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
+  }
   sales(auth: Authenticated): Sale[] { return this.db.prepare('SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, commission_bps AS commissionBps, note, receipt_id AS receiptId, created_at AS createdAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC').all(auth.id) as unknown as Sale[]; }
   costs(auth: Authenticated): DailyCost[] { return this.db.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id) as unknown as DailyCost[]; }
   payouts(auth: Authenticated): Payout[] { return this.db.prepare('SELECT id, amount_cents AS amountCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id) as unknown as Payout[]; }

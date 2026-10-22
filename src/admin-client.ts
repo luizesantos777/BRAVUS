@@ -1,5 +1,5 @@
 import { ApiError } from './client.ts';
-import type { AdminDashboard, DailyCost, Invitation } from './domain.ts';
+import type { AdminDashboard, CheckoutTierInput, DailyCost, Invitation } from './domain.ts';
 
 export const adminUnavailable = !import.meta.env.VITE_API_URL && window.location.hostname.endsWith('.github.io');
 
@@ -29,7 +29,7 @@ export class AdminClient {
   setActive(id: string, active: boolean) { return this.request(`/attendants/${id}`, 'PATCH', { active }); }
   costs(id: string, date: string) { return this.request<DailyCost>(`/attendants/${id}/costs?date=${encodeURIComponent(date)}`); }
   setCosts(id: string, date: string, ads: string, withdrawalFee: string) { return this.request(`/attendants/${id}/costs`, 'POST', { date, ads, withdrawalFee }); }
-  setCheckout(id: string, name: string, fee: string, fixedFee: string, minimum: string) { return this.request(`/checkouts/${id}`, 'PATCH', { name, fee, fixedFee, minimum }); }
+  setCheckout(id: string, name: string, fee: string, fixedFee: string, minimum: string, higherTier: CheckoutTierInput | null) { return this.request(`/checkouts/${id}`, 'PATCH', { name, fee, fixedFee, minimum, higherTier }); }
   markPayout(id: string, status: 'paid' | 'cancelled', note: string) { return this.request(`/payouts/${id}`, 'PATCH', { status, note }); }
 }
 

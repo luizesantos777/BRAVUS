@@ -1,4 +1,4 @@
-import { DEMO_KEY, demoInitial, saleStatusLabels, validateProfile, validDate } from './domain.ts';
+import { DEFAULT_COMMISSION_BPS, DEMO_KEY, demoInitial, saleStatusLabels, validateProfile, validDate } from './domain.ts';
 import type { DemoData } from './domain.ts';
 
 export function readDemoData(): DemoData {
@@ -8,8 +8,10 @@ export function readDemoData(): DemoData {
     const data = JSON.parse(saved) as DemoData;
     if (data.version !== 1 || !Array.isArray(data.sales) || !Array.isArray(data.payouts) || !Array.isArray(data.costs) || !data.receipts || typeof data.receipts !== 'object') throw new Error();
     data.profile = { ...demoInitial().profile, ...data.profile }; validateProfile(data.profile);
+    if (data.settlementVersion !== 1) { data.profile.commissionBps = DEFAULT_COMMISSION_BPS; data.settlementVersion = 1; }
     data.sales = data.sales.map(sale => ({ ...sale, status: sale.status ?? 'approved', reviewNote: sale.reviewNote ?? '', reviewedAt: sale.reviewedAt ?? null }));
-    if (!data.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000 && Object.hasOwn(saleStatusLabels, sale.status) && typeof sale.reviewNote === 'string')) throw new Error();
+    if (!data.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000 && (sale.commissionMode === undefined || sale.commissionMode === 'net-share' || sale.commissionMode === 'gross-share-less-fees') && Object.hasOwn(saleStatusLabels, sale.status) && typeof sale.reviewNote === 'string')) throw new Error();
+    if (!data.payouts.every(payout => Number.isSafeInteger(payout.amountCents) && payout.amountCents > 0 && (payout.withdrawalFeeCents === undefined || Number.isSafeInteger(payout.withdrawalFeeCents) && payout.withdrawalFeeCents >= 0 && payout.withdrawalFeeCents < payout.amountCents))) throw new Error();
     return data;
   } catch { throw new Error('Não foi possível ler a demonstração salva. Seus dados foram preservados; use outro navegador para experimentar.'); }
 }

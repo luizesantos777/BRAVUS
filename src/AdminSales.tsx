@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { Check, ChevronLeft, ChevronRight, FileImage, LoaderCircle, X } from 'lucide-react';
-import { dateLabel, money, saleStatusLabels } from './domain.ts';
+import { dateLabel, money, saleEarnings, saleStatusLabels } from './domain.ts';
 import type { AdminAttendant, AdminSale, AdminSalesPage, SaleStatus } from './domain.ts';
 import type { AdminClient } from './admin-client.ts';
 
@@ -27,7 +27,7 @@ export default function AdminSales({ client, attendants, refreshKey, run, busy, 
     {loadError && <p className="form-error" role="alert">{loadError}</p>}
     {loading ? <div className="loading-state"><LoaderCircle size={20} className="spin" />Carregando vendas...</div> : result?.sales.length ? <div className="review-list">{result.sales.map(sale => <article className="review-sale" key={sale.id} data-sale-id={sale.id}>
       <div className="review-sale-heading"><div><strong>{sale.attendantName}</strong><small>{dateLabel(sale.date)} às {sale.time} · {sale.checkoutName}</small></div><span className={`sale-status ${sale.status}`}>{saleStatusLabels[sale.status]}</span></div>
-      <dl className="review-values"><div><dt>Valor da venda</dt><dd>{money(sale.amountCents)}</dd></div><div><dt>Taxa da transação</dt><dd>{money(sale.feeCents)}</dd></div><div><dt>Líquido da venda</dt><dd>{money(sale.amountCents - sale.feeCents)}</dd></div><div><dt>Comissão {sale.status === 'pending' ? 'a liberar' : sale.status === 'rejected' ? 'recusada' : 'liberada'}</dt><dd>{money(Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000))}</dd></div></dl>
+      <dl className="review-values"><div><dt>Valor da venda</dt><dd>{money(sale.amountCents)}</dd></div><div><dt>Taxa da transação</dt><dd>{money(sale.feeCents)}</dd></div><div><dt>Parte BRAVUS</dt><dd>{money(sale.amountCents - sale.feeCents - saleEarnings(sale))}</dd></div><div><dt>Comissão {sale.status === 'pending' ? 'a liberar' : sale.status === 'rejected' ? 'recusada' : 'liberada'}</dt><dd>{money(saleEarnings(sale))}</dd></div></dl>
       {sale.note && <p className="review-note">{sale.note}</p>}{sale.reviewNote && <p className="review-note"><strong>{sale.status === 'rejected' ? 'Motivo da recusa' : 'Observação da análise'}:</strong> {sale.reviewNote}</p>}
       <div className="review-actions"><button className="button secondary" onClick={() => void openReceipt(sale.receiptId)}><FileImage size={14} />Ver comprovante</button>{sale.status === 'pending' && <><button className="button secondary reject-sale" disabled={busy} onClick={() => { setDecision({ sale, status: 'rejected' }); setNote(''); }}><X size={14} />Recusar venda</button><button className="button primary" disabled={busy} onClick={() => { setDecision({ sale, status: 'approved' }); setNote(''); }}><Check size={14} />Aprovar venda</button></>}</div>
     </article>)}</div> : <div className="empty"><Check size={28} /><h3>Nenhuma venda nesta lista</h3><p>Os lançamentos dos atendentes aparecerão aqui para você analisar.</p></div>}

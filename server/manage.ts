@@ -2,7 +2,7 @@ import { resolve, dirname } from 'node:path';
 import { mkdirSync, openSync, writeFileSync, closeSync, unlinkSync } from 'node:fs';
 import { PortalStore } from './store.ts';
 import { backup } from 'node:sqlite';
-import { amountToCents, percentageToBps } from '../src/domain.ts';
+import { amountToCents, DEFAULT_COMMISSION_BPS, percentageToBps } from '../src/domain.ts';
 
 const [command, ...args] = process.argv.slice(2);
 const flag = (name: string, fallback = '') => { const index = args.indexOf(`--${name}`); return index < 0 ? fallback : (args[index + 1] ?? ''); };
@@ -11,7 +11,7 @@ const cost = (input: string) => /^0([.,]0{1,2})?$/.test(input) ? 0 : amountToCen
 const store = new PortalStore(process.env.BRAVUS_DB_PATH ?? resolve('.bravus/portal.sqlite'));
 try {
   if (command === 'create-attendant') {
-    const name = flag('name'), commission = percent(flag('commission'));
+    const name = flag('name'), commission = percent(flag('commission', String(DEFAULT_COMMISSION_BPS / 100)));
     const base = flag('base-url', process.env.BRAVUS_PUBLIC_URL ?? '');
     if (!base || !/^https?:\/\//.test(base)) throw new Error('Informe --base-url com o endereço do portal.');
     const output = resolve(flag('output', '.bravus/invites/' + Date.now() + '.json'));

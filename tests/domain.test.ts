@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, renderSaleAlert, validateAvatar, validateProfile, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, checkoutRateLabel, demoCheckouts, detectPixType, inPeriod, percentageToBps, payoutNet, renderSaleAlert, saleEarnings, validateAvatar, validatePayoutAmount, validateProfile, validDate } from '../src/domain.ts';
 import type { Sale } from '../src/domain.ts';
 
 const sale = (amountCents: number, date = '2026-10-21', feeCents = 0): Sale => ({ id: 'sale', date, time: '12:00', checkoutId: 'main', checkoutName: 'Principal', amountCents, feeCents, commissionBps: 1000, note: '', receiptId: 'receipt', createdAt: '2026-10-21T12:00:00Z', status: 'approved', reviewNote: '', reviewedAt: null });
@@ -91,4 +91,43 @@ test('somente vendas aprovadas liberam comissão; pendentes e recusadas não ent
   const summary = calculateFinance([approved, pending, rejected], [{ date: '2026-10-21', adsCents: 200, withdrawalFeeCents: 0 }], [], 'today', '2026-10-21');
   assert.equal(summary.grossCents, 10000); assert.equal(summary.availableCents, 800); assert.equal(summary.count, 1);
   assert.equal(summary.pendingSalesCount, 1); assert.equal(summary.pendingSalesCents, 20000); assert.equal(summary.rejectedSalesCount, 1);
+});
+
+test('novas vendas descontam 50% do bruto e a taxa inteira antes do valor do atendente', () => {
+  for (const [checkoutId, amountCents, expected] of [['main', 10000, 3301], ['main', 19700, 6696], ['main', 100000, 34801], ['pix', 10000, 4132], ['main', 10001, 3301]] as const) {
+    const feeCents = checkoutFee(amountCents, demoCheckouts.find(checkout => checkout.id === checkoutId)!);
+    const item = { ...sale(amountCents, '2026-10-21', feeCents), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
+    assert.equal(saleEarnings(item), expected);
+    const finance = calculateFinance([item], [], [], 'all', item.date);
+    assert.equal(finance.commissionCents, expected); assert.equal(finance.availableCents, expected);
+    assert.equal(finance.grossCents, finance.businessShareCents + finance.transactionFeeCents + finance.commissionCents);
+  }
+  // No checkout fee is shared or silently charged twice. Old snapshots retain their formula.
+  assert.equal(saleEarnings(sale(10000, '2026-10-21', 1699)), 830);
+  const tiny = { ...sale(1, '2026-10-21', 199), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
+  assert.equal(saleEarnings(tiny), -199);
+});
+
+test('saque reserva o total uma vez, desconta R$ 5 do PIX e devolve tudo quando cancelado', () => {
+  const item = { ...sale(10000, '2026-10-21', 1699), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const };
+  const payout = { id: 'payout', amountCents: 3301, withdrawalFeeCents: 500, status: 'pending' as const, requestedAt: '2026-10-21T12:00:00Z', paidAt: null, note: '' };
+  assert.equal(payoutNet(payout), 2801);
+  const pending = calculateFinance([item], [], [payout], 'today', item.date);
+  assert.equal(pending.availableCents, 0); assert.equal(pending.feeCents, 2199); assert.equal(pending.pendingPayoutCents, 3301);
+  const paid = calculateFinance([item], [], [{ ...payout, status: 'paid' }], 'today', item.date);
+  assert.equal(paid.availableCents, 0); assert.equal(paid.withdrawalFeeCents, 500); assert.equal(paid.paidPayoutNetCents, 2801);
+  const cancelled = calculateFinance([item], [], [{ ...payout, status: 'cancelled' }], 'today', item.date);
+  assert.equal(cancelled.availableCents, 3301); assert.equal(cancelled.feeCents, 1699);
+  assert.throws(() => validatePayoutAmount(500, 3301), /taxa/);
+  assert.throws(() => validatePayoutAmount(3302, 3301), /saldo/);
+  assert.doesNotThrow(() => validatePayoutAmount(501, 3301));
+  assert.equal(payoutNet({ amountCents: 2000 }), 2000);
+});
+
+test('taxa de saque acompanha o período de São Paulo sem alterar o saldo acumulado', () => {
+  const payout = { id: 'payout', amountCents: 1000, withdrawalFeeCents: 500, status: 'paid' as const, requestedAt: '2026-10-22T01:00:00Z', paidAt: '2026-10-22T13:00:00Z', note: '' };
+  const today = calculateFinance([sale(30000)], [], [payout], 'today', '2026-10-22');
+  const yesterday = calculateFinance([sale(30000)], [], [payout], 'yesterday', '2026-10-22');
+  assert.equal(today.withdrawalFeeCents, 0); assert.equal(yesterday.withdrawalFeeCents, 500);
+  assert.equal(today.availableCents, 2000); assert.equal(yesterday.availableCents, 2000);
 });

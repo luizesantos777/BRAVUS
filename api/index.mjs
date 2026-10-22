@@ -1005,6 +1005,26 @@ var PushService = class {
 
 // server/vercel.ts
 var BODY_LIMIT2 = 4 * 1024 * 1024;
+var StartupError = class extends Error {
+  issue;
+  databaseCode;
+  constructor(issue, error) {
+    super(issue);
+    this.issue = issue;
+    if (issue !== "database_initialization_failed") return;
+    const known = /* @__PURE__ */ new Set(["SQLITE_ERROR", "SQLITE_BUSY", "SQLITE_BUSY_TIMEOUT", "SQLITE_AUTH", "SQLITE_READONLY", "SQLITE_CONSTRAINT", "SERVER_ERROR", "HRANA_PROTO_ERROR", "HRANA_CLOSED_ERROR", "TRANSACTION_CLOSED", "PROTOCOL_VERSION_ERROR", "ERR_INVALID_URL", "ENOTFOUND", "ECONNREFUSED", "ETIMEDOUT"]);
+    let current = error;
+    for (let depth = 0; depth < 4 && current && typeof current === "object"; depth++) {
+      const detail = current;
+      if (detail.status === 401 || detail.status === 403) {
+        this.databaseCode = "DATABASE_AUTH_FAILED";
+        break;
+      }
+      if (typeof detail.code === "string" && known.has(detail.code)) this.databaseCode = detail.code;
+      current = detail.cause;
+    }
+  }
+};
 function createVercelHandler(options = {}) {
   let initialized;
   const environment = options.environment ?? (() => process.env);
@@ -1012,16 +1032,26 @@ function createVercelHandler(options = {}) {
   async function initialize() {
     const env = environment(), url = env.TURSO_DATABASE_URL, authToken = env.TURSO_AUTH_TOKEN, key = env.BRAVUS_ADMIN_KEY;
     if (!url || !authToken || !key) throw new Error("SETUP_REQUIRED");
-    const adminKey = loadAdminKey("", key);
-    const store = await openStore({ url, authToken });
+    let adminKey;
+    try {
+      adminKey = loadAdminKey("", key);
+    } catch {
+      throw new StartupError("admin_key_invalid");
+    }
+    let store;
+    try {
+      store = await openStore({ url, authToken });
+    } catch (error) {
+      throw new StartupError("database_initialization_failed", error);
+    }
     try {
       const configuredPush = !!(env.BRAVUS_PUSH_PUBLIC_KEY || env.BRAVUS_PUSH_PRIVATE_KEY);
       const push = configuredPush ? new PushService(store, loadPushKeys("", env)) : void 0;
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? "").split(",").map((value) => value.trim()).filter(Boolean);
       return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT2 });
-    } catch (error) {
+    } catch {
       store.close();
-      throw error;
+      throw new StartupError("configuration_invalid");
     }
   }
   return async (request, response) => {
@@ -1044,7 +1074,7 @@ function createVercelHandler(options = {}) {
       });
       const handler = await initialized;
       await handler(request, response);
-    } catch {
+    } catch (error) {
       if (response.headersSent) {
         response.end();
         return;
@@ -1053,7 +1083,8 @@ function createVercelHandler(options = {}) {
       const missingVariables = ["TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "BRAVUS_ADMIN_KEY"].filter((name) => !env[name]);
       const missing = missingVariables.length > 0;
       response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Retry-After": "30" });
-      response.end(JSON.stringify({ status: missing ? "configuration_required" : "unavailable", ...missing ? { missingVariables } : {}, error: missing ? "A API precisa da conex\xE3o com o banco e da chave administrativa configuradas na hospedagem." : "O servi\xE7o de atendentes n\xE3o conseguiu acessar sua configura\xE7\xE3o ou o banco de dados. Tente novamente em instantes." }));
+      const diagnostics = error instanceof StartupError ? { setupIssue: error.issue, ...error.databaseCode ? { databaseCode: error.databaseCode } : {} } : {};
+      response.end(JSON.stringify({ status: missing ? "configuration_required" : "unavailable", ...missing ? { missingVariables } : diagnostics, error: missing ? "A API precisa da conex\xE3o com o banco e da chave administrativa configuradas na hospedagem." : error instanceof StartupError && error.issue === "admin_key_invalid" ? "BRAVUS_ADMIN_KEY deve ter entre 32 e 256 caracteres." : "O servi\xE7o de atendentes n\xE3o conseguiu acessar sua configura\xE7\xE3o ou o banco de dados. Tente novamente em instantes." }));
     }
   };
 }

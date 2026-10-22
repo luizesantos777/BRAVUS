@@ -7,6 +7,23 @@ import type { TursoConnection } from './database.ts';
 
 const BODY_LIMIT = 4 * 1024 * 1024;
 type Environment = Record<string, string | undefined>;
+type StartupIssue = 'admin_key_invalid' | 'database_initialization_failed' | 'configuration_invalid';
+class StartupError extends Error {
+  issue: StartupIssue;
+  databaseCode?: string;
+  constructor(issue: StartupIssue, error?: unknown) {
+    super(issue); this.issue = issue;
+    if (issue !== 'database_initialization_failed') return;
+    const known = new Set(['SQLITE_ERROR', 'SQLITE_BUSY', 'SQLITE_BUSY_TIMEOUT', 'SQLITE_AUTH', 'SQLITE_READONLY', 'SQLITE_CONSTRAINT', 'SERVER_ERROR', 'HRANA_PROTO_ERROR', 'HRANA_CLOSED_ERROR', 'TRANSACTION_CLOSED', 'PROTOCOL_VERSION_ERROR', 'ERR_INVALID_URL', 'ENOTFOUND', 'ECONNREFUSED', 'ETIMEDOUT']);
+    let current = error;
+    for (let depth = 0; depth < 4 && current && typeof current === 'object'; depth++) {
+      const detail = current as { code?: unknown; status?: unknown; cause?: unknown };
+      if (detail.status === 401 || detail.status === 403) { this.databaseCode = 'DATABASE_AUTH_FAILED'; break; }
+      if (typeof detail.code === 'string' && known.has(detail.code)) this.databaseCode = detail.code;
+      current = detail.cause;
+    }
+  }
+}
 interface Options {
   environment?: () => Environment;
   openStore?: (connection: TursoConnection) => Promise<PortalStore>;
@@ -20,14 +37,18 @@ export function createVercelHandler(options: Options = {}) {
     const env = environment(), url = env.TURSO_DATABASE_URL, authToken = env.TURSO_AUTH_TOKEN, key = env.BRAVUS_ADMIN_KEY;
     if (!url || !authToken || !key) throw new Error('SETUP_REQUIRED');
     // A serverless instance must never create a temporary local database or a new administrative key.
-    const adminKey = loadAdminKey('', key);
-    const store = await openStore({ url, authToken });
+    let adminKey: string;
+    try { adminKey = loadAdminKey('', key); }
+    catch { throw new StartupError('admin_key_invalid'); }
+    let store: PortalStore;
+    try { store = await openStore({ url, authToken }); }
+    catch (error) { throw new StartupError('database_initialization_failed', error); }
     try {
       const configuredPush = !!(env.BRAVUS_PUSH_PUBLIC_KEY || env.BRAVUS_PUSH_PRIVATE_KEY);
       const push = configuredPush ? new PushService(store, loadPushKeys('', env)) : undefined;
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
       return createPortalHandler(store, { adminKey, allowedOrigins, push, bodyLimit: BODY_LIMIT });
-    } catch (error) { store.close(); throw error; }
+    } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 
   return async (request: IncomingMessage, response: ServerResponse) => {
@@ -44,13 +65,14 @@ export function createVercelHandler(options: Options = {}) {
       if (!initialized) initialized = initialize().catch(error => { initialized = undefined; throw error; });
       const handler = await initialized;
       await handler(request, response);
-    } catch {
+    } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const env = environment();
       const missingVariables = ['TURSO_DATABASE_URL', 'TURSO_AUTH_TOKEN', 'BRAVUS_ADMIN_KEY'].filter(name => !env[name]);
       const missing = missingVariables.length > 0;
       response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Retry-After': '30' });
-      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', ...(missing ? { missingVariables } : {}), error: missing ? 'A API precisa da conexão com o banco e da chave administrativa configuradas na hospedagem.' : 'O serviço de atendentes não conseguiu acessar sua configuração ou o banco de dados. Tente novamente em instantes.' }));
+      const diagnostics = error instanceof StartupError ? { setupIssue: error.issue, ...(error.databaseCode ? { databaseCode: error.databaseCode } : {}) } : {};
+      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', ...(missing ? { missingVariables } : diagnostics), error: missing ? 'A API precisa da conexão com o banco e da chave administrativa configuradas na hospedagem.' : error instanceof StartupError && error.issue === 'admin_key_invalid' ? 'BRAVUS_ADMIN_KEY deve ter entre 32 e 256 caracteres.' : 'O serviço de atendentes não conseguiu acessar sua configuração ou o banco de dados. Tente novamente em instantes.' }));
     }
   };
 }

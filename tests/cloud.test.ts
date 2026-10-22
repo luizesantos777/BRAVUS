@@ -43,6 +43,17 @@ test('Vercel recusa configuração insegura sem revelar credenciais ou cair para
   assert.equal(response.status, 503); assert.equal(text.includes(env.TURSO_AUTH_TOKEN), false); assert.equal(text.includes(adminKey), false); assert.equal(text.includes('/tmp/'), false);
   assert.throws(() => openTursoDatabase({ url: 'http://db.invalid', authToken: 'fixture' }));
 });
+test('diagnóstico distingue chave inválida e falha no banco sem expor mensagens privadas', async t => {
+  let opened = 0;
+  const invalidKey = await serve(t, createVercelHandler({ environment: () => ({ ...env, BRAVUS_ADMIN_KEY: 'curta' }), openStore: async () => { opened++; throw new Error(); } }));
+  const invalidResponse = await invalidKey('/api/health');
+  assert.equal(invalidResponse.status, 503); assert.equal((await invalidResponse.json()).setupIssue, 'admin_key_invalid'); assert.equal(opened, 0);
+  const privateError = Object.assign(new Error(env.TURSO_AUTH_TOKEN + env.TURSO_DATABASE_URL + adminKey), { code: 'SERVER_ERROR', cause: { status: 401 } });
+  const failedDatabase = await serve(t, createVercelHandler({ environment: () => env, openStore: async () => { throw privateError; } }));
+  const response = await failedDatabase('/api/health'), text = await response.text(), body = JSON.parse(text);
+  assert.equal(response.status, 503); assert.equal(body.setupIssue, 'database_initialization_failed'); assert.equal(body.databaseCode, 'DATABASE_AUTH_FAILED');
+  for (const secret of [env.TURSO_AUTH_TOKEN, env.TURSO_DATABASE_URL, adminKey]) assert.equal(text.includes(secret), false);
+});
 test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persistente entre instâncias', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-')), file = join(directory, 'database.sqlite'), stores: PortalStore[] = [];
   const openStore = async () => {

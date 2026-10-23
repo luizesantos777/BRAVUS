@@ -114,6 +114,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           else if (url.pathname === '/api/admin/sales' && request.method === 'GET') json(response, 200, (await store.adminSales(url.searchParams.get('status') ?? 'pending', url.searchParams.get('attendantId') ?? '', url.searchParams.get('page') ?? '1')));
           else if (route?.[1] === 'sales' && !route[3] && request.method === 'PATCH') json(response, 200, (await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor)));
           else if (route?.[1] === 'sales' && route[3] === 'cancel' && request.method === 'POST') json(response, 200, await store.cancelSale(route[2], await readJson(request, options.bodyLimit), actor));
+          else if (url.pathname === '/api/admin/payouts' && request.method === 'POST') json(response, 201, await store.recordManualPayout(await readJson(request, options.bodyLimit), String(request.headers['idempotency-key'] ?? ''), actor));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
             const receipt = (await store.adminReceipt(url.pathname.split('/').at(-1)!));
             response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline' }); response.end(receipt.bytes);
@@ -158,7 +159,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           json(response, 200, result);
         }
         else if (url.pathname === '/api/ranking' && request.method === 'GET') json(response, 200, (await store.ranking(auth, period)));
-        else if (url.pathname === '/api/payouts' && request.method === 'POST') json(response, 201, (await store.requestPayout(auth, await readJson(request, options.bodyLimit))));
+        else if (url.pathname === '/api/payouts' && request.method === 'POST') throw new PortalError(410, 'As solicitações de repasse foram desativadas. Os pagamentos são registrados manualmente pela administração.');
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
           const receipt = (await store.receipt(auth, url.pathname.split('/').at(-1)!));
           response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline; filename="comprovante.' + (receipt.mime === 'image/jpeg' ? 'jpg' : receipt.mime === 'image/webp' ? 'webp' : 'png') + '"' });

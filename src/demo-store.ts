@@ -13,6 +13,10 @@ export function readDemoData(): DemoData {
     if (!data.sales.every(sale => typeof sale.id === 'string' && validDate(sale.date) && Number.isSafeInteger(sale.amountCents) && Number.isSafeInteger(sale.feeCents) && Number.isInteger(sale.commissionBps) && sale.commissionBps >= 0 && sale.commissionBps <= 10000 && (sale.commissionMode === undefined || sale.commissionMode === 'net-share' || sale.commissionMode === 'gross-share-less-fees') && (sale.attendantFeeCents == null || Number.isSafeInteger(sale.attendantFeeCents) && sale.attendantFeeCents >= 0 && sale.attendantFeeCents <= sale.feeCents) && Object.hasOwn(saleStatusLabels, sale.status) && typeof sale.reviewNote === 'string')) throw new Error();
     if (!data.payouts.every(payout => Number.isSafeInteger(payout.amountCents) && payout.amountCents > 0 && (payout.withdrawalFeeCents === undefined || Number.isSafeInteger(payout.withdrawalFeeCents) && payout.withdrawalFeeCents >= 0 && payout.withdrawalFeeCents < payout.amountCents))) throw new Error();
     data.payouts = data.payouts.map(payout => payout.status === 'paid' ? { ...payout, gatewayFeeCents: payout.gatewayFeeCents ?? payout.withdrawalFeeCents ?? 0 } : { ...payout, withdrawalFeeCents: 0, gatewayFeeCents: 0 });
+    if (data.manualPayoutsVersion !== 1) {
+      data.payouts = data.payouts.map(payout => payout.status === 'pending' ? { ...payout, status: 'cancelled', withdrawalFeeCents: 0, gatewayFeeCents: 0, note: 'Solicitação cancelada: pagamentos manuais pela administração.' } : payout);
+      data.manualPayoutsVersion = 1;
+    }
     return data;
   } catch { throw new Error('Não foi possível ler a demonstração salva. Seus dados foram preservados; use outro navegador para experimentar.'); }
 }

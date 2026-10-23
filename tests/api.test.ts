@@ -21,6 +21,12 @@ const tokenB = 'fixture_attendant_b_012345678901234567890';
 const adminKey = 'fixture_admin_012345678901234567890123456789';
 const image = { name: 'comprovante.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = () => ({ date: businessToday(), sales: [{ amount: '300,00', checkoutId: 'main', time: '12:30', note: 'Venda de teste', receipt: { ...image } }] });
+// Only historical-reservation regression scenarios use this seed helper. The public
+// attendant endpoint is retired; current payments are tested through the admin API.
+async function legacyRequest(store: PortalStore, token: string, input: unknown) {
+  try { return new Response(JSON.stringify(await store.requestPayout(await store.authenticate(token), input)), { status: 201 }); }
+  catch (error) { return new Response(JSON.stringify({ error: (error as Error).message }), { status: (error as { status?: number }).status ?? 500 }); }
+}
 async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSales = true } = {}) {
   const store = await PortalStore.open(':memory:');
   // General authorization and payout scenarios use an explicit fee-free checkout.
@@ -75,7 +81,7 @@ test('venda abaixo de R$ 200 libera comissão e repasse mesmo com meta antiga no
   assert.equal(Object.hasOwn(portal.profile, 'dailyGoalCents'), false);
   assert.equal(Object.hasOwn(portal.finance, 'pendingGoalCents'), false);
   await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana' }) });
-  assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '19,70' }) })).status, 201);
+  assert.equal((await legacyRequest(store, tokenA, { amount: '19,70' })).status, 201);
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 0);
 });
 test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador', async t => {
@@ -132,9 +138,29 @@ test('alterar perfil não muda comissão ou token e ranking não expõe PIX ou t
   assert.equal(JSON.stringify(ranking).includes('pix@example.com'), false);
   assert.deepEqual(Object.keys(ranking[0]).sort(), ['count', 'grossCents', 'id', 'mine', 'name', 'photoUrl']);
 });
-test('repasse exige PIX e saldo; reserva é mantida quando o repasse é pago', async t => {
+test('somente administrador registra repasse manual e uma repetição não debita nem cobra a taxa duas vezes', async t => {
+  const { call, submit, a } = await fixture(t); await submit();
+  const key = 'fixture_manual_payment_0123456789';
+  const pay = (amount = '20', credential = adminKey, requestKey = key) => call('/api/admin/payouts', credential, { method: 'POST', headers: { 'Idempotency-Key': requestKey }, body: JSON.stringify({ attendantId: a.id, amount, note: 'PIX conferido', withdrawalFeeCents: 0, gatewayFeeCents: 0 }) });
+  for (const credential of ['', tokenA, tokenB]) assert.equal((await pay('20', credential)).status, 401);
+  assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).status, 410);
+  assert.equal((await pay()).status, 400);
+  await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'manual@example.com', pixOwner: 'Ana' }) });
+  for (const amount of ['2.50', '31', '-1']) assert.equal((await pay(amount)).status, 400);
+  assert.equal((await pay('20', adminKey, '')).status, 400);
+  const responses = await Promise.all([pay(), pay()]); assert.deepEqual(responses.map(response => response.status), [201, 201]);
+  assert.deepEqual((await Promise.all(responses.map(response => response.json()))).map(value => value.duplicate).sort(), [false, true]);
+  const portal = await (await call('/api/portal')).json();
+  assert.equal(portal.payouts.length, 1); assert.equal(portal.payouts[0].status, 'paid'); assert.equal(portal.payouts[0].amountCents, 2000);
+  assert.equal(portal.payouts[0].withdrawalFeeCents, 250); assert.equal(portal.payouts[0].gatewayFeeCents, 500);
+  assert.equal(portal.finance.availableCents, 1000); assert.equal(portal.finance.paidPayoutNetCents, 1750); assert.equal(portal.finance.pendingPayoutCents, 0);
+  assert.equal((await pay('21')).status, 409);
+  assert.equal((await pay('20', adminKey, 'fixture_other_manual_0123456789')).status, 400);
+  const audit = await (await call('/api/admin/audit?action=payout.paid', adminKey)).json(); assert.equal(audit.total, 1);
+});
+test('repasse histórico exige PIX e saldo; reserva é mantida quando o repasse é pago', async t => {
   const { call, submit, store } = await fixture(t); await submit();
-  const payout = (amount: string) => call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount }) });
+  const payout = (amount: string) => legacyRequest(store, tokenA, { amount });
   assert.equal((await payout('10')).status, 400);
   await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana' }) });
   assert.equal((await payout('31')).status, 400);
@@ -283,16 +309,16 @@ test('somente a administração define o token; tokens escolhidos exigem formato
 });
 
 test('administração confere destino PIX e confirma ou cancela repasse uma única vez', async t => {
-  const { call, submit } = await fixture(t); await submit();
+  const { call, submit, store } = await fixture(t); await submit();
   await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'pix@example.com', pixOwner: 'Ana' }) });
-  const requested = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+  const requested = await (await legacyRequest(store, tokenA, { amount: '20' })).json();
   const dashboard = await (await call('/api/admin/dashboard', adminKey)).json();
   assert.equal(dashboard.payouts[0].pixKey, 'pix@example.com');
   const finish = (status: string) => call('/api/admin/payouts/' + requested.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Conferido' }) });
   assert.equal((await finish('cancelled')).status, 200);
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 3000);
   assert.equal((await finish('paid')).status, 400);
-  const next = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+  const next = await (await legacyRequest(store, tokenA, { amount: '20' })).json();
   assert.equal((await call('/api/admin/payouts/' + next.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'paid', note: 'Pagamento conferido' }) })).status, 200);
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 1000);
 });
@@ -324,7 +350,7 @@ test('administração mostra faturamento e saldo acumulados por atendente antes 
   assert.equal(view.attendants.find((item: { name: string }) => item.name === 'Bruno Teste').finance.grossCents, 0);
   await store.saveProfile({ id: account.id }, { name: 'Raposo de teste', email: '', phone: '', pixType: 'email', pixKey: 'raposo-fixture@example.com', pixOwner: 'Pessoa de teste' });
   for (const [amount, status] of [['10', 'paid'], ['20', 'pending'], ['30', 'cancelled']]) {
-    const response = await call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount }) }); assert.equal(response.status, 201);
+    const response = await legacyRequest(store, token, { amount }); assert.equal(response.status, 201);
     const payout = await response.json();
     if (status !== 'pending') assert.equal((await call('/api/admin/payouts/' + payout.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Repasse sintético' }) })).status, 200);
   }
@@ -484,14 +510,14 @@ test('push expirado é removido sem desfazer a venda; credenciais VAPID persiste
 });
 
 test('só o administrador aprova ou recusa vendas; saldo e ranking usam apenas as aprovadas', async t => {
-  const { call, submit, a } = await fixture(t, { approveSales: false });
+  const { call, submit, a, store } = await fixture(t, { approveSales: false });
   const forged = batch(); Object.assign(forged.sales[0], { status: 'approved', reviewNote: 'aprovada pelo navegador' });
   assert.equal((await submit(forged)).status, 200);
   let portal = await (await call('/api/portal')).json(); const sale = portal.sales[0];
   assert.equal(sale.status, 'pending'); assert.equal(sale.reviewNote, ''); assert.equal(portal.finance.availableCents, 0);
   assert.equal(portal.finance.pendingSalesCount, 1); assert.equal((await (await call('/api/ranking')).json()).length, 0);
   await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Ana', email: '', phone: '', pixType: 'email', pixKey: 'ana@example.com', pixOwner: 'Ana' }) });
-  assert.equal((await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '1' }) })).status, 400);
+  assert.equal((await legacyRequest(store, tokenA, { amount: '1' })).status, 400);
   const review = (status: string, note = '', credential = adminKey) => call('/api/admin/sales/' + sale.id, credential, { method: 'PATCH', body: JSON.stringify({ status, note }) });
   assert.equal((await review('approved', '', tokenA)).status, 401);
   assert.equal((await call('/api/admin/receipts/' + sale.receiptId, tokenB)).status, 401);
@@ -544,10 +570,10 @@ test('cancelar aprovação exige administrador e motivo, preserva a venda e reti
 });
 test('cancelamento bloqueia repasse sem cobertura e mantém pagamentos já feitos sem cobrar novamente', async t => {
   for (const paid of [false, true]) await t.test(paid ? 'repasse já pago' : 'pedido em análise', async t => {
-    const { call, submit } = await fixture(t); await submit();
+    const { call, submit, store } = await fixture(t); await submit();
     await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Teste', email: '', phone: '', pixType: 'email', pixKey: 'fixture@example.com', pixOwner: 'Pessoa de teste' }) });
     const initial = await (await call('/api/portal')).json();
-    const request = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+    const request = await (await legacyRequest(store, tokenA, { amount: '20' })).json();
     const finish = (status: string) => call('/api/admin/payouts/' + request.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Conferência de teste' }) });
     if (paid) assert.equal((await finish('paid')).status, 200);
     assert.equal((await call('/api/admin/sales/' + initial.sales[0].id + '/cancel', adminKey, { method: 'POST', body: JSON.stringify({ note: 'Aprovação incorreta' }) })).status, 200);
@@ -610,7 +636,7 @@ test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000
 });
 
 test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte sem aceitar valores manipulados', async t => {
-  const { call, submit } = await fixture(t, { defaultCheckoutRates: true });
+  const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true });
   const token = 'fixture_fifty_percent_attendant_01234567890123456789';
   const created = await call('/api/admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Regra de 50%', token }) });
   assert.equal(created.status, 201);
@@ -624,7 +650,7 @@ test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte s
   assert.ok(portal.sales.every((sale: { commissionBps: number; commissionMode: string }) => sale.commissionBps === 5000 && sale.commissionMode === 'gross-share-less-fees'));
   await call(`/api/admin/attendants/${account.attendantId}/costs`, adminKey, { method: 'POST', body: JSON.stringify({ date: businessToday(), ads: '2', withdrawalFee: '0' }) });
   await call('/api/profile', token, { method: 'PATCH', body: JSON.stringify({ name: 'Regra 50', email: '', phone: '', pixType: 'email', pixKey: 'fifty@example.com', pixOwner: 'Regra 50' }) });
-  const request = (amount: string) => call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount, withdrawalFeeCents: 0, status: 'paid' }) });
+  const request = (amount: string) => legacyRequest(store, token, { amount, withdrawalFeeCents: 0, status: 'paid' });
   assert.equal((await request('2,50')).status, 400);
   assert.equal((await request('85,17')).status, 400);
   const concurrent = await Promise.all([request('85,16'), request('85,16')]);
@@ -647,6 +673,34 @@ test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte s
   assert.equal((await finish(second.id, 'paid')).status, 400);
 });
 
+test('migração para repasses manuais libera a reserva antiga do MG, preserva PIX pagos e não repete a liberação', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-manual-migration-')), path = join(directory, 'portal.sqlite');
+  let store = await PortalStore.open(path);
+  try {
+    const account = await store.createAttendant('MG de teste', 5000, tokenA), auth = { id: account.id };
+    const input = batch(); input.sales = ['73.10', '73.10', '73.10', '150'].map(amount => ({ ...input.sales[0], amount }));
+    await store.recordSales(auth, input, 'fixture_mg_manual_migration');
+    for (const sale of await store.sales(auth)) await store.reviewSale(sale.id, { status: 'approved', note: 'Conferida' });
+    await store.saveProfile(auth, { name: 'MG de teste', email: '', phone: '', pixType: 'email', pixKey: 'mg-fixture@example.com', pixOwner: 'Pessoa de teste' });
+    await store.setCosts(account.id, businessToday(), 7074, 0);
+    const request = await store.requestPayout(auth, { amount: '65.79' });
+    const cancelledSale = (await store.sales(auth)).find(sale => sale.amountCents === 15000)!; await store.cancelSale(cancelledSale.id, { note: 'Aprovação incorreta' });
+    assert.equal((await store.portal(auth)).finance.availableCents, -4632);
+    const paidAccount = await store.createAttendant('Pagamento preservado', 5000, tokenB), paidAuth = { id: paidAccount.id };
+    await store.recordSales(paidAuth, batch(), 'fixture_migration_paid_sale'); await store.reviewSale((await store.sales(paidAuth))[0].id, { status: 'approved', note: '' });
+    await store.saveProfile(paidAuth, { name: 'Pagamento preservado', email: '', phone: '', pixType: 'email', pixKey: 'paid-fixture@example.com', pixOwner: 'Pessoa de teste' });
+    await store.recordManualPayout({ attendantId: paidAccount.id, amount: '10', note: 'PIX já realizado' }, 'fixture_paid_preserved_0123456789');
+    const paid = (await store.payouts(paidAuth))[0];
+    await store.sql.prepare('DELETE FROM schema_migrations WHERE id = ?').run('admin-manual-payouts-v1');
+    store.close(); store = await PortalStore.open(path);
+    const portal = await store.portal(auth); assert.equal(portal.finance.grossCents, 21930); assert.equal(portal.finance.commissionCents, 9021);
+    assert.equal(portal.finance.adsCents, 7074); assert.equal(portal.finance.availableCents, 1947); assert.equal(portal.finance.pendingPayoutCents, 0);
+    assert.equal(portal.payouts[0].id, request.id); assert.equal(portal.payouts[0].status, 'cancelled'); assert.equal(portal.payouts[0].withdrawalFeeCents, 0);
+    assert.deepEqual((await store.payouts(paidAuth))[0], paid);
+    const events = async () => Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'payout.cancelled' AND target_id = ?").get(request.id))!.count);
+    assert.equal(await events(), 1); store.close(); store = await PortalStore.open(path); assert.equal(await events(), 1); assert.equal((await store.portal(auth)).finance.availableCents, 1947);
+  } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
+});
 test('migração mantém regras e saques históricos e aplica 50% apenas aos próximos lançamentos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-earnings-upgrade-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;

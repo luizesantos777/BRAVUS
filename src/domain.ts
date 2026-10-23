@@ -22,11 +22,11 @@ export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
-export interface AdminAttendant { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance }
+export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
 export interface Invitation { attendantId: string; name: string; token: string }
-export interface DemoData { version: 1; settlementVersion?: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
+export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVersion?: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;

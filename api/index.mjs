@@ -493,6 +493,16 @@ var PortalStore = class _PortalStore {
         await store.sql.exec("UPDATE payouts SET withdrawal_fee_cents = 0 WHERE status IN ('pending','cancelled')");
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("payout-fee-on-payment-v1");
       }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("admin-manual-payouts-v1")) {
+        const pending = await store.sql.prepare("SELECT p.id, p.amount_cents, p.note, a.name FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.status = 'pending'").all();
+        for (const item of pending) {
+          const reason = "Solicita\xE7\xE3o cancelada: repasses agora s\xE3o registrados manualmente pela administra\xE7\xE3o.";
+          const note = (String(item.note) ? (String(item.note) + " \xB7 ").slice(0, 500 - reason.length) : "") + reason;
+          await store.sql.prepare("UPDATE payouts SET status = 'cancelled', withdrawal_fee_cents = 0, gateway_fee_cents = 0, note = ? WHERE id = ? AND status = 'pending'").run(note, String(item.id));
+          await store.audit(systemActor, "payout.cancelled", String(item.id), String(item.name), { status: "pending", amountCents: Number(item.amount_cents), note: String(item.note) }, { status: "cancelled", amountCents: Number(item.amount_cents), withdrawalFeeCents: 0, gatewayFeeCents: 0, note });
+        }
+        await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("admin-manual-payouts-v1");
+      }
     });
   }
   close() {
@@ -500,7 +510,7 @@ var PortalStore = class _PortalStore {
   }
   async adminDashboard() {
     return this.sql.transaction(async (db) => {
-      const rows2 = await db.prepare("SELECT id, name, active, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
+      const rows2 = await db.prepare("SELECT id, name, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
       const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
@@ -778,6 +788,7 @@ var PortalStore = class _PortalStore {
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
     }))).filter((item) => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name));
   }
+  /** Historical ledger support; attendants cannot create requests through the API. */
   async requestPayout(auth, input) {
     if (!input || typeof input !== "object" || typeof input.amount !== "string") invalid("Informe o valor do repasse.");
     let amountCents;
@@ -821,6 +832,38 @@ var PortalStore = class _PortalStore {
       const result = await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === "paid" ? (/* @__PURE__ */ new Date()).toISOString() : null, note, status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
       if (!result.changes) invalid("Repasse pendente n\xE3o encontrado.");
       await store.audit(actor, status === "paid" ? "payout.paid" : "payout.cancelled", id, String(before.name), { status: String(before.status), amountCents: Number(before.amount_cents), withdrawalFeeCents: Number(before.withdrawal_fee_cents), gatewayFeeCents: Number(before.gateway_fee_cents), note: String(before.note) }, { status, amountCents: Number(before.amount_cents), withdrawalFeeCents: status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, gatewayFeeCents: status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, note });
+    });
+  }
+  async recordManualPayout(input, requestKey, actor = systemActor) {
+    const data = this.adminFields(input);
+    if (typeof data.attendantId !== "string" || !/^[A-Za-z0-9_-]{1,100}$/.test(data.attendantId) || typeof data.amount !== "string" || typeof data.note !== "string" || !data.note.trim() || data.note.length > 500) invalid("Informe atendente, valor e observa\xE7\xE3o do pagamento.");
+    if (!/^[A-Za-z0-9_-]{12,160}$/.test(requestKey)) invalid("Identificador do pagamento inv\xE1lido. Atualize a p\xE1gina e tente novamente.");
+    let amountCents;
+    try {
+      amountCents = amountToCents(data.amount);
+    } catch (error) {
+      return invalid(error.message);
+    }
+    const attendantId = data.attendantId, note = data.note.trim();
+    const id = "manual_" + createHash("sha256").update("bravus-manual-payout-v1\0" + requestKey).digest("hex");
+    return this.withTransaction(async (store) => {
+      const existing = await store.sql.prepare("SELECT attendant_id, amount_cents, note, status FROM payouts WHERE id = ?").get(id);
+      if (existing) {
+        if (existing.attendant_id !== attendantId || Number(existing.amount_cents) !== amountCents || existing.note !== note || existing.status !== "paid") throw new PortalError(409, "Este pagamento j\xE1 foi registrado com outros dados. Confira o hist\xF3rico antes de registrar outro.");
+        return { id, duplicate: true };
+      }
+      if (!await store.sql.prepare("SELECT id FROM attendants WHERE id = ?").get(attendantId)) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+      const portal = await store.portal({ id: attendantId }, "all"), profile = portal.profile;
+      if (!profile.pixKey || !profile.pixOwner) invalid("O atendente precisa cadastrar sua chave PIX e o titular antes de registrar o pagamento.");
+      try {
+        validatePayoutAmount(amountCents, portal.finance.availableCents);
+      } catch (error) {
+        return invalid(error.message);
+      }
+      const paidAt = (/* @__PURE__ */ new Date()).toISOString();
+      await store.sql.prepare("INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?)").run(id, attendantId, amountCents, paidAt, paidAt, note, profile.pixType, profile.pixKey, profile.pixOwner, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS);
+      await store.audit(actor, "payout.paid", id, profile.name, null, { status: "paid", amountCents, pixNetCents: amountCents - ATTENDANT_WITHDRAWAL_FEE_CENTS, withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS, note });
+      return { id, duplicate: false };
     });
   }
 };
@@ -1069,6 +1112,7 @@ function createPortalHandler(store, options = {}) {
           } else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
           else if (route?.[1] === "sales" && !route[3] && request.method === "PATCH") json(response, 200, await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor));
           else if (route?.[1] === "sales" && route[3] === "cancel" && request.method === "POST") json(response, 200, await store.cancelSale(route[2], await readJson(request, options.bodyLimit), actor));
+          else if (url.pathname === "/api/admin/payouts" && request.method === "POST") json(response, 201, await store.recordManualPayout(await readJson(request, options.bodyLimit), String(request.headers["idempotency-key"] ?? ""), actor));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
             const receipt = await store.adminReceipt(url.pathname.split("/").at(-1));
             response.writeHead(200, { "Content-Type": receipt.mime, "Content-Length": receipt.bytes.byteLength, "Cache-Control": "private, no-store", "Content-Disposition": "inline" });
@@ -1122,7 +1166,7 @@ function createPortalHandler(store, options = {}) {
           ]);
           json(response, 200, result);
         } else if (url.pathname === "/api/ranking" && request.method === "GET") json(response, 200, await store.ranking(auth, period));
-        else if (url.pathname === "/api/payouts" && request.method === "POST") json(response, 201, await store.requestPayout(auth, await readJson(request, options.bodyLimit)));
+        else if (url.pathname === "/api/payouts" && request.method === "POST") throw new PortalError(410, "As solicita\xE7\xF5es de repasse foram desativadas. Os pagamentos s\xE3o registrados manualmente pela administra\xE7\xE3o.");
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
           const receipt = await store.receipt(auth, url.pathname.split("/").at(-1));
           response.writeHead(200, { "Content-Type": receipt.mime, "Content-Length": receipt.bytes.byteLength, "Cache-Control": "private, no-store", "Content-Disposition": 'inline; filename="comprovante.' + (receipt.mime === "image/jpeg" ? "jpg" : receipt.mime === "image/webp" ? "webp" : "png") + '"' });

@@ -14,12 +14,12 @@ export class AdminClient {
   readonly isDemo: boolean;
   constructor(key: string, isDemo = false) { this.key = key; this.isDemo = isDemo; }
   clear() { this.key = ''; }
-  private async request<T>(path: string, method = 'GET', payload?: unknown, timeoutMs = 20_000): Promise<T> {
+  private async request<T>(path: string, method = 'GET', payload?: unknown, timeoutMs = 20_000, headers: Record<string, string> = {}): Promise<T> {
     if (this.isDemo) return await demoAdminRequest(path, method, payload) as T;
     if (adminUnavailable) throw new ApiError('A administração estará disponível no endereço do servidor após a hospedagem da API.', 503);
     const controller = new AbortController(), timer = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${this.base}/admin${path}`, { method, cache: 'no-store', signal: controller.signal, headers: { Authorization: `Bearer ${this.key}`, ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: payload === undefined ? undefined : JSON.stringify(payload) });
+      const response = await fetch(`${this.base}/admin${path}`, { method, cache: 'no-store', signal: controller.signal, headers: { ...headers, Authorization: `Bearer ${this.key}`, ...(payload === undefined ? {} : { 'Content-Type': 'application/json' }) }, body: payload === undefined ? undefined : JSON.stringify(payload) });
       if (!response.headers.get('content-type')?.includes('application/json')) throw new ApiError('A API administrativa está indisponível.', 503);
       const body = await response.json();
       if (!response.ok) throw new ApiError(body.error ?? 'Não foi possível concluir a solicitação.', response.status);
@@ -73,6 +73,7 @@ export class AdminClient {
   setCosts(id: string, date: string, ads: string, withdrawalFee: string) { return this.request(`/attendants/${id}/costs`, 'POST', { date, ads, withdrawalFee }); }
   setCheckout(id: string, name: string, fee: string, fixedFee: string, minimum: string, higherTier: CheckoutTierInput | null) { return this.request(`/checkouts/${id}`, 'PATCH', { name, fee, fixedFee, minimum, higherTier }); }
   markPayout(id: string, status: 'paid' | 'cancelled', note: string) { return this.request(`/payouts/${id}`, 'PATCH', { status, note }); }
+  recordManualPayout(attendantId: string, amount: string, note: string, requestKey: string) { return this.request('/payouts', 'POST', { attendantId, amount, note }, 20_000, { 'Idempotency-Key': requestKey }); }
 }
 
 function saveFile(blob: Blob, filename: string) {

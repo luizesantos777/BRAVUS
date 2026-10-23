@@ -1,5 +1,5 @@
 import { readDemoData, writeDemoData } from './demo-store.ts';
-import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validatePayoutAmount, validateProfile, validDate } from './domain.ts';
+import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
 import type { DemoData, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -85,14 +85,6 @@ export class PortalClient {
   pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }
   subscribePush(subscription: PushSubscriptionJSON) { return this.request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) }); }
   unsubscribePush(id: string) { return this.request('/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ id }) }); }
-  async requestPayout(amount: string) {
-    this.reloadDemo();
-    if (!this.isDemo) return this.request('/payouts', { method: 'POST', body: JSON.stringify({ amount }) });
-    const current = demoPortal(this.demo, 'all'), amountCents = amountToCents(amount);
-    if (!current.profile.pixKey || !current.profile.pixOwner) throw new ApiError('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
-    validatePayoutAmount(amountCents, current.finance.availableCents);
-    this.persist({ ...this.demo, payouts: [{ id: crypto.randomUUID(), amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: 'pending', requestedAt: new Date().toISOString(), paidAt: null, note: '' }, ...this.demo.payouts] });
-  }
   async receipt(id: string): Promise<string> {
     this.reloadDemo();
     if (this.isDemo) {

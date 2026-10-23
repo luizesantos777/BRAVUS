@@ -88,12 +88,10 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
   // A separate serverless instance opens the same database and reads the persisted account and sale.
   const second = await serve(t, createVercelHandler({ environment: () => env, openStore }));
   assert.equal((await (await second('/api/portal', token)).json()).finance.availableCents, 3950);
-  const payout = (api: typeof call) => api('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount: '39.50' }) });
-  const reserved = await Promise.all([payout(call), payout(second)]);
-  assert.deepEqual(reserved.map(response => response.status).sort(), [201, 400]);
-  const saved = await reserved.find(response => response.status === 201)!.json(); assert.equal(saved.withdrawalFeeCents, 0);
-  const finish = (api: typeof call) => api('/api/admin/payouts/' + saved.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'paid', note: 'Pagamento sintético' }) });
-  const paid = await Promise.all([finish(call), finish(second)]); assert.deepEqual(paid.map(response => response.status).sort(), [200, 400]);
+  assert.equal((await call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount: '39.50' }) })).status, 410);
+  const payout = (api: typeof call) => api('/api/admin/payouts', adminKey, { method: 'POST', headers: { 'Idempotency-Key': 'fixture_manual_cloud_0123456789' }, body: JSON.stringify({ attendantId: created.attendantId, amount: '39.50', note: 'Pagamento sintético' }) });
+  const paid = await Promise.all([payout(call), payout(second)]); assert.deepEqual(paid.map(response => response.status), [201, 201]);
+  assert.deepEqual((await Promise.all(paid.map(response => response.json()))).map(result => result.duplicate).sort(), [false, true]);
   portal = await (await second('/api/portal', token)).json();
   assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.paidPayoutNetCents, 3700); assert.equal(portal.payouts[0].withdrawalFeeCents, 250);
   assert.equal(portal.payouts[0].gatewayFeeCents, 500); assert.equal(JSON.stringify(portal).includes(env.TURSO_AUTH_TOKEN), false);

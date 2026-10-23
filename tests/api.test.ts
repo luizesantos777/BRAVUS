@@ -468,6 +468,8 @@ test('notificação administrativa abre o painel e mantém os alertas pessoais n
   assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
   handlers.notificationclick({ notification: { data: { target: 'attendant' }, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.equal(focused, 1);
+  handlers.push({ data: { json: () => ({ body: 'Venda do atendente registrada' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.equal(shown[1].options.icon, shown[0].options.icon); assert.equal(shown[1].options.badge, shown[0].options.badge);
 });
 test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
   const { call, submit, deliveries, store, a, b } = await fixture(t), subscription = pushFixtureSubscription();

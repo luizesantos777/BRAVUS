@@ -32,7 +32,7 @@ function Router() {
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
     if (appleName) appleName.content = admin ? 'FireBot' : 'BRAVUS';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
-    if (appleIcon) appleIcon.href = publicAssetUrl(admin ? 'firebot-apple-touch-icon.png' : 'apple-touch-icon.png');
+    if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
     document.title = admin ? 'FireBot — Administração BRAVUS' : 'BRAVUS — Portal do Atendente';
   }, [admin]);
   return admin ? <Admin /> : <App />;

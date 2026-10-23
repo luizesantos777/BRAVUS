@@ -16,8 +16,9 @@ assert(!/<\/script/i.test(script) && !/<\/style/i.test(style), 'Unsafe inline as
 html = html.replace(scriptTag[0], () => `<script type="module">\n${script}\n</script>`);
 html = html.replace(styleTag[0], () => `<style>\n${style}\n</style>`);
 const favicon = await readFile(path.join(dist, 'favicon.svg'));
-html = html.replace('href="/favicon.svg"', `href="data:image/svg+xml;base64,${favicon.toString('base64')}"`);
-html = html.replace('href="/apple-touch-icon.png"', 'href="./apple-touch-icon.png"').replace('href="/manifest.webmanifest"', 'href="./manifest.webmanifest"');
+const tabIcon = await readFile(path.join(dist, 'firebot-icon-192.png'));
+html = html.replace('href="/firebot-icon-192.png"', `href="data:image/png;base64,${tabIcon.toString('base64')}"`);
+html = html.replace('href="/firebot-apple-touch-icon.png"', 'href="./firebot-apple-touch-icon.png"').replace('href="/manifest.webmanifest"', 'href="./manifest.webmanifest"');
 await mkdir(path.join(root, 'docs'), { recursive: true });
 await writeFile(path.join(root, 'docs/index.html'), html);
 await writeFile(path.join(root, 'docs/.nojekyll'), '');

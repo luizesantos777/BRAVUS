@@ -339,8 +339,9 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   await page.screenshot({ path: info.outputPath('iphone-instalar-alertas.png'), fullPage: true });
   await page.goto(`/?aba=perfil#/atendente/${token}`); await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
   await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'BRAVUS');
-  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /\/apple-touch-icon\.png$/);
+  await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /\/firebot-apple-touch-icon\.png$/);
   const personalManifest = await (await page.request.get('/manifest.webmanifest')).json();
+  expect(personalManifest.icons).toEqual(manifest.icons);
   // Omitting start_url preserves the document's individual link rather than opening the public demo.
   expect(personalManifest.start_url).toBeUndefined(); expect(JSON.stringify(personalManifest)).not.toContain(token);
   expect(errors).toEqual([]); expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

@@ -108,6 +108,6 @@ export async function notifyDemoSale(client: NotificationClient, body: string) {
   try {
     if (!client.isDemo || await notificationState(client) !== 'on') return;
     const registration = await navigator.serviceWorker.getRegistration(workerPath().href);
-    await registration?.showNotification('BRAVUS Brasil · Demonstração', { body, icon: new URL('favicon.svg', registration.scope).href });
+    await registration?.showNotification('BRAVUS Brasil · Demonstração', { body, icon: new URL('firebot-icon-192.png', registration.scope).href });
   } catch { /* The sale stays saved if a notification cannot be displayed. */ }
 }

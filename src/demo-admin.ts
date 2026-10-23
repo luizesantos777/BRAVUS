@@ -1,4 +1,4 @@
-import { amountToCents, businessToday, calculateFinance, checkoutFee, splitGatewayFee, demoCheckouts, validateSaleReview, validDate } from './domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, splitGatewayFee, demoCheckouts, validateSaleCancellation, validateSaleReview, validDate } from './domain.ts';
 import type { AdminDashboard, AdminSale, AdminSalesPage, Sale } from './domain.ts';
 import { readDemoData, writeDemoData } from './demo-store.ts';
 import { financialReport } from './admin-domain.ts';
@@ -36,6 +36,13 @@ export async function demoAdminRequest(path: string, method: string, payload?: u
     return { sales: sales.slice((page - 1) * 50, page * 50), total: sales.length, page, pageSize: 50 } satisfies AdminSalesPage;
   }
   const saleId = url.pathname.match(/^\/sales\/([^/]+)$/)?.[1];
+  const cancelId = url.pathname.match(/^\/sales\/([^/]+)\/cancel$/)?.[1];
+  if (cancelId && method === 'POST') {
+    const note = validateSaleCancellation(payload), sale = data.sales.find(item => item.id === cancelId);
+    if (!sale) throw new Error('Venda não encontrada.');
+    if (sale.status !== 'approved') throw new Error('Somente uma venda aprovada pode ser cancelada.');
+    sale.status = 'rejected'; sale.reviewNote = note; sale.reviewedAt = sale.cancelledAt = new Date().toISOString(); writeDemoData(data); return { saved: true };
+  }
   if (saleId && method === 'PATCH') {
     const review = validateSaleReview(payload), sale = data.sales.find(item => item.id === saleId);
     if (!sale) throw new Error('Venda não encontrada.');

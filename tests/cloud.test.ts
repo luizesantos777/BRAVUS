@@ -102,6 +102,13 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
     const dashboard = await response.json(); assert.deepEqual(dashboard.attendants[0].finance, portal.finance);
     assert.equal(dashboard.attendants[0].finance.grossCents, 10000); assert.equal(dashboard.attendants[0].finance.paidPayoutNetCents, 3700);
   }
+  const cancel = (api: typeof call) => api('/api/admin/sales/' + sale.id + '/cancel', adminKey, { method: 'POST', body: JSON.stringify({ note: 'Aprovação corrigida no teste' }) });
+  const cancelled = await Promise.all([cancel(call), cancel(second)]); assert.deepEqual(cancelled.map(response => response.status).sort(), [200, 409]);
+  for (const api of [call, second]) {
+    const value = await (await api('/api/portal', token)).json();
+    assert.ok(value.sales[0].cancelledAt); assert.equal(value.sales[0].reviewNote, 'Aprovação corrigida no teste');
+    assert.equal(value.finance.grossCents, 0); assert.equal(value.finance.availableCents, -4150); assert.equal(value.finance.paidPayoutNetCents, 3700);
+  }
 });
 test('handler aceita corpo já interpretado pela Vercel e aplica o limite de envio', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-body-'));

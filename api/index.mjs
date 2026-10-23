@@ -320,6 +320,11 @@ function validateSaleReview(input) {
   if (data.status === "rejected" && !note) throw new Error("Informe o motivo da recusa.");
   return { status: data.status, note };
 }
+function validateSaleCancellation(input) {
+  const note = input?.note;
+  if (typeof note !== "string" || !note.trim() || note.length > 500) throw new Error("Informe o motivo do cancelamento, com at\xE9 500 caracteres.");
+  return note.trim();
+}
 function validateProfile(value) {
   if (!value || typeof value !== "object") throw new Error("Dados de perfil inv\xE1lidos.");
   const source = value;
@@ -367,6 +372,7 @@ var controlsSchema = `
   );
   CREATE INDEX IF NOT EXISTS audit_created ON audit_events(created_at DESC, id);
   CREATE INDEX IF NOT EXISTS audit_action_created ON audit_events(action, created_at DESC);
+  CREATE INDEX IF NOT EXISTS audit_target_action ON audit_events(target_id, action);
   CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
   CREATE TABLE IF NOT EXISTS backup_runs (
@@ -521,7 +527,7 @@ var PortalStore = class _PortalStore {
     const where = "WHERE (? = 'all' OR s.status = ?) AND (? = '' OR s.attendant_id = ?)";
     const args = [status, status, attendantId, attendantId];
     const total = Number((await this.sql.prepare("SELECT COUNT(*) AS count FROM sales s " + where).get(...args)).count);
-    const sales = await this.sql.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+    const sales = await this.sql.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
     return { sales, total, page, pageSize };
   }
   async reviewSale(id, input, actor = systemActor) {
@@ -546,6 +552,24 @@ var PortalStore = class _PortalStore {
     const row = await this.sql.prepare("SELECT mime, bytes FROM receipts WHERE id = ?").get(id);
     if (!row) throw new PortalError(404, "Comprovante n\xE3o encontrado.");
     return { mime: String(row.mime), bytes: row.bytes };
+  }
+  async cancelSale(id, input, actor = systemActor) {
+    let note;
+    try {
+      note = validateSaleCancellation(input);
+    } catch (error) {
+      return invalid(error.message);
+    }
+    return this.withTransaction(async (store) => {
+      const before = await store.sql.prepare("SELECT s.status, s.review_note, s.reviewed_at, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, a.name FROM sales s JOIN attendants a ON a.id = s.attendant_id WHERE s.id = ?").get(id);
+      if (!before) throw new PortalError(404, "Venda n\xE3o encontrada.");
+      const cancelledAt = (/* @__PURE__ */ new Date()).toISOString();
+      const result = await store.sql.prepare("UPDATE sales SET status = 'rejected', review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'approved'").run(note, cancelledAt, id);
+      if (!result.changes) throw new PortalError(409, "Somente uma venda aprovada pode ser cancelada. Atualize a lista para conferir a situa\xE7\xE3o.");
+      const commissionCents = saleEarnings({ amountCents: Number(before.amountCents), feeCents: Number(before.feeCents), attendantFeeCents: before.attendantFeeCents == null ? null : Number(before.attendantFeeCents), commissionBps: Number(before.commissionBps), commissionMode: before.commissionMode });
+      await store.audit(actor, "sale.cancelled", id, String(before.name), { status: String(before.status), note: String(before.review_note), reviewedAt: before.reviewed_at == null ? null : String(before.reviewed_at), amountCents: Number(before.amountCents), commissionCents }, { status: "rejected", note, cancelledAt, amountCents: Number(before.amountCents), commissionCents: 0 });
+      return { saved: true };
+    });
   }
   async adminCreateAttendant(input, actor = systemActor) {
     const data = { commission: String(DEFAULT_COMMISSION_BPS / 100), ...this.adminFields(input) };
@@ -665,7 +689,7 @@ var PortalStore = class _PortalStore {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }
   async sales(auth) {
-    return await this.sql.prepare("SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt FROM sales WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC").all(auth.id);
+    return await this.sql.prepare(`SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC`).all(auth.id);
   }
   async costs(auth) {
     return await this.sql.prepare("SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?").all(auth.id);
@@ -790,8 +814,9 @@ var PortalStore = class _PortalStore {
     return this.withTransaction(async (store) => {
       const before = await store.sql.prepare("SELECT p.status, p.amount_cents, p.withdrawal_fee_cents, p.gateway_fee_cents, p.note, a.name FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.id = ?").get(id);
       if (status === "paid") {
-        const pending = await store.sql.prepare("SELECT amount_cents FROM payouts WHERE id = ? AND status = 'pending'").get(id);
+        const pending = await store.sql.prepare("SELECT amount_cents, attendant_id FROM payouts WHERE id = ? AND status = 'pending'").get(id);
         if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
+        if (pending && (await store.portal({ id: String(pending.attendant_id) }, "all")).finance.availableCents < 0) invalid("Saldo insuficiente ap\xF3s altera\xE7\xF5es nas vendas ou nos custos. Confira o saldo e cancele os pedidos de repasse sem cobertura antes de confirmar pagamentos.");
       }
       const result = await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === "paid" ? (/* @__PURE__ */ new Date()).toISOString() : null, note, status === "paid" ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === "paid" ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id);
       if (!result.changes) invalid("Repasse pendente n\xE3o encontrado.");
@@ -804,6 +829,7 @@ var PortalStore = class _PortalStore {
 var auditActions = {
   "sale.approved": "Venda aprovada",
   "sale.rejected": "Venda recusada",
+  "sale.cancelled": "Aprova\xE7\xE3o da venda cancelada",
   "sales.submitted": "Vendas lan\xE7adas",
   "costs.updated": "Custos alterados",
   "checkout.updated": "Taxas alteradas",
@@ -1036,12 +1062,13 @@ function createPortalHandler(store, options = {}) {
             else throw new PortalError(404, "Recurso administrativo n\xE3o encontrado.");
             return;
           }
-          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs))?$/);
+          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|cancel))?$/);
           if (url.pathname === "/api/admin/dashboard" && request.method === "GET") {
             if (options.backups && url.searchParams.get("refresh") !== "1") await options.backups.run("daily").catch(() => void 0);
             json(response, 200, await store.adminDashboard());
           } else if (url.pathname === "/api/admin/sales" && request.method === "GET") json(response, 200, await store.adminSales(url.searchParams.get("status") ?? "pending", url.searchParams.get("attendantId") ?? "", url.searchParams.get("page") ?? "1"));
           else if (route?.[1] === "sales" && !route[3] && request.method === "PATCH") json(response, 200, await store.reviewSale(route[2], await readJson(request, options.bodyLimit), actor));
+          else if (route?.[1] === "sales" && route[3] === "cancel" && request.method === "POST") json(response, 200, await store.cancelSale(route[2], await readJson(request, options.bodyLimit), actor));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
             const receipt = await store.adminReceipt(url.pathname.split("/").at(-1));
             response.writeHead(200, { "Content-Type": receipt.mime, "Content-Length": receipt.bytes.byteLength, "Cache-Control": "private, no-store", "Content-Disposition": "inline" });

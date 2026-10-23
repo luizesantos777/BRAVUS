@@ -9,7 +9,8 @@ export interface Profile { id: string; name: string; email: string; phone: strin
 export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
 export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
-export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; attendantFeeCents?: number | null; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null }
+export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; attendantFeeCents?: number | null; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null; cancelledAt?: string | null }
+export function saleStatusLabel(sale: Pick<Sale, 'status' | 'cancelledAt'>) { return sale.cancelledAt ? 'Cancelada' : saleStatusLabels[sale.status]; }
 export interface AdminSale extends Sale { attendantId: string; attendantName: string }
 export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
 export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
@@ -167,6 +168,11 @@ export function validateSaleReview(input: unknown): { status: 'approved' | 'reje
   const note = data.note.trim();
   if (data.status === 'rejected' && !note) throw new Error('Informe o motivo da recusa.');
   return { status: data.status, note };
+}
+export function validateSaleCancellation(input: unknown): string {
+  const note = (input as { note?: unknown } | null)?.note;
+  if (typeof note !== 'string' || !note.trim() || note.length > 500) throw new Error('Informe o motivo do cancelamento, com até 500 caracteres.');
+  return note.trim();
 }
 export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' | 'phone' | 'pixType' | 'pixKey' | 'pixOwner'> & Partial<Pick<Profile, 'photoUrl' | 'saleAlertTemplate'>> {
   if (!value || typeof value !== 'object') throw new Error('Dados de perfil inválidos.');

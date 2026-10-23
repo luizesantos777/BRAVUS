@@ -3,6 +3,7 @@ import type { AdminAttendant, AdminCost, AdminPayout, AdminSale } from './domain
 
 export const auditActions = {
   'sale.approved': 'Venda aprovada', 'sale.rejected': 'Venda recusada',
+  'sale.cancelled': 'Aprovação da venda cancelada',
   'sales.submitted': 'Vendas lançadas', 'costs.updated': 'Custos alterados',
   'checkout.updated': 'Taxas alteradas', 'payout.paid': 'Repasse confirmado',
   'payout.cancelled': 'Repasse cancelado', 'attendant.created': 'Atendente cadastrado',

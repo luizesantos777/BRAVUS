@@ -14,6 +14,7 @@ export const controlsSchema = `
   );
   CREATE INDEX IF NOT EXISTS audit_created ON audit_events(created_at DESC, id);
   CREATE INDEX IF NOT EXISTS audit_action_created ON audit_events(action, created_at DESC);
+  CREATE INDEX IF NOT EXISTS audit_target_action ON audit_events(target_id, action);
   CREATE TRIGGER IF NOT EXISTS audit_no_update BEFORE UPDATE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
   CREATE TRIGGER IF NOT EXISTS audit_no_delete BEFORE DELETE ON audit_events BEGIN SELECT RAISE(ABORT, 'Audit entries are immutable'); END;
   CREATE TABLE IF NOT EXISTS backup_runs (

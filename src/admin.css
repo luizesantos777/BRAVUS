@@ -37,6 +37,7 @@
 .review-actions > .button { font-size: 11px; }
 .review-actions > .button:first-child { margin-right: auto; }
 .review-actions > .reject-sale { color: #e8a4a7; border-color: #634047; }
+.payout-coverage-error { color: #f5abb1 !important; border: 1px solid #723d45; background: #331c21; border-radius: 8px; padding: 12px; }
 .admin-form textarea { display: block; margin-top: 8px; min-height: 95px; width: 100%; resize: vertical; border: 1px solid #3c4a30; border-radius: 10px; background: #172013; color: #e4ebdc; padding: 12px; font: inherit; line-height: 1.7; }
 .admin-form textarea:focus { outline: 2px solid var(--brand-gold); outline-offset: 1px; }
 .review-pagination { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 23px; font-size: 10px; color: #a6b594; }

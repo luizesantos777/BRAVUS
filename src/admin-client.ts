@@ -56,6 +56,7 @@ export class AdminClient {
   unsubscribePush(id: string) { return this.request('/push/subscriptions', 'DELETE', { id }); }
   sales(status: SaleStatus | 'all', attendantId = '', page = 1) { return this.request<AdminSalesPage>(`/sales?${new URLSearchParams({ status, attendantId, page: String(page) })}`); }
   reviewSale(id: string, status: 'approved' | 'rejected', note: string) { return this.request(`/sales/${id}`, 'PATCH', { status, note }); }
+  cancelSale(id: string, note: string) { return this.request(`/sales/${id}/cancel`, 'POST', { note }); }
   async receipt(id: string): Promise<string> {
     if (this.isDemo) {
       const receipt = readDemoData().receipts[id]; if (!receipt) throw new Error('Comprovante não encontrado.');

@@ -516,6 +516,54 @@ test('só o administrador aprova ou recusa vendas; saldo e ranking usam apenas a
   const dashboard = await (await call('/api/admin/dashboard', adminKey)).json();
   assert.equal(dashboard.costs[0].adsCents, 500); assert.equal(dashboard.pendingSalesCount, 0);
 });
+test('cancelar aprovação exige administrador e motivo, preserva a venda e retira saldo e faturamento uma única vez', async t => {
+  const { call, submit, store } = await fixture(t, { approveSales: false });
+  await submit(); const pending = (await (await call('/api/portal')).json()).sales[0];
+  const cancel = (note: unknown, token = adminKey, id = pending.id) => call(`/api/admin/sales/${id}/cancel`, token, { method: 'POST', body: JSON.stringify({ note }) });
+  for (const token of ['', tokenA, tokenB]) assert.equal((await cancel('Motivo', token)).status, 401);
+  assert.equal((await cancel('Ainda em análise')).status, 409);
+  await store.reviewSale(pending.id, { status: 'approved', note: 'Aprovação original' });
+  for (const note of [undefined, null, 42, '', '   ', 'x'.repeat(501)]) assert.equal((await cancel(note)).status, 400);
+  assert.equal((await cancel('Não existe', adminKey, 'missing')).status, 404);
+  const before = (await (await call('/api/portal')).json()).sales[0];
+  const repeated = await Promise.all([cancel('Aprovada por engano'), cancel('Aprovada por engano')]);
+  assert.deepEqual(repeated.map(response => response.status).sort(), [200, 409]);
+  const portal = await (await call('/api/portal')).json(), sale = portal.sales[0];
+  assert.equal(sale.status, 'rejected'); assert.ok(sale.cancelledAt); assert.equal(sale.reviewNote, 'Aprovada por engano');
+  for (const key of ['id', 'amountCents', 'feeCents', 'attendantFeeCents', 'commissionMode', 'commissionBps', 'receiptId', 'date', 'time', 'createdAt']) assert.equal(sale[key], before[key]);
+  assert.equal(portal.finance.grossCents, 0); assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.count, 0);
+  assert.deepEqual(await (await call('/api/ranking')).json(), []);
+  assert.equal((await call('/api/receipts/' + sale.receiptId)).status, 200);
+  assert.equal((await (await call('/api/admin/sales?status=rejected', adminKey)).json()).sales[0].cancelledAt, sale.cancelledAt);
+  const dashboard = await (await call('/api/admin/dashboard?refresh=1', adminKey)).json(); assert.equal(dashboard.attendants.find((item: { id: string }) => item.id === portal.profile.id).finance.grossCents, 0);
+  const audit = await (await call(`/api/admin/audit?action=sale.cancelled`, adminKey)).json();
+  assert.equal(audit.total, 1); assert.equal(audit.entries[0].actorName, 'Administrador'); assert.equal(audit.entries[0].before.note, 'Aprovação original');
+  assert.equal(audit.entries[0].before.commissionCents, 3000); assert.equal(audit.entries[0].after.commissionCents, 0);
+  assert.equal((await (await submit()).json()).duplicate, true); assert.equal((await (await call('/api/portal')).json()).sales[0].cancelledAt, sale.cancelledAt);
+  assert.equal((await cancel('Repetido')).status, 409);
+});
+test('cancelamento bloqueia repasse sem cobertura e mantém pagamentos já feitos sem cobrar novamente', async t => {
+  for (const paid of [false, true]) await t.test(paid ? 'repasse já pago' : 'pedido em análise', async t => {
+    const { call, submit } = await fixture(t); await submit();
+    await call('/api/profile', tokenA, { method: 'PATCH', body: JSON.stringify({ name: 'Teste', email: '', phone: '', pixType: 'email', pixKey: 'fixture@example.com', pixOwner: 'Pessoa de teste' }) });
+    const initial = await (await call('/api/portal')).json();
+    const request = await (await call('/api/payouts', tokenA, { method: 'POST', body: JSON.stringify({ amount: '20' }) })).json();
+    const finish = (status: string) => call('/api/admin/payouts/' + request.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status, note: 'Conferência de teste' }) });
+    if (paid) assert.equal((await finish('paid')).status, 200);
+    assert.equal((await call('/api/admin/sales/' + initial.sales[0].id + '/cancel', adminKey, { method: 'POST', body: JSON.stringify({ note: 'Aprovação incorreta' }) })).status, 200);
+    let portal = await (await call('/api/portal')).json();
+    assert.equal(portal.finance.availableCents, -2000); assert.equal(portal.finance.grossCents, 0);
+    if (paid) {
+      assert.equal(portal.payouts[0].status, 'paid'); assert.equal(portal.payouts[0].withdrawalFeeCents, 250); assert.equal(portal.payouts[0].gatewayFeeCents, 500);
+      assert.equal(portal.finance.paidPayoutNetCents, 1750);
+    } else {
+      const blocked = await finish('paid'); assert.equal(blocked.status, 400); assert.match((await blocked.json()).error, /Saldo insuficiente/);
+      portal = await (await call('/api/portal')).json(); assert.equal(portal.payouts[0].status, 'pending'); assert.equal(portal.payouts[0].withdrawalFeeCents, 0);
+      assert.equal((await finish('cancelled')).status, 200);
+      assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 0);
+    }
+  });
+});
 test('fila administrativa pagina, filtra por atendente e não expõe tokens', async t => {
   const { call, submit, a } = await fixture(t, { approveSales: false });
   const payload = batch(); payload.sales = Array.from({ length: 10 }, () => ({ ...payload.sales[0] }));

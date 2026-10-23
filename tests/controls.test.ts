@@ -60,6 +60,25 @@ test('histórico guarda valores anteriores e novos na mesma transação; não du
   assert.equal((await store.adminCosts(auth.id, businessToday())).adsCents, 2000);
 });
 
+test('cancelamento mantém a aprovação em falha de auditoria e preserva motivo, saldo e comprovante após restaurar backup', async t => {
+  const { store, auth, sale } = await fixture(t), item = await sale();
+  await store.reviewSale(item.id, { status: 'approved', note: 'Aprovação original' }, actor);
+  await store.sql.exec("CREATE TRIGGER fixture_cancel_audit BEFORE INSERT ON audit_events WHEN NEW.action = 'sale.cancelled' BEGIN SELECT RAISE(ABORT, 'Fixture audit unavailable'); END");
+  await assert.rejects(() => store.cancelSale(item.id, { note: 'Erro na aprovação' }, actor));
+  assert.equal((await store.sales(auth))[0].status, 'approved'); assert.equal((await store.portal(auth)).finance.availableCents, 4150);
+  assert.equal((await readAudit(store, new URLSearchParams('action=sale.cancelled'))).total, 0);
+  await store.sql.exec('DROP TRIGGER fixture_cancel_audit');
+  await store.cancelSale(item.id, { note: 'Erro na aprovação' }, actor);
+  assert.equal((await store.portal(auth)).finance.availableCents, 0);
+  assert.equal((await readFinancialReport(store, businessToday(), businessToday())).totals.grossCents, 0);
+  const bytes = await createArchive(store), restored = await PortalStore.open(':memory:');
+  try {
+    await restoreArchive(bytes, restored);
+    assert.deepEqual(await restored.sales(auth), await store.sales(auth)); assert.ok((await restored.sales(auth))[0].cancelledAt);
+    assert.deepEqual(await restored.receipt(auth, item.receiptId), await store.receipt(auth, item.receiptId));
+    assert.equal((await readAudit(restored, new URLSearchParams('action=sale.cancelled'))).entries[0].before!.note, 'Aprovação original');
+  } finally { restored.close(); }
+});
 test('fechamento conta só aprovadas, preserva divisão histórica e separa lucro de repasse e caixa', async t => {
   const { store, auth, sale } = await fixture(t), today = businessToday();
   const checkout = await sale(); await store.reviewSale(checkout.id, { status: 'approved', note: '' }, actor);

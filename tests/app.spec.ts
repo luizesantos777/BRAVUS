@@ -338,9 +338,11 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   const appleIcon = await (await page.request.get(appleHref!)).body(); expect(appleIcon.readUInt32BE(16)).toBe(180);
   await page.screenshot({ path: info.outputPath('iphone-instalar-alertas.png'), fullPage: true });
   await page.goto(`/?aba=perfil#/atendente/${token}`); await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'BRAVUS');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'FireBot');
+  await expect(page).toHaveTitle('FireBot — Portal do Atendente BRAVUS');
   await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /\/firebot-apple-touch-icon\.png$/);
   const personalManifest = await (await page.request.get('/manifest.webmanifest')).json();
+  expect(personalManifest.name).toBe('FireBot'); expect(personalManifest.short_name).toBe('FireBot');
   expect(personalManifest.icons).toEqual(manifest.icons);
   // Omitting start_url preserves the document's individual link rather than opening the public demo.
   expect(personalManifest.start_url).toBeUndefined(); expect(JSON.stringify(personalManifest)).not.toContain(token);
@@ -717,6 +719,7 @@ test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelh
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('status')).toContainText(`${name}: 1 venda(s), total R$`);
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.body).join('\n'))).toContain(`${name}: 1 venda(s), total R$`);
+  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.title))).toContain('Nova venda aprovada · Demonstração');
   await approveDemoSales(page);
   await page.getByRole('tab', { name: 'Ranking', exact: true }).click();
   await expect(page.locator('.ranking-row.mine img')).toBeVisible();

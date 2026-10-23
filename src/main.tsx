@@ -30,10 +30,10 @@ function Router() {
     const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest) manifest.href = publicAssetUrl(admin ? 'admin.webmanifest' : 'manifest.webmanifest');
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
-    if (appleName) appleName.content = admin ? 'FireBot' : 'BRAVUS';
+    if (appleName) appleName.content = 'FireBot';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
-    document.title = admin ? 'FireBot — Administração BRAVUS' : 'BRAVUS — Portal do Atendente';
+    document.title = admin ? 'FireBot — Administração BRAVUS' : 'FireBot — Portal do Atendente BRAVUS';
   }, [admin]);
   return admin ? <Admin /> : <App />;
 }

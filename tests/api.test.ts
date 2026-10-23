@@ -468,7 +468,8 @@ test('notificação administrativa abre o painel e mantém os alertas pessoais n
   assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
   handlers.notificationclick({ notification: { data: { target: 'attendant' }, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.equal(focused, 1);
-  handlers.push({ data: { json: () => ({ body: 'Venda do atendente registrada' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  handlers.push({ data: { json: () => ({ title: 'BRAVUS Brasil · Venda registrada', body: 'Venda do atendente registrada' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
+  assert.equal(shown[1].title, 'Nova venda aprovada'); assert.equal(shown[1].options.body, 'Venda do atendente registrada');
   assert.equal(shown[1].options.icon, shown[0].options.icon); assert.equal(shown[1].options.badge, shown[0].options.badge);
 });
 test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
@@ -480,6 +481,7 @@ test('push é autenticado e isolado, criptografa o alerta e não repete envio id
   assert.equal(Object.hasOwn(own, 'privateKey'), false);
   await call('/api/push/subscriptions', tokenB, { method: 'DELETE', body: JSON.stringify({ id }) });
   assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 1);
+  assert.equal(JSON.parse(deliveries[0].payload).title, 'Nova venda aprovada');
   assert.ok(JSON.parse(deliveries[0].payload).body.includes('300,00'));
   await submit(); assert.equal(deliveries.length, 1);
   await call('/api/push/subscriptions', tokenA, { method: 'DELETE', body: JSON.stringify({ id }) });

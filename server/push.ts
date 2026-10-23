@@ -99,7 +99,7 @@ export class PushService {
     const active = (await this.store.sql.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id));
     if (!active) return;
     const profile = (await this.store.profile(auth)), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'BRAVUS Brasil · Venda registrada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'Nova venda aprovada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
   }
   async notifyAdminSale(scope: string, auth: Authenticated, batch: SaleBatch) {
     const amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);

@@ -84,6 +84,57 @@ test('venda abaixo de R$ 200 libera comissão e repasse mesmo com meta antiga no
   assert.equal((await legacyRequest(store, tokenA, { amount: '19,70' })).status, 201);
   assert.equal((await (await call('/api/portal')).json()).finance.availableCents, 0);
 });
+test('Buckpay tem tarifa independente, calcula por venda e preserva a taxa gravada após ajustes do administrador', async t => {
+  const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
+  const token = 'fixture_buckpay_account_01234567890123456789';
+  await store.createAttendant('Vendedor Buckpay', 5000, token);
+  const view = async () => (await call('/api/portal?period=all', token)).json();
+  let portal = await view();
+  const originalCheckouts = portal.checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay');
+  const input = batch(); input.sales = ['100', '100'].map(amount => ({ ...input.sales[0], amount, checkoutId: 'buckpay', feeCents: 0, attendantFeeCents: 0 }));
+  assert.equal((await submit(input, 'fixture_buckpay_batch_001', token)).status, 200);
+  portal = await view(); assert.equal(portal.finance.availableCents, 0); assert.equal(portal.finance.pendingSalesCount, 2);
+  for (const sale of portal.sales) {
+    assert.equal(sale.checkoutId, 'buckpay'); assert.equal(sale.checkoutName, 'Checkout Buckpay');
+    assert.equal(sale.feeCents, 868); assert.equal(sale.attendantFeeCents, 434);
+    assert.equal((await call('/api/admin/sales/' + sale.id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'approved', note: 'Conferida' }) })).status, 200);
+  }
+  portal = await view(); assert.equal(portal.finance.commissionCents, 9132); assert.equal(portal.finance.gatewayFeeCents, 1736);
+  assert.equal(portal.finance.transactionFeeCents, 868); assert.equal(portal.finance.availableCents, 9132);
+  const adjust = (credential: string) => call('/api/admin/checkouts/buckpay', credential, { method: 'PATCH', body: JSON.stringify({ name: 'Checkout Buckpay', fee: '8', fixedFee: '2' }) });
+  assert.equal((await adjust(token)).status, 401); assert.equal((await adjust(adminKey)).status, 200);
+  input.sales = [input.sales[0]];
+  assert.equal((await submit(input, 'fixture_buckpay_batch_002', token)).status, 200);
+  portal = await view();
+  assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents).sort((a: number, b: number) => a - b), [868, 868, 1000]);
+  assert.deepEqual(portal.checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay'), originalCheckouts);
+  input.sales[0].amount = '1000.01';
+  assert.equal((await submit(input, 'fixture_buckpay_over_limit', token)).status, 400);
+  assert.equal((await view()).sales.length, 3);
+});
+test('Buckpay é cadastrado uma vez em banco existente sem alterar tarifas personalizadas ou vendas anteriores', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-buckpay-upgrade-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = await PortalStore.open(file);
+    const account = await store.createAttendant('Histórico Buckpay', 5000, tokenA), auth = { id: account.id };
+    await store.recordSales(auth, batch(), 'fixture_buckpay_before_upgrade');
+    await store.adminSetCheckout('main', { name: 'Principal personalizado', fee: '16', fixedFee: '2' });
+    await store.adminSetCheckout('pix', { name: 'PIX personalizado', fee: '7', fixedFee: '2' });
+    const existing = (await store.checkouts()).filter(checkout => checkout.id !== 'buckpay'), sales = await store.sales(auth);
+    await store.sql.prepare('DELETE FROM checkouts WHERE id = ?').run('buckpay');
+    await store.sql.prepare('DELETE FROM schema_migrations WHERE id = ?').run('checkout-buckpay-v1');
+    store.close(); store = undefined; store = await PortalStore.open(file);
+    assert.deepEqual((await store.checkouts()).filter(checkout => checkout.id !== 'buckpay'), existing);
+    assert.deepEqual(await store.sales(auth), sales);
+    assert.deepEqual((await store.checkouts()).find(checkout => checkout.id === 'buckpay'), { id: 'buckpay', name: 'Checkout Buckpay', feeBps: 699, fixedFeeCents: 169, minAmountCents: 1, higherTier: null, maxAmountCents: 100000 });
+    await store.adminSetCheckout('buckpay', { name: 'Checkout Buckpay', fee: '8', fixedFee: '2' });
+    store.close(); store = undefined; store = await PortalStore.open(file);
+    const buckpay = (await store.checkouts()).filter(checkout => checkout.id === 'buckpay');
+    assert.equal(buckpay.length, 1); assert.equal(buckpay[0].feeBps, 800); assert.equal(buckpay[0].fixedFeeCents, 200);
+    assert.deepEqual(await store.sales(auth), sales);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+});
 test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador', async t => {
   const { call, submit } = await fixture(t);
   const payload = batch();

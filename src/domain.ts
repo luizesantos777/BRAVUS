@@ -97,6 +97,7 @@ export function checkoutRateLabel(checkout: Checkout, amountCents?: number): str
 }
 export const MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null, maxAmountCents: null };
 export const CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: null, maxAmountCents: 100000 };
+export const BUCKPAY_TARIFF = { ...CHECKOUT_PIX_TARIFF, feeBps: 699, fixedFeeCents: 169 };
 export function percentageToBps(value: string): number {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error('Informe um percentual entre 0 e 100, com até duas casas decimais.');
   const [whole, fraction = ''] = value.trim().replace(',', '.').split('.');
@@ -209,7 +210,7 @@ export function validateProfile(value: unknown): Pick<Profile, 'name' | 'email' 
 export function demoInitial(): DemoData {
   return { version: 1, settlementVersion: 1, profile: { id: 'demo', name: 'Atendente de demonstração', email: '', phone: '', pixType: '', pixKey: '', pixOwner: '', commissionBps: DEFAULT_COMMISSION_BPS, photoUrl: '', saleAlertTemplate: DEFAULT_SALE_ALERT }, sales: [], payouts: [], costs: [], receipts: {} };
 }
-export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', ...CHECKOUT_PIX_TARIFF }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }];
+export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', ...CHECKOUT_PIX_TARIFF }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }, { id: 'buckpay', name: 'Checkout Buckpay', ...BUCKPAY_TARIFF }];
 export function demoPortal(data: DemoData, period: Period): Portal {
   const today = businessToday();
   return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), today };

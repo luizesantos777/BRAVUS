@@ -250,6 +250,7 @@ function checkoutFee(amountCents, checkout) {
 }
 var MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null, maxAmountCents: null };
 var CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: null, maxAmountCents: 1e5 };
+var BUCKPAY_TARIFF = { ...CHECKOUT_PIX_TARIFF, feeBps: 699, fixedFeeCents: 169 };
 function percentageToBps(value) {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error("Informe um percentual entre 0 e 100, com at\xE9 duas casas decimais.");
   const [whole, fraction = ""] = value.trim().replace(",", ".").split(".");
@@ -357,7 +358,7 @@ function validateProfile(value) {
   }
   return { name, email, phone, pixType, pixKey, pixOwner, ...extra };
 }
-var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }];
+var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }, { id: "buckpay", name: "Checkout Buckpay", ...BUCKPAY_TARIFF }];
 
 // server/controls-schema.ts
 import { randomUUID } from "node:crypto";
@@ -484,6 +485,10 @@ var PortalStore = class _PortalStore {
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("checkout-maximum-1000-v1")) {
         await store.sql.prepare("UPDATE checkouts SET max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?").run(CHECKOUT_PIX_TARIFF.maxAmountCents, "main");
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-maximum-1000-v1");
+      }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("checkout-buckpay-v1")) {
+        await store.sql.prepare("INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)").run("buckpay", "Checkout Buckpay", BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
+        await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-buckpay-v1");
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
         await store.sql.prepare("UPDATE attendants SET commission_bps = ?").run(DEFAULT_COMMISSION_BPS);

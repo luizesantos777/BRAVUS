@@ -655,6 +655,39 @@ test('administrador cria atendente, configura custos, troca e revoga o token', a
   await expect(page.getByLabel('Chave administrativa')).toHaveValue('');
 });
 
+test('Checkout Buckpay fica separado nas taxas e calcula a venda sem criar outro link de pagamento', async ({ page }, info) => {
+  const key = 'fixture_browser_admin_012345678901234567890123456789', admin = { Authorization: `Bearer ${key}` };
+  const token = `fixture_${info.project.name}_buckpay_01234567890123456789`, name = `Buckpay ${info.project.name}`, personal = { Authorization: `Bearer ${token}` };
+  const created = await page.request.post('/api/admin/attendants', { headers: admin, data: { name, token } }); expect(created.status()).toBe(201);
+  const id = (await created.json()).attendantId;
+  const before = (await (await page.request.get('/api/portal', { headers: personal })).json()).checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay');
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(key); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByRole('button', { name: 'Taxas', exact: true }).click();
+  const settings = page.getByRole('form', { name: 'Taxas: Checkout Buckpay', exact: true });
+  await expect(settings.getByLabel('Nome do checkout')).toHaveValue('Checkout Buckpay');
+  await expect(settings.getByLabel('Taxa variável (%)')).toHaveValue('6.99');
+  await expect(settings.getByLabel('Taxa fixa (R$)', { exact: true })).toHaveValue('1.69');
+  await settings.getByLabel('Taxa variável (%)').fill('6,99');
+  await settings.getByRole('button', { name: 'Salvar checkout', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Taxa do checkout atualizada');
+  const after = (await (await page.request.get('/api/portal', { headers: personal })).json()).checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay');
+  expect(after).toEqual(before);
+  await page.goto(`/#/atendente/${token}`);
+  await expect(page.getByLabel('Link do checkout BRAVUS')).toHaveValue('https://pagamento.bravuspix.shop/checkout');
+  await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100');
+  await page.getByLabel('Checkout venda 1', { exact: true }).selectOption({ label: 'Checkout Buckpay' });
+  const preview = page.getByLabel('Taxas da venda 1'); await expect(preview).toContainText('8,68'); await expect(preview).toContainText('4,34'); await expect(preview).toContainText('45,66');
+  await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
+  await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
+  await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(key); await page.getByRole('button', { name: 'Entrar na administração' }).click();
+  await page.getByLabel('Filtrar por atendente').selectOption(id);
+  await expect(page.locator('.review-sale')).toContainText('Checkout Buckpay');
+  await page.getByRole('button', { name: 'Aprovar venda', exact: true }).click(); await page.getByRole('button', { name: 'Confirmar aprovação' }).click();
+  await page.goto(`/#/atendente/${token}`); await expect(page.locator('.metric.balance')).toContainText('45,66');
+  await expect(page.locator('.history-panel tbody tr')).toContainText('Checkout Buckpay'); await expect(page.locator('.history-panel .sale-status')).toHaveText('Aprovada');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('checkout-buckpay.png'), fullPage: true });
+});
 test('checkout aceita até R$ 1.000 e mostra também a tarifa do PIX manual', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.checkout-tariff')).toContainText('15,00%');

@@ -133,7 +133,7 @@ test('taxa de saque entra na data do pagamento em São Paulo, em vez da solicita
 });
 
 test('novos lançamentos dividem a taxa total do gateway em 50% para cada parte por venda', () => {
-  for (const [checkoutId, amountCents, expectedFee, expectedEarnings] of [['main', 10000, 850, 4150], ['main', 19700, 1577, 8273], ['main', 100000, 7600, 42400], ['pix', 10000, 434, 4566], ['main', 10001, 850, 4150]] as const) {
+  for (const [checkoutId, amountCents, expectedFee, expectedEarnings] of [['main', 10000, 850, 4150], ['main', 19700, 1577, 8273], ['main', 100000, 7600, 42400], ['pix', 10000, 434, 4566], ['buckpay', 10000, 434, 4566], ['main', 10001, 850, 4150]] as const) {
     const feeCents = checkoutFee(amountCents, demoCheckouts.find(checkout => checkout.id === checkoutId)!);
     const item = { ...sale(amountCents, '2026-10-21', feeCents), commissionBps: 5000, commissionMode: 'gross-share-less-fees' as const, attendantFeeCents: splitGatewayFee(feeCents) };
     assert.equal(attendantSaleFee(item), expectedFee); assert.equal(saleEarnings(item), expectedEarnings);

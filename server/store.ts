@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { amountToCents, businessToday, calculateFinance, checkoutFee, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, splitGatewayFee, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import { amountToCents, businessToday, calculateFinance, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, splitGatewayFee, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
@@ -94,6 +94,10 @@ export class PortalStore {
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-maximum-1000-v1'))) {
         (await store.sql.prepare('UPDATE checkouts SET max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?').run(CHECKOUT_PIX_TARIFF.maxAmountCents, 'main'));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-maximum-1000-v1'));
+      }
+      if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-buckpay-v1'))) {
+        await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run('buckpay', 'Checkout Buckpay', BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
+        await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-buckpay-v1');
       }
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('attendant-gross-share-50-v1'))) {
         (await store.sql.prepare('UPDATE attendants SET commission_bps = ?').run(DEFAULT_COMMISSION_BPS));

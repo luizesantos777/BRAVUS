@@ -473,7 +473,7 @@ test('administrador recebe novas vendas de todos os atendentes uma vez, ainda em
   await call('/api/push/subscriptions', tokenA, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-attendant')) });
   assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 2);
   const ownerAlerts = () => deliveries.map(item => JSON.parse(item.payload)).filter(item => item.target === 'admin');
-  assert.equal(ownerAlerts().length, 1); assert.equal(ownerAlerts()[0].title, 'Nova venda aprovada');
+  assert.equal(ownerAlerts().length, 1); assert.equal(ownerAlerts()[0].title, 'Lucro Certo · Nova venda aprovada');
   assert.match(ownerAlerts()[0].body, /^Você recebeu R\$\s300,00$/);
   for (const secret of [tokenA, tokenB, adminKey, image.base64]) assert.equal(JSON.stringify(ownerAlerts()).includes(secret), false);
   const portal = await (await call('/api/portal')).json(); assert.equal(portal.sales[0].status, 'pending'); assert.equal(portal.finance.availableCents, 0);
@@ -513,14 +513,14 @@ test('notificação administrativa abre o painel e mantém os alertas pessoais n
   const personal = { url: 'https://portal.example/#/atendente/fixture-token', focus: async () => { focused++; } };
   runInNewContext(readFileSync('public/notifications-worker.js', 'utf8'), { URL, self: { addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler; }, registration: { scope: 'https://portal.example/', showNotification: async (title: string, options: any) => { shown.push({ title, options }); } }, clients: { matchAll: async () => [personal], openWindow: async (url: string) => { opened.push(url); } } } });
   handlers.push({ data: { json: () => ({ target: 'admin', body: 'Você recebeu R$ 149,90', tag: 'bravus-admin-venda-fixture' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
-  assert.equal(shown[0].title, 'Nova venda aprovada'); assert.equal(shown[0].options.body, 'Você recebeu R$ 149,90'); assert.equal(shown[0].options.data.target, 'admin');
+  assert.equal(shown[0].title, 'Lucro Certo · Nova venda aprovada'); assert.equal(shown[0].options.body, 'Você recebeu R$ 149,90'); assert.equal(shown[0].options.data.target, 'admin');
   assert.equal(shown[0].options.icon, 'https://portal.example/firebot-icon-192.png'); assert.equal(shown[0].options.badge, 'https://portal.example/firebot-icon-192.png');
   handlers.notificationclick({ notification: { ...shown[0].options, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
   handlers.notificationclick({ notification: { data: { target: 'attendant' }, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.equal(focused, 1);
   handlers.push({ data: { json: () => ({ title: 'BRAVUS Brasil · Venda registrada', body: 'Venda do atendente registrada' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
-  assert.equal(shown[1].title, 'Nova venda aprovada'); assert.equal(shown[1].options.body, 'Venda do atendente registrada');
+  assert.equal(shown[1].title, 'Lucro Certo · Nova venda aprovada'); assert.equal(shown[1].options.body, 'Venda do atendente registrada');
   assert.equal(shown[1].options.icon, shown[0].options.icon); assert.equal(shown[1].options.badge, shown[0].options.badge);
 });
 test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
@@ -532,7 +532,7 @@ test('push é autenticado e isolado, criptografa o alerta e não repete envio id
   assert.equal(Object.hasOwn(own, 'privateKey'), false);
   await call('/api/push/subscriptions', tokenB, { method: 'DELETE', body: JSON.stringify({ id }) });
   assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 1);
-  assert.equal(JSON.parse(deliveries[0].payload).title, 'Nova venda aprovada');
+  assert.equal(JSON.parse(deliveries[0].payload).title, 'Lucro Certo · Nova venda aprovada');
   assert.ok(JSON.parse(deliveries[0].payload).body.includes('300,00'));
   await submit(); assert.equal(deliveries.length, 1);
   await call('/api/push/subscriptions', tokenA, { method: 'DELETE', body: JSON.stringify({ id }) });

@@ -99,11 +99,11 @@ export class PushService {
     const active = (await this.store.sql.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id));
     if (!active) return;
     const profile = (await this.store.profile(auth)), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'Nova venda aprovada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'Lucro Certo · Nova venda aprovada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
   }
   async notifyAdminSale(scope: string, auth: Authenticated, batch: SaleBatch) {
     const amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: 'admin', id: scope }, { title: 'Nova venda aprovada', body: `Você recebeu ${money(amount)}`, target: 'admin', tag: `bravus-admin-venda-${randomUUID()}` });
+    await this.sendTo({ role: 'admin', id: scope }, { title: 'Lucro Certo · Nova venda aprovada', body: `Você recebeu ${money(amount)}`, target: 'admin', tag: `bravus-admin-venda-${randomUUID()}` });
   }
   private async sendTo(target: PushTarget, message: { title: string; body: string; target?: 'admin'; tag?: string }) {
     const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);

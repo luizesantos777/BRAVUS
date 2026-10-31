@@ -316,17 +316,21 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(adminKey);
   await page.getByRole('button', { name: 'Entrar na administração' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
-  await expect(page.getByText('No iPhone, adicione o BRAVUS à Tela de Início. Requer iOS 16.4 ou superior.')).toBeVisible();
+  await expect(page.getByText('No iPhone, adicione o Lucro Certo à Tela de Início. Requer iOS 16.4 ou superior.')).toBeVisible();
   await page.getByRole('button', { name: 'Como ativar no iPhone' }).click();
   await expect(page.locator('.notification-install-guide')).toContainText('Safari');
   await expect(page.locator('.notification-install-guide')).toContainText('Adicionar à Tela de Início');
   const manifestHref = await page.locator('link[rel="manifest"]').getAttribute('href');
   expect(manifestHref).toContain('/admin.webmanifest');
   const response = await page.request.get(manifestHref!); expect(response.headers()['content-type']).toContain('application/manifest+json');
+  expect(response.headers()['cache-control']).toContain('must-revalidate');
+  const workerResponse = await page.request.get('/notifications-worker.js');
+  expect(workerResponse.headers()['cache-control']).toContain('must-revalidate');
   const manifest = await response.json(); expect(new URL(manifest.start_url, manifestHref!).hash).toBe('#/admin'); expect(manifest.display).toBe('standalone');
-  expect(manifest.name).toBe('FireBot'); expect(manifest.short_name).toBe('FireBot');
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'FireBot');
-  await expect(page).toHaveTitle('FireBot — Administração BRAVUS');
+  expect(manifest.id).toBe('./admin'); expect(manifest.scope).toBe('./');
+  expect(manifest.name).toBe('Lucro Certo'); expect(manifest.short_name).toBe('Lucro Certo');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'Lucro Certo');
+  await expect(page).toHaveTitle('Lucro Certo — Administração BRAVUS');
   expect(JSON.stringify(manifest)).not.toContain(adminKey);
   for (const icon of manifest.icons) {
     const result = await page.request.get(new URL(icon.src, manifestHref!).href), png = await result.body();
@@ -338,11 +342,12 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   const appleIcon = await (await page.request.get(appleHref!)).body(); expect(appleIcon.readUInt32BE(16)).toBe(180);
   await page.screenshot({ path: info.outputPath('iphone-instalar-alertas.png'), fullPage: true });
   await page.goto(`/?aba=perfil#/atendente/${token}`); await expect(page.locator('.notification-badge')).toHaveText('Instalar no iPhone');
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'FireBot');
-  await expect(page).toHaveTitle('FireBot — Portal do Atendente BRAVUS');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'Lucro Certo');
+  await expect(page).toHaveTitle('Lucro Certo — Portal do Atendente BRAVUS');
   await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute('href', /\/firebot-apple-touch-icon\.png$/);
   const personalManifest = await (await page.request.get('/manifest.webmanifest')).json();
-  expect(personalManifest.name).toBe('FireBot'); expect(personalManifest.short_name).toBe('FireBot');
+  expect(personalManifest.id).toBe('./'); expect(personalManifest.scope).toBe('./');
+  expect(personalManifest.name).toBe('Lucro Certo'); expect(personalManifest.short_name).toBe('Lucro Certo');
   expect(personalManifest.icons).toEqual(manifest.icons);
   // Omitting start_url preserves the document's individual link rather than opening the public demo.
   expect(personalManifest.start_url).toBeUndefined(); expect(JSON.stringify(personalManifest)).not.toContain(token);
@@ -378,7 +383,7 @@ test('iPhone instalado mostra os recursos indisponíveis sem pedir permissão ou
   await page.getByRole('button', { name: 'Entrar na administração' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Indisponível');
   await expect(page.getByRole('button', { name: 'Ativar alertas de vendas no meu celular' })).toBeDisabled();
-  await expect(page.locator('.notification-note')).toContainText('BRAVUS está aberto como app');
+  await expect(page.locator('.notification-note')).toContainText('Lucro Certo está aberto como app');
   await page.getByRole('button', { name: 'Verificar notificações' }).click();
   const diagnostic = page.getByRole('status', { name: 'Verificação das notificações' });
   await expect(diagnostic).toContainText('App da Tela de Início');
@@ -752,7 +757,7 @@ test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelh
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('status')).toContainText(`${name}: 1 venda(s), total R$`);
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.body).join('\n'))).toContain(`${name}: 1 venda(s), total R$`);
-  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.title))).toContain('Nova venda aprovada · Demonstração');
+  await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.title))).toContain('Lucro Certo · Nova venda aprovada · Demonstração');
   await approveDemoSales(page);
   await page.getByRole('tab', { name: 'Ranking', exact: true }).click();
   await expect(page.locator('.ranking-row.mine img')).toBeVisible();

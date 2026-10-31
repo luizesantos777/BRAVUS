@@ -5,7 +5,7 @@ self.addEventListener('push', event => {
   try { message = event.data.json(); } catch { return; }
   if (!message || typeof message.body !== 'string') return;
   const admin = message.target === 'admin';
-  event.waitUntil(self.registration.showNotification('Nova venda aprovada', {
+  event.waitUntil(self.registration.showNotification('Lucro Certo · Nova venda aprovada', {
     body: message.body.slice(0, 1000),
     icon: new URL('firebot-icon-192.png', self.registration.scope).href,
     badge: new URL('firebot-icon-192.png', self.registration.scope).href,

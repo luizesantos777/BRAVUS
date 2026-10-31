@@ -43,12 +43,12 @@ export default function NotificationsCard({ client, disabled, title = 'Notifica�
     <div className="notification-copy">
       <div><h3>{title}</h3><span className={`notification-badge ${state === 'on' ? 'enabled' : ''}`}>{label}</span></div>
       <p>{description}{client.isDemo && ' Na demonstração, os alertas são de teste.'}</p>
-      {state === 'install-required' && <p className="notification-note">No iPhone, adicione o BRAVUS à Tela de Início. Requer iOS 16.4 ou superior.</p>}
+      {state === 'install-required' && <p className="notification-note">No iPhone, adicione o Lucro Certo à Tela de Início. Requer iOS 16.4 ou superior.</p>}
       {message && <p className="notification-note" role="status">{message}</p>}
       {state === 'install-required' && showInstall && <div className="notification-install-guide" id={guideId}><ol>
         <li>Abra este link no <strong>Safari</strong>, fora do navegador do WhatsApp.</li>
         <li>Toque em <strong>Compartilhar</strong> e depois em <strong>Adicionar à Tela de Início</strong>.</li>
-        <li>Abra o <strong>BRAVUS pelo novo ícone</strong>. Entre no seu painel e toque no botão para ativar os alertas.</li>
+        <li>Abra o <strong>Lucro Certo pelo novo ícone</strong>. Entre no seu painel e toque no botão para ativar os alertas.</li>
         <li>Toque em <strong>Permitir</strong> quando o iPhone solicitar.</li>
       </ol></div>}
     </div>

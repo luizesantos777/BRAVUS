@@ -11,14 +11,14 @@ export type NotificationState = 'off' | 'on' | 'blocked' | 'unsupported' | 'inst
 const DEMO_NOTIFICATIONS = 'bravus.demo.notifications.v1';
 function supported(client: NotificationClient) { return window.isSecureContext && typeof window.Notification !== 'undefined' && 'serviceWorker' in navigator && (client.isDemo || 'PushManager' in window); }
 export function notificationUnsupportedMessage() {
-  if (!window.isSecureContext) return 'Abra o BRAVUS pelo endereço HTTPS para ativar as notificações.';
-  return isAppleMobile() && isInstalledApp() ? 'O BRAVUS está aberto como app, mas o iPhone não disponibilizou o serviço de notificações. Toque em Verificar notificações para conferir o impedimento.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
+  if (!window.isSecureContext) return 'Abra o Lucro Certo pelo endereço HTTPS para ativar as notificações.';
+  return isAppleMobile() && isInstalledApp() ? 'O Lucro Certo está aberto como app, mas o iPhone não disponibilizou o serviço de notificações. Toque em Verificar notificações para conferir o impedimento.' : 'Este navegador não oferece notificações neste modo. Abra o portal em um navegador com suporte a notificações.';
 }
 function blockedMessage() { return isAppleMobile() ? 'No iPhone, abra Ajustes > Notificações, selecione o app instalado e ative Permitir Notificações. Depois volte ao painel.' : 'As notificações estão bloqueadas. Permita as notificações nas configurações deste site no navegador e volte ao painel.'; }
 export function notificationErrorMessage(cause: unknown) {
   if (cause instanceof DOMException) {
     if (cause.name === 'NotAllowedError') return typeof window.Notification !== 'undefined' && Notification.permission === 'denied' ? blockedMessage() : 'O aparelho recusou a ativação. Toque em Verificar notificações para conferir a permissão e o serviço neste aparelho.';
-    if (cause.name === 'InvalidStateError') return 'O serviço de notificações ainda não iniciou neste aparelho. Feche o BRAVUS, abra novamente e tente ativar.';
+    if (cause.name === 'InvalidStateError') return 'O serviço de notificações ainda não iniciou neste aparelho. Feche o Lucro Certo, abra novamente e tente ativar.';
     if (cause.name === 'NotSupportedError') return notificationUnsupportedMessage();
     return 'Não foi possível concluir a conexão com o serviço de notificações. Verifique sua conexão e tente novamente.';
   }
@@ -43,12 +43,12 @@ export async function notificationState(client: NotificationClient): Promise<Not
   return config.subscriptionIds.includes(await endpointId(subscription.endpoint)) ? 'on' : 'off';
 }
 export async function enableNotifications(client: NotificationClient) {
-  if (needsAppleInstallation()) throw new Error('No iPhone, abra o link no Safari, toque em Compartilhar e Adicionar à Tela de Início. Depois abra o BRAVUS pelo novo ícone e ative as notificações.');
+  if (needsAppleInstallation()) throw new Error('No iPhone, abra o link no Safari, toque em Compartilhar e Adicionar à Tela de Início. Depois abra o Lucro Certo pelo novo ícone e ative as notificações.');
   if (!supported(client)) throw new Error(notificationUnsupportedMessage());
   // Request only from the button's gesture, and never prompt again after consent.
   const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
   if (permission !== 'granted') throw new Error(permission === 'denied' ? blockedMessage() : 'A autorização não foi concluída. Toque em ativar novamente e escolha Permitir.');
-  const registration = await navigator.serviceWorker.register(workerPath().href);
+  const registration = await navigator.serviceWorker.register(workerPath().href, { updateViaCache: 'none' });
   await navigator.serviceWorker.ready;
   if (client.isDemo) { localStorage.setItem(DEMO_NOTIFICATIONS, 'on'); return; }
   const config = await client.pushConfig();
@@ -108,6 +108,6 @@ export async function notifyDemoSale(client: NotificationClient, body: string) {
   try {
     if (!client.isDemo || await notificationState(client) !== 'on') return;
     const registration = await navigator.serviceWorker.getRegistration(workerPath().href);
-    await registration?.showNotification('Nova venda aprovada · Demonstração', { body, icon: new URL('firebot-icon-192.png', registration.scope).href });
+    await registration?.showNotification('Lucro Certo · Nova venda aprovada · Demonstração', { body, icon: new URL('firebot-icon-192.png', registration.scope).href });
   } catch { /* The sale stays saved if a notification cannot be displayed. */ }
 }

@@ -1192,7 +1192,8 @@ function createPortalHandler(store, options = {}) {
       }
       const body = await readFile(filename);
       const types = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
-      response.writeHead(200, { "Content-Type": types[extname(filename)] ?? "application/octet-stream", "Cache-Control": extname(filename) === ".html" ? "no-store" : "public, max-age=3600" });
+      const revalidate = extname(filename) === ".webmanifest" || filename === resolve(root, "notifications-worker.js");
+      response.writeHead(200, { "Content-Type": types[extname(filename)] ?? "application/octet-stream", "Cache-Control": extname(filename) === ".html" ? "no-store" : revalidate ? "public, max-age=0, must-revalidate" : "public, max-age=3600" });
       response.end(request.method === "HEAD" ? void 0 : body);
     } catch (error) {
       if (response.headersSent) {
@@ -1340,11 +1341,11 @@ var PushService = class {
     const active = await this.store.sql.prepare("SELECT id FROM attendants WHERE id = ? AND active = 1").get(auth.id);
     if (!active) return;
     const profile = await this.store.profile(auth), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: "attendant", id: auth.id }, { title: "Nova venda aprovada", body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+    await this.sendTo({ role: "attendant", id: auth.id }, { title: "Lucro Certo \xB7 Nova venda aprovada", body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
   }
   async notifyAdminSale(scope, auth, batch) {
     const amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: "admin", id: scope }, { title: "Nova venda aprovada", body: `Voc\xEA recebeu ${money(amount)}`, target: "admin", tag: `bravus-admin-venda-${randomUUID3()}` });
+    await this.sendTo({ role: "admin", id: scope }, { title: "Lucro Certo \xB7 Nova venda aprovada", body: `Voc\xEA recebeu ${money(amount)}`, target: "admin", tag: `bravus-admin-venda-${randomUUID3()}` });
   }
   async sendTo(target, message) {
     const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);

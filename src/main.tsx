@@ -21,8 +21,9 @@ function Router() {
       finally { running = false; }
     }
     void refreshWorker();
-    window.addEventListener('pageshow', refreshWorker); document.addEventListener('visibilitychange', refreshWorker);
-    return () => { window.removeEventListener('pageshow', refreshWorker); document.removeEventListener('visibilitychange', refreshWorker); };
+    const interval = window.setInterval(refreshWorker, 60 * 60 * 1000);
+    window.addEventListener('pageshow', refreshWorker); window.addEventListener('online', refreshWorker); document.addEventListener('visibilitychange', refreshWorker);
+    return () => { window.clearInterval(interval); window.removeEventListener('pageshow', refreshWorker); window.removeEventListener('online', refreshWorker); document.removeEventListener('visibilitychange', refreshWorker); };
   }, []);
   const [admin, setAdmin] = React.useState(() => window.location.hash === '#/admin' || /\/admin\/?$/.test(window.location.pathname));
   React.useEffect(() => { const change = () => setAdmin(window.location.hash === '#/admin' || (/\/admin\/?$/.test(window.location.pathname) && !window.location.hash)); window.addEventListener('hashchange', change); return () => window.removeEventListener('hashchange', change); }, []);
@@ -30,10 +31,10 @@ function Router() {
     const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest) manifest.href = publicAssetUrl(admin ? 'admin.webmanifest' : 'manifest.webmanifest');
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
-    if (appleName) appleName.content = 'FireBot';
+    if (appleName) appleName.content = 'Lucro Certo';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
-    document.title = admin ? 'FireBot — Administração BRAVUS' : 'FireBot — Portal do Atendente BRAVUS';
+    document.title = admin ? 'Lucro Certo — Administração BRAVUS' : 'Lucro Certo — Portal do Atendente BRAVUS';
   }, [admin]);
   return admin ? <Admin /> : <App />;
 }

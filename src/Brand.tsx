@@ -21,7 +21,7 @@ export function BrandIntro({ accountKind }: { accountKind?: AccountKind }) {
     <div className="brand-intro-content">
       <span className="brand-eyebrow"><i />BRAVUS BRASIL</span>
       <h1>{partner ? 'Portal do Parceiro' : 'Portal do Atendente'}<span>.</span></h1>
-      <p>{partner ? 'Acompanhe suas vendas, saldo e repasses. Gateway de 10% por venda.' : 'Acompanhe suas vendas, comissões e repasses.'}</p>
+      <p>{partner ? 'Acompanhe suas vendas e pagamentos.' : 'Acompanhe suas vendas, comissões e repasses.'}</p>
       <div className="brand-sectors" aria-label="Pesca, Agro e Aventura">
         <span><Fish size={15} />Pesca</span>
         <span><Tractor size={16} />Agro</span>

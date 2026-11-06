@@ -395,9 +395,11 @@ var controlsSchema = `
 // server/partner-checkouts.ts
 var PARTNER_GATEWAY_SEED = {
   migration: "exclusive-partner-gateway-2026-11-06-v1",
+  limitMigration: "exclusive-partner-limit-3000-2026-11-06-v1",
   tokenHash: "81671f382c4f28195f09eedf618fe21032d0b0237cee3a2d378b94b922a78551",
   feeBps: 1e3,
-  fixedFeeCents: 0
+  fixedFeeCents: 0,
+  maxAmountCents: 3e5
 };
 function exclusiveCheckoutId(attendantId) {
   return "exclusive_" + attendantId;
@@ -520,9 +522,19 @@ var PortalStore = class _PortalStore {
           const id = exclusiveCheckoutId(String(partner.id));
           const before = await store.sql.prepare("SELECT fee_bps AS feeBps, fixed_fee_cents AS fixedFeeCents, tier_above_cents AS aboveAmountCents, tier_fee_bps AS aboveFeeBps, tier_fixed_fee_cents AS aboveFixedFeeCents FROM checkouts WHERE id = ?").get(id);
           await store.sql.prepare(`INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET fee_bps = excluded.fee_bps, fixed_fee_cents = excluded.fixed_fee_cents, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL`).run(id, "Gateway exclusivo", PARTNER_GATEWAY_SEED.feeBps, PARTNER_GATEWAY_SEED.fixedFeeCents, CHECKOUT_PIX_TARIFF.minAmountCents, CHECKOUT_PIX_TARIFF.maxAmountCents);
+            ON CONFLICT(id) DO UPDATE SET fee_bps = excluded.fee_bps, fixed_fee_cents = excluded.fixed_fee_cents, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL`).run(id, "Gateway exclusivo", PARTNER_GATEWAY_SEED.feeBps, PARTNER_GATEWAY_SEED.fixedFeeCents, CHECKOUT_PIX_TARIFF.minAmountCents, PARTNER_GATEWAY_SEED.maxAmountCents);
           await store.audit(systemActor, "checkout.updated", id, "Gateway exclusivo \xB7 " + String(partner.name), before ? { feeBps: Number(before.feeBps), fixedFeeCents: Number(before.fixedFeeCents), aboveAmountCents: before.aboveAmountCents == null ? null : Number(before.aboveAmountCents), aboveFeeBps: before.aboveFeeBps == null ? null : Number(before.aboveFeeBps), aboveFixedFeeCents: before.aboveFixedFeeCents == null ? null : Number(before.aboveFixedFeeCents) } : null, { attendantId: String(partner.id), exclusive: true, feeBps: PARTNER_GATEWAY_SEED.feeBps, fixedFeeCents: PARTNER_GATEWAY_SEED.fixedFeeCents, aboveAmountCents: null, aboveFeeBps: null, aboveFixedFeeCents: null });
           await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.migration);
+        }
+      }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(PARTNER_GATEWAY_SEED.limitMigration)) {
+        const checkout = await store.sql.prepare("SELECT c.id, c.max_amount_cents, a.name FROM attendants a JOIN checkouts c ON c.id = 'exclusive_' || a.id WHERE a.token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (checkout) {
+          if (checkout.max_amount_cents !== PARTNER_GATEWAY_SEED.maxAmountCents) {
+            await store.sql.prepare("UPDATE checkouts SET max_amount_cents = ? WHERE id = ?").run(PARTNER_GATEWAY_SEED.maxAmountCents, String(checkout.id));
+            await store.audit(systemActor, "checkout.updated", String(checkout.id), "Gateway exclusivo \xB7 " + String(checkout.name), { maxAmountCents: checkout.max_amount_cents == null ? null : Number(checkout.max_amount_cents) }, { maxAmountCents: PARTNER_GATEWAY_SEED.maxAmountCents });
+          }
+          await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.limitMigration);
         }
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {

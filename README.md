@@ -149,6 +149,14 @@ Para substituir um token preservando o mesmo atendente e histórico, use **Novo 
 
 ## Configurar taxas, custos e repasses
 
+### Gateway exclusivo por parceiro
+
+Um checkout com ID `exclusive_` seguido do ID do atendente pertence somente àquela conta. Quando existe, o portal oferece apenas essa opção, e a API também recusa os demais checkouts em novos lançamentos. As outras contas recebem as opções globais, sem os checkouts exclusivos. O cartão de PIX manual fica oculto nesse acesso, e o único gateway é selecionado automaticamente. Vendas anteriores conservam seus valores e tarifas.
+
+A configuração solicitada em 06/11/2026 identifica o parceiro pelo hash do token fornecido, sem gravar seu link privado no código. A migração cria o gateway com **10% por venda e R$ 0,00 de taxa fixa**, mantendo o limite atual do checkout e a divisão de taxas já configurada. A associação permanece ligada ao ID da conta após renovação do token. A aplicação é transacional, gera auditoria, ocorre uma vez e preserva alterações posteriores feitas pela administração em **Taxas**. Não adiciona tabelas ou colunas aos backups.
+
+Rascunhos ainda não enviados passam a selecionar o gateway permitido preservando os campos e prints. Uma tentativa já enviada e aguardando confirmação conserva o conteúdo e o identificador originais até a resposta do servidor, para confirmar um recebimento anterior sem criar outra venda.
+
 ### Rascunhos de vendas e comprovantes repetidos
 
 O formulário guarda automaticamente data, valores, checkout, horários, observações e prints em **IndexedDB neste aparelho**, separado por link individual e endereço da API. O token não é gravado nesse armazenamento: o namespace usa SHA-256. Os prints ficam separados dos campos para que digitar não regrave imagens grandes. A mensagem **Rascunho salvo neste aparelho** aparece somente após a confirmação da gravação. Ao recarregar ou voltar à aba de vendas, o preenchimento é recuperado; **Descartar rascunho** remove apenas os dados locais desse acesso. Rascunhos não são enviados ao administrador, não fazem parte dos backups do servidor e não acompanham o vendedor em outro aparelho. Limpar os dados do navegador remove esses rascunhos.

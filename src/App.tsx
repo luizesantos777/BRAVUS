@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Copy, DollarSign, ExternalLink, FileImage, History, Info, KeyRound, LoaderCircle, Plus, RefreshCw, Save, ShieldCheck, ShoppingCart, Trash2, Trophy, UserRound, Wallet, X } from 'lucide-react';
-import { amountToCents, attendantSaleFee, businessTime, businessToday, checkoutFee, checkoutRateLabel, dateLabel, demoInitial, demoPortal, DEFAULT_SALE_ALERT, money, payoutNet, saleEarnings, splitGatewayFee, renderSaleAlert, periodLabels, pixLabels, saleStatusLabel } from './domain.ts';
-import type { Checkout, Period, Portal, RankingEntry, SaleInput } from './domain.ts';
+import { amountToCents, attendantSaleFee, businessToday, checkoutFee, checkoutRateLabel, dateLabel, demoInitial, demoPortal, DEFAULT_SALE_ALERT, money, payoutNet, saleEarnings, splitGatewayFee, renderSaleAlert, periodLabels, pixLabels, saleStatusLabel } from './domain.ts';
+import type { Checkout, Period, Portal, RankingEntry } from './domain.ts';
 import { ApiError, currentToken, PortalClient, readReceipt } from './client.ts';
 import { Brand, BrandIntro } from './Brand.tsx';
 import ProfileForm, { ProfileAvatar } from './Profile.tsx';
@@ -57,6 +57,8 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const draft = useSalesDraft(client, client.isDemo || portal.profile.id !== 'demo');
   const { rows, date, pending } = draft.draft;
   const { setRows, setDate } = draft;
+  const onlyCheckout = portal.checkouts.length === 1 ? portal.checkouts[0] : undefined;
+  useEffect(() => { if (onlyCheckout) draft.selectOnlyCheckout(onlyCheckout.id); }, [onlyCheckout?.id, draft.ready, pending, rows]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState<Set<string>>(new Set());
@@ -118,15 +120,15 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
     <div className={`draft-status ${draft.failed ? 'draft-error' : ''}`}><p aria-live="polite">{draft.message}</p><button type="button" className="button secondary" disabled={!draft.ready || !draft.dirty || draft.clearing || busy || pending || preparing.size > 0} onClick={() => void draft.clear().then(cleared => { if (cleared) setError(''); })}><Trash2 size={14} />Descartar rascunho</button></div>
     {pending && <p className="draft-pending" aria-live="polite">Envio aguardando confirmação. Toque em Confirmar envio para concluir sem duplicar as vendas.</p>}
-    <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main')} />
-    <ManualPixCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'pix')} />
+    {(client.isDemo || portal.profile.id !== 'demo') && <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main') ?? onlyCheckout} />}
+    {(client.isDemo || portal.profile.id !== 'demo') && portal.checkouts.some(checkout => checkout.id === 'pix') && <ManualPixCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'pix')} />}
     <form onSubmit={submit}><fieldset disabled={busy || disabled || !draft.ready || draft.clearing}><fieldset disabled={pending}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />
       <p className="field-label sales-count">Vendas a Lançar ({rows.length})</p>
       <div className="sale-rows">{rows.map((row, index) => <div className="sale-row" key={row.id}>
         <span className="row-number">#{index + 1}</span>
         <div className="amount-input"><span>R$</span><input aria-label={`Valor bruto venda ${index + 1}`} placeholder="Valor Bruto (Ex: 197,00)" inputMode="decimal" required maxLength={16} value={row.amount} onChange={event => update(row.id, { amount: event.target.value })} /></div>
-        <div className="select-wrap"><select aria-label={`Checkout venda ${index + 1}`} required value={row.checkoutId} onChange={event => update(row.id, { checkoutId: event.target.value })}><option value="" disabled>Checkout *</option>{portal.checkouts.map(checkout => <option key={checkout.id} value={checkout.id}>{checkout.name}</option>)}</select><ChevronDown size={13} /></div>
+        <div className="select-wrap"><select aria-label={`Checkout venda ${index + 1}`} required value={row.checkoutId} onChange={event => update(row.id, { checkoutId: event.target.value })}><option value="" disabled>Checkout *</option>{pending && row.checkoutId && !portal.checkouts.some(checkout => checkout.id === row.checkoutId) && <option value={row.checkoutId} disabled>Checkout anterior · confirmar envio</option>}{portal.checkouts.map(checkout => <option key={checkout.id} value={checkout.id}>{checkout.name}</option>)}</select><ChevronDown size={13} /></div>
         <input type="time" aria-label={`Horário venda ${index + 1}`} required value={row.time} onChange={event => update(row.id, { time: event.target.value })} />
         <button type="button" className={`attach-button ${row.receipt ? 'attached' : ''}`} aria-label={`Anexar print venda ${index + 1}`} aria-busy={preparing.has(row.id)} disabled={preparing.has(row.id)} onClick={() => document.getElementById(`receipt-${row.id}`)?.click()}>{preparing.has(row.id) ? <LoaderCircle className="spin" size={14} /> : <Camera size={14} />}{preparing.has(row.id) ? 'Preparando print...' : row.receipt ? 'Print anexado' : 'Anexar Print *'}</button>
         <input className="sr-only" tabIndex={-1} id={`receipt-${row.id}`} type="file" aria-label={`Print da venda ${index + 1}`} accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.heic,.heif" onChange={event => { void attach(row.id, event.target.files?.[0]); event.target.value = ''; }} />

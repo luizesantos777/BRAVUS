@@ -15,6 +15,7 @@ import webpush from 'web-push';
 import { createECDH, createHash, randomBytes } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import { PushService, loadPushKeys } from '../server/push.ts';
+import { exclusiveCheckoutId, PARTNER_GATEWAY_SEED } from '../server/partner-checkouts.ts';
 
 const tokenA = 'fixture_attendant_a_012345678901234567890';
 const tokenB = 'fixture_attendant_b_012345678901234567890';
@@ -69,6 +70,61 @@ test('envio repetido não duplica vendas e alterações no mesmo envio são reje
   const repeated = await (await submit()).json(); assert.equal(repeated.duplicate, true);
   const changed = batch(); changed.sales[0].amount = '400,00'; assert.equal((await submit(changed)).status, 409);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
+});
+test('gateway exclusivo restringe só o parceiro, rejeita outras opções na API e preserva a confirmação de envios anteriores', async t => {
+  const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
+  const token = 'fixture_restricted_partner_01234567890123456789';
+  const partner = await store.createAttendant('Parceiro exclusivo', 5000, token), checkoutId = exclusiveCheckoutId(partner.id);
+  const old = batch(); old.sales[0].amount = '100';
+  assert.equal((await submit(old, 'fixture_before_restriction', token)).status, 200);
+  await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(checkoutId, 'Gateway exclusivo', 1000, 0, 1, 100000);
+  let portal = await (await call('/api/portal?period=all', token)).json();
+  assert.equal(portal.checkouts.length, 1); assert.equal(portal.checkouts[0].id, checkoutId); assert.equal(portal.checkouts[0].feeBps, 1000); assert.equal(portal.checkouts[0].fixedFeeCents, 0);
+  assert.deepEqual((await (await call('/api/portal', tokenB)).json()).checkouts.map((checkout: { id: string }) => checkout.id).sort(), ['buckpay', 'main', 'pix']);
+  for (const id of ['main', 'pix', 'buckpay']) {
+    const forbidden = batch(); forbidden.sales[0].checkoutId = id;
+    assert.equal((await submit(forbidden, 'fixture_forbidden_' + id, token)).status, 400);
+  }
+  const input = batch(); input.sales = input.sales.map(row => ({ ...row, amount: '100', checkoutId, feeCents: 0, attendantFeeCents: 0 }));
+  assert.equal((await submit(input, 'fixture_other_partner_forbidden', tokenB)).status, 400);
+  const mixed = { ...input, sales: [...input.sales, { ...input.sales[0], checkoutId: 'pix' }] };
+  assert.equal((await submit(mixed, 'fixture_exclusive_mixed', token)).status, 400);
+  const retry = await submit(old, 'fixture_before_restriction', token); assert.equal(retry.status, 200); assert.equal((await retry.json()).duplicate, true);
+  assert.equal((await submit(input, 'fixture_exclusive_allowed', token)).status, 200);
+  portal = await (await call('/api/portal?period=all', token)).json(); assert.equal(portal.sales.length, 2);
+  const sale = portal.sales.find((sale: { checkoutId: string }) => sale.checkoutId === checkoutId);
+  assert.equal(sale.feeCents, 1000); assert.equal(sale.attendantFeeCents, 500);
+  assert.equal(portal.sales.find((sale: { checkoutId: string }) => sale.checkoutId === 'main').feeCents, 1699);
+  await store.reviewSale(sale.id, { status: 'approved', note: 'Conferida' });
+  assert.equal((await (await call('/api/portal', token)).json()).finance.availableCents, 4500);
+  const rotated = await store.rotateToken(partner.id);
+  assert.equal((await call('/api/portal', token)).status, 401);
+  assert.equal((await (await call('/api/portal', rotated.token)).json()).checkouts[0].id, checkoutId);
+});
+test('migração do parceiro configura 10% uma vez, registra auditoria e conserva as outras contas e vendas antigas', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'bravus-exclusive-partner-')), file = join(directory, 'portal.sqlite');
+  let store: PortalStore | undefined;
+  try {
+    store = await PortalStore.open(file);
+    const partner = await store.createAttendant('Parceiro configurado', 5000, tokenA), other = await store.createAttendant('Outro parceiro', 5000, tokenB);
+    const auth = { id: partner.id }, checkoutId = exclusiveCheckoutId(partner.id);
+    await store.recordSales(auth, batch(), 'fixture_legacy_partner_sale');
+    const previousSales = await store.sales(auth), globals = await store.checkoutsFor({ id: other.id });
+    // Only a digest is used; the production access link is never a test credential.
+    await store.sql.prepare('UPDATE attendants SET token_hash = ? WHERE id = ?').run(PARTNER_GATEWAY_SEED.tokenHash, partner.id);
+    store.close(); store = undefined; store = await PortalStore.open(file);
+    const checkouts = await store.checkoutsFor(auth);
+    assert.equal(checkouts.length, 1); assert.equal(checkouts[0].id, checkoutId); assert.equal(checkouts[0].feeBps, 1000); assert.equal(checkouts[0].fixedFeeCents, 0);
+    assert.deepEqual(await store.checkoutsFor({ id: other.id }), globals); assert.deepEqual(await store.sales(auth), previousSales);
+    assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
+    await store.adminSetCheckout(checkoutId, { name: 'Gateway exclusivo', fee: '12', fixedFee: '0' });
+    store.close(); store = undefined; store = await PortalStore.open(file);
+    assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1200);
+    assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 2);
+    const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
+    assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].id, checkoutId);
+    assert.deepEqual(await store.sales(auth), previousSales);
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('comprovante repetido alerta só o administrador, inclusive entre vendedores e situações diferentes', async t => {
   const { call, submit } = await fixture(t, { approveSales: false });

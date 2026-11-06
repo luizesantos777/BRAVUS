@@ -6,6 +6,7 @@ import type { DraftRow, SalesDraft } from './sales-drafts.ts';
 export function useSalesDraft(client: PortalClient, enabled: boolean) {
   const [draft, setDraft] = useState(blankSalesDraft), current = useRef(draft);
   const [ready, setReady] = useState(false), [dirty, setDirty] = useState(false);
+  const hasChanges = useRef(false);
   const [clearing, setClearing] = useState(false), clearingNow = useRef(false);
   const [message, setMessage] = useState('Carregando rascunho...'), [failed, setFailed] = useState(false);
   const repository = useRef<SalesDraftStore | null>(null), generation = useRef(0), operation = useRef(0);
@@ -18,7 +19,7 @@ export function useSalesDraft(client: PortalClient, enabled: boolean) {
       store = new SalesDraftStore(scope); repository.current = store;
       const saved = await store.load();
       if (cancelled) return;
-      if (saved) { current.current = saved; setDraft(saved); setDirty(true); }
+      if (saved) { current.current = saved; setDraft(saved); setDirty(true); hasChanges.current = true; }
       setMessage(saved ? 'Rascunho recuperado deste aparelho.' : 'Seu preenchimento será salvo automaticamente neste aparelho.');
       setFailed(false);
     }).catch(() => { if (!cancelled) { setMessage(draftStorageError); setFailed(true); } }).finally(() => { if (!cancelled) setReady(true); });
@@ -37,7 +38,7 @@ export function useSalesDraft(client: PortalClient, enabled: boolean) {
     }
   }
   function replace(value: SalesDraft, save = true) {
-    current.current = value; setDraft(value); setDirty(true);
+    current.current = value; setDraft(value); setDirty(true); hasChanges.current = true;
     if (save) void persist(value).catch(() => undefined);
   }
   function setRows(change: DraftRow[] | ((rows: DraftRow[]) => DraftRow[])) {
@@ -45,6 +46,12 @@ export function useSalesDraft(client: PortalClient, enabled: boolean) {
     replace({ ...current.current, rows: typeof change === 'function' ? change(current.current.rows) : change });
   }
   function setDate(date: string) { if (ready && !clearingNow.current && !current.current.pending) replace({ ...current.current, date }); }
+  function selectOnlyCheckout(id: string) {
+    if (!ready || clearingNow.current || current.current.pending || current.current.rows.every(row => row.checkoutId === id)) return;
+    const value = { ...current.current, rows: current.current.rows.map(row => ({ ...row, checkoutId: id })) };
+    current.current = value; setDraft(value);
+    if (hasChanges.current) void persist(value).catch(() => undefined);
+  }
   async function beginSubmission() {
     const value = { ...current.current, pending: true };
     replace(value, false);
@@ -61,7 +68,7 @@ export function useSalesDraft(client: PortalClient, enabled: boolean) {
       if (!repository.current) throw new Error(draftStorageError);
       await repository.current.clear();
       if (generation.current !== epoch) return false;
-      const value = blankSalesDraft(); if (keepDate) value.date = current.current.date; current.current = value; setDraft(value); setDirty(false); setFailed(false);
+      const value = blankSalesDraft(); if (keepDate) value.date = current.current.date; current.current = value; setDraft(value); setDirty(false); hasChanges.current = false; setFailed(false);
       setMessage('Seu preenchimento será salvo automaticamente neste aparelho.');
       return true;
     } catch (error) {
@@ -70,5 +77,5 @@ export function useSalesDraft(client: PortalClient, enabled: boolean) {
     } finally { clearingNow.current = false; if (generation.current === epoch) setClearing(false); }
   }
   function releaseSubmission() { replace({ ...current.current, pending: false }); }
-  return { draft, ready, dirty, clearing, message, failed, setRows, setDate, beginSubmission, clear, releaseSubmission };
+  return { draft, ready, dirty, clearing, message, failed, setRows, setDate, selectOnlyCheckout, beginSubmission, clear, releaseSubmission };
 }

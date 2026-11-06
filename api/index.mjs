@@ -385,6 +385,20 @@ var controlsSchema = `
   CREATE TABLE IF NOT EXISTS push_server_keys (id INTEGER PRIMARY KEY CHECK(id=1), public_key TEXT NOT NULL, private_key TEXT NOT NULL);
 `;
 
+// server/partner-checkouts.ts
+var PARTNER_GATEWAY_SEED = {
+  migration: "exclusive-partner-gateway-2026-11-06-v1",
+  tokenHash: "81671f382c4f28195f09eedf618fe21032d0b0237cee3a2d378b94b922a78551",
+  feeBps: 1e3,
+  fixedFeeCents: 0
+};
+function exclusiveCheckoutId(attendantId) {
+  return "exclusive_" + attendantId;
+}
+function isExclusiveCheckout(id) {
+  return id.startsWith("exclusive_");
+}
+
 // server/store.ts
 var PortalError = class extends Error {
   status;
@@ -491,6 +505,17 @@ var PortalStore = class _PortalStore {
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("checkout-buckpay-v1")) {
         await store.sql.prepare("INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)").run("buckpay", "Checkout Buckpay", BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-buckpay-v1");
+      }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(PARTNER_GATEWAY_SEED.migration)) {
+        const partner = await store.sql.prepare("SELECT id, name FROM attendants WHERE token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (partner) {
+          const id = exclusiveCheckoutId(String(partner.id));
+          const before = await store.sql.prepare("SELECT fee_bps AS feeBps, fixed_fee_cents AS fixedFeeCents, tier_above_cents AS aboveAmountCents, tier_fee_bps AS aboveFeeBps, tier_fixed_fee_cents AS aboveFixedFeeCents FROM checkouts WHERE id = ?").get(id);
+          await store.sql.prepare(`INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET fee_bps = excluded.fee_bps, fixed_fee_cents = excluded.fixed_fee_cents, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL`).run(id, "Gateway exclusivo", PARTNER_GATEWAY_SEED.feeBps, PARTNER_GATEWAY_SEED.fixedFeeCents, CHECKOUT_PIX_TARIFF.minAmountCents, CHECKOUT_PIX_TARIFF.maxAmountCents);
+          await store.audit(systemActor, "checkout.updated", id, "Gateway exclusivo \xB7 " + String(partner.name), before ? { feeBps: Number(before.feeBps), fixedFeeCents: Number(before.fixedFeeCents), aboveAmountCents: before.aboveAmountCents == null ? null : Number(before.aboveAmountCents), aboveFeeBps: before.aboveFeeBps == null ? null : Number(before.aboveFeeBps), aboveFixedFeeCents: before.aboveFixedFeeCents == null ? null : Number(before.aboveFixedFeeCents) } : null, { attendantId: String(partner.id), exclusive: true, feeBps: PARTNER_GATEWAY_SEED.feeBps, fixedFeeCents: PARTNER_GATEWAY_SEED.fixedFeeCents, aboveAmountCents: null, aboveFeeBps: null, aboveFixedFeeCents: null });
+          await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.migration);
+        }
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
         await store.sql.prepare("UPDATE attendants SET commission_bps = ?").run(DEFAULT_COMMISSION_BPS);
@@ -727,6 +752,10 @@ var PortalStore = class _PortalStore {
   async checkouts() {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }
+  async checkoutsFor(auth) {
+    const checkouts = await this.checkouts(), exclusive = checkouts.find((checkout) => checkout.id === exclusiveCheckoutId(auth.id));
+    return exclusive ? [exclusive] : checkouts.filter((checkout) => !isExclusiveCheckout(checkout.id));
+  }
   async sales(auth) {
     return await this.sql.prepare(`SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC`).all(auth.id);
   }
@@ -738,7 +767,7 @@ var PortalStore = class _PortalStore {
   }
   async portal(auth, period = "today") {
     const profile = await this.profile(auth), sales = await this.sales(auth), costs = await this.costs(auth), payouts = await this.payouts(auth), today = businessToday();
-    return { profile, checkouts: await this.checkouts(), sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
+    return { profile, checkouts: await this.checkoutsFor(auth), sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
   }
   async saveProfile(auth, input) {
     let fields;
@@ -774,7 +803,7 @@ var PortalStore = class _PortalStore {
     const batch = input;
     if (typeof batch.date !== "string" || !validDate(batch.date) || batch.date > businessToday()) invalid("Informe uma data v\xE1lida, at\xE9 hoje.");
     if (!Array.isArray(batch.sales) || !batch.sales.length || batch.sales.length > 10) invalid("Envie entre 1 e 10 vendas por vez.");
-    const profile = await this.profile(auth), checkouts = await this.checkouts();
+    const profile = await this.profile(auth), checkouts = await this.checkoutsFor(auth);
     const normalized = batch.sales.map((row) => {
       if (!row || typeof row !== "object" || typeof row.amount !== "string" || typeof row.note !== "string" || row.note.length > 500 || typeof row.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) return invalid("Confira o valor, o hor\xE1rio e a observa\xE7\xE3o de cada venda.");
       const checkout = checkouts.find((item) => item.id === row.checkoutId);

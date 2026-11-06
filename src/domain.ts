@@ -11,7 +11,8 @@ export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee:
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
 export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; attendantFeeCents?: number | null; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null; cancelledAt?: string | null }
 export function saleStatusLabel(sale: Pick<Sale, 'status' | 'cancelledAt'>) { return sale.cancelledAt ? 'Cancelada' : saleStatusLabels[sale.status]; }
-export interface AdminSale extends Sale { attendantId: string; attendantName: string }
+export interface ReceiptDuplicates { total: number; matches: (Pick<Sale, 'id' | 'date' | 'time' | 'amountCents' | 'status' | 'cancelledAt'> & { attendantName: string })[] }
+export interface AdminSale extends Sale { attendantId: string; attendantName: string; receiptDuplicates?: ReceiptDuplicates }
 export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
 export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
@@ -26,7 +27,7 @@ export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pi
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
 export interface Invitation { attendantId: string; name: string; token: string }
-export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVersion?: 1; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
+export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVersion?: 1; submittedBatches?: Record<string, { hash: string; count: number }>; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;

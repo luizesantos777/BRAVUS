@@ -52,6 +52,8 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), batch_id TEXT NOT NULL REFERENCES batches(id), date TEXT NOT NULL, time TEXT NOT NULL, checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), fee_cents INTEGER NOT NULL, commission_bps INTEGER NOT NULL, goal_cents INTEGER NOT NULL, note TEXT NOT NULL, receipt_id TEXT NOT NULL REFERENCES receipts(id), created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS sales_attendant_date ON sales(attendant_id, date);
+      CREATE INDEX IF NOT EXISTS sales_receipt ON sales(receipt_id);
+      CREATE INDEX IF NOT EXISTS receipts_content_match ON receipts(length(bytes), substr(bytes, 1, 64), substr(bytes, -64));
       CREATE TABLE IF NOT EXISTS costs (attendant_id TEXT NOT NULL REFERENCES attendants(id), date TEXT NOT NULL, ads_cents INTEGER NOT NULL CHECK(ads_cents >= 0), withdrawal_fee_cents INTEGER NOT NULL CHECK(withdrawal_fee_cents >= 0), PRIMARY KEY(attendant_id, date));
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `));
@@ -145,9 +147,32 @@ export class PortalStore {
     const page = Number(pageValue), pageSize = 50;
     const where = "WHERE (? = 'all' OR s.status = ?) AND (? = '' OR s.attendant_id = ?)";
     const args = [status, status, attendantId, attendantId];
-    const total = Number((await this.sql.prepare('SELECT COUNT(*) AS count FROM sales s ' + where).get(...args))!.count);
-    const sales = (await this.sql.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize)) as unknown as AdminSale[];
-    return { sales, total, page, pageSize };
+    return this.sql.transaction(async database => {
+      const total = Number((await database.prepare('SELECT COUNT(*) AS count FROM sales s ' + where).get(...args))!.count);
+      const sales = (await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize)) as unknown as AdminSale[];
+      // The compact expression index narrows candidates; the full bytes must also
+      // match. Names, amounts, MIME labels and image prefixes alone never flag a sale.
+      if (sales.length) {
+        const matches = await database.prepare(`WITH receipt_matches AS (
+          SELECT source.id AS sourceSaleId, related.id, owner.name AS attendantName, related.date, related.time, related.amount_cents AS amountCents, related.status,
+            COUNT(*) OVER (PARTITION BY source.id) AS total,
+            ROW_NUMBER() OVER (PARTITION BY source.id ORDER BY (related.status = 'approved') DESC, related.created_at DESC, related.id) AS position
+          FROM sales source JOIN receipts original ON original.id = source.receipt_id
+          JOIN receipts candidate ON length(candidate.bytes) = length(original.bytes) AND substr(candidate.bytes, 1, 64) = substr(original.bytes, 1, 64) AND substr(candidate.bytes, -64) = substr(original.bytes, -64) AND candidate.bytes = original.bytes
+          JOIN sales related ON related.receipt_id = candidate.id JOIN attendants owner ON owner.id = related.attendant_id
+          WHERE source.id IN (${sales.map(() => '?').join(',')}) AND related.id <> source.id
+        ) SELECT *, (SELECT e.created_at FROM audit_events e WHERE e.target_id = receipt_matches.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt
+        FROM receipt_matches WHERE position <= 5 ORDER BY sourceSaleId, position`).all(...sales.map(sale => sale.id));
+        const groups = new Map<string, NonNullable<AdminSale['receiptDuplicates']>>();
+        for (const row of matches) {
+          const { sourceSaleId, total, position: _position, ...match } = row;
+          const id = String(sourceSaleId), group = groups.get(id) ?? { total: Number(total), matches: [] };
+          group.matches.push(match as unknown as NonNullable<AdminSale['receiptDuplicates']>['matches'][number]); groups.set(id, group);
+        }
+        for (const sale of sales) if (groups.has(sale.id)) sale.receiptDuplicates = groups.get(sale.id);
+      }
+      return { sales, total, page, pageSize };
+    }, 'read');
   }
   async reviewSale(id: string, input: unknown, actor = systemActor) {
     let review: ReturnType<typeof validateSaleReview>;
@@ -321,6 +346,12 @@ export class PortalStore {
   async recordSales(auth: Authenticated, input: unknown, requestKey: string): Promise<{ duplicate: boolean; count: number }> {
     if (!/^[A-Za-z0-9_-]{12,100}$/.test(requestKey)) invalid('Identificador de envio inválido. Atualize a página.');
     if (!input || typeof input !== 'object') invalid('Lançamento inválido.');
+    const payloadHash = createHash('sha256').update(JSON.stringify(input)).digest('hex');
+    const received = await this.sql.prepare('SELECT b.payload_hash, (SELECT COUNT(*) FROM sales s WHERE s.batch_id = b.id) AS count FROM batches b WHERE b.attendant_id = ? AND b.request_key = ?').get(auth.id, requestKey);
+    if (received) {
+      if (received.payload_hash !== payloadHash) throw new PortalError(409, 'Este envio já foi registrado com outros dados. Confira o histórico e atualize a página antes de lançar novas vendas.');
+      return { duplicate: true, count: Number(received.count) };
+    }
     const batch = input as SaleBatch;
     if (typeof batch.date !== 'string' || !validDate(batch.date) || batch.date > businessToday()) invalid('Informe uma data válida, até hoje.');
     if (!Array.isArray(batch.sales) || !batch.sales.length || batch.sales.length > 10) invalid('Envie entre 1 e 10 vendas por vez.');
@@ -335,7 +366,6 @@ export class PortalStore {
       try { feeCents = checkoutFee(amountCents, checkout); } catch (error) { return invalid((error as Error).message); }
       return { amountCents, feeCents, checkout, time: row.time, note: row.note.trim(), receipt: this.receiptInput(row.receipt) };
     });
-    const payloadHash = createHash('sha256').update(JSON.stringify(batch)).digest('hex');
     return this.withTransaction(async store => {
     const existing = (await store.sql.prepare('SELECT id, payload_hash FROM batches WHERE attendant_id = ? AND request_key = ?').get(auth.id, requestKey));
     if (existing) {

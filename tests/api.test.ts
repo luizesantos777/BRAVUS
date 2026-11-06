@@ -70,6 +70,55 @@ test('envio repetido não duplica vendas e alterações no mesmo envio são reje
   const changed = batch(); changed.sales[0].amount = '400,00'; assert.equal((await submit(changed)).status, 409);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
 });
+test('comprovante repetido alerta só o administrador, inclusive entre vendedores e situações diferentes', async t => {
+  const { call, submit } = await fixture(t, { approveSales: false });
+  assert.equal((await submit()).status, 200);
+  const other = batch(); other.sales[0].amount = '150'; other.sales[0].receipt.name = 'outro-nome.png';
+  assert.equal((await submit(other, 'fixture_duplicate_receipt_other', tokenB)).status, 200);
+  const a = await (await call('/api/portal')).json(), b = await (await call('/api/portal', tokenB)).json();
+  assert.equal(JSON.stringify(a).includes('receiptDuplicates'), false); assert.equal(JSON.stringify(a).includes('Bruno Teste'), false);
+  assert.equal(JSON.stringify(b).includes('Ana Teste'), false);
+  assert.equal((await call('/api/admin/sales', tokenA)).status, 401);
+  await call('/api/admin/sales/' + b.sales[0].id, adminKey, { method: 'PATCH', body: JSON.stringify({ status: 'approved', note: 'Conferida' }) });
+  const page = await (await call('/api/admin/sales?attendantId=' + a.profile.id, adminKey)).json();
+  assert.equal(page.sales.length, 1); assert.equal(page.sales[0].status, 'pending');
+  assert.equal(page.sales[0].receiptDuplicates.total, 1);
+  assert.equal(page.sales[0].receiptDuplicates.matches[0].id, b.sales[0].id);
+  assert.equal(page.sales[0].receiptDuplicates.matches[0].attendantName, 'Bruno Teste');
+  assert.equal(page.sales[0].receiptDuplicates.matches[0].status, 'approved');
+  assert.equal(page.sales[0].receiptDuplicates.matches[0].amountCents, 15000);
+  assert.equal(JSON.stringify(page).includes(image.base64), false);
+});
+test('alerta de comprovante confere os bytes completos e encontra histórico fora da página atual', async t => {
+  const { call, submit, store, a } = await fixture(t, { approveSales: false });
+  const payload = batch(); payload.sales = Array.from({ length: 10 }, () => ({ ...payload.sales[0] }));
+  for (let index = 0; index < 6; index++) assert.equal((await submit(payload, 'fixture_duplicate_page_' + index)).status, 200);
+  const page = await (await call('/api/admin/sales?attendantId=' + a.id + '&page=2', adminKey)).json();
+  assert.equal(page.total, 60); assert.equal(page.sales.length, 10);
+  for (const sale of page.sales) { assert.equal(sale.receiptDuplicates.total, 59); assert.equal(sale.receiptDuplicates.matches.length, 5); }
+  // Same length, first/last 64 bytes and filename: only the complete content can distinguish these proofs.
+  const prefix = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(128, 0)]), suffix = Buffer.alloc(128, 0);
+  for (const middle of [1, 2]) {
+    const different = batch(); different.sales[0].receipt.base64 = Buffer.concat([prefix, Buffer.from([middle]), suffix]).toString('base64');
+    assert.equal((await submit(different, 'fixture_same_prefix_' + middle, tokenB)).status, 200);
+  }
+  const b = await (await call('/api/portal', tokenB)).json();
+  const different = await (await call('/api/admin/sales?attendantId=' + b.profile.id, adminKey)).json();
+  assert.equal(different.sales.length, 2); assert.ok(different.sales.every((sale: { receiptDuplicates?: unknown }) => !sale.receiptDuplicates));
+  const plan = await store.sql.prepare('EXPLAIN QUERY PLAN SELECT id FROM receipts WHERE length(bytes) = ? AND substr(bytes, 1, 64) = ? AND substr(bytes, -64) = ? AND bytes = ?').all(prefix.length + suffix.length + 1, prefix.subarray(0, 64), suffix.subarray(-64), prefix);
+  assert.match(JSON.stringify(plan), /receipts_content_match/);
+});
+test('retomar envio já recebido preserva a idempotência mesmo após mudar a tarifa e o mínimo do checkout', async t => {
+  const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
+  const payload = batch(); payload.sales[0].amount = '100';
+  const key = 'fixture_resume_after_tariff_change';
+  assert.equal((await submit(payload, key)).status, 200);
+  await store.adminSetCheckout('main', { name: 'Principal', fee: '20', fixedFee: '3', minimum: '500' });
+  const retry = await submit(payload, key); assert.equal(retry.status, 200); assert.deepEqual(await retry.json(), { duplicate: true, count: 1 });
+  assert.equal((await submit(payload, key + '_new')).status, 400);
+  payload.sales[0].amount = '600'; assert.equal((await submit(payload, key)).status, 409);
+  const portal = await (await call('/api/portal')).json(); assert.equal(portal.sales.length, 1); assert.equal(portal.sales[0].feeCents, 1699);
+});
 test('venda abaixo de R$ 200 libera comissão e repasse mesmo com meta antiga no banco', async t => {
   const { call, submit, store, a } = await fixture(t);
   store.db.prepare('UPDATE attendants SET daily_goal_cents = 20000 WHERE id = ?').run(a.id);

@@ -19,6 +19,11 @@ export class PortalClient {
     this.token = token; this.isDemo = !token; this.demo = demoInitial();
     if (this.isDemo) { try { this.demo = readDemoData(); } catch { this.storageError = true; } }
   }
+  async draftScope(): Promise<string> {
+    const identity = new URL(this.base, window.location.origin).href + '\0' + (this.isDemo ? 'demo' : this.token);
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(identity));
+    return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+  }
   private reloadDemo() {
     if (!this.isDemo) return;
     try { this.demo = readDemoData(); this.storageError = false; }
@@ -52,9 +57,13 @@ export class PortalClient {
     }
     return this.request(`/portal?period=${period}`);
   }
-  async saveSales(batch: SaleBatch, requestKey: string) {
+  async saveSales(batch: SaleBatch, requestKey: string): Promise<{ duplicate: boolean; count: number }> {
     this.reloadDemo();
     if (!this.isDemo) return this.request('/sales', { method: 'POST', body: JSON.stringify(batch), headers: { 'Idempotency-Key': requestKey } });
+    const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(batch)));
+    const hash = [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+    const previous = Object.hasOwn(this.demo.submittedBatches ?? {}, requestKey) ? this.demo.submittedBatches![requestKey] : null;
+    if (previous) { if (previous.hash !== hash) throw new ApiError('Este envio já foi registrado com outros dados. Confira o histórico antes de lançar outra venda.', 409); return { duplicate: true, count: previous.count }; }
     if (!validDate(batch.date) || batch.date > businessToday()) throw new ApiError('Informe uma data válida, até hoje.');
     if (!batch.sales.length || batch.sales.length > 10) throw new ApiError('Envie entre 1 e 10 vendas por vez.');
     const current = demoPortal(this.demo, 'all'), receipts = { ...this.demo.receipts };
@@ -67,7 +76,8 @@ export class PortalClient {
       receipts[receiptId] = row.receipt;
       return { id: crypto.randomUUID(), date: batch.date, time: row.time, amountCents, checkoutId: checkout.id, checkoutName: checkout.name, feeCents: checkoutFee(amountCents, checkout), attendantFeeCents: splitGatewayFee(checkoutFee(amountCents, checkout)), commissionBps: current.profile.commissionBps, commissionMode: 'gross-share-less-fees', note: row.note.trim(), receiptId, createdAt: new Date().toISOString(), status: 'pending', reviewNote: '', reviewedAt: null };
     });
-    this.persist({ ...this.demo, receipts, sales: [...sales, ...this.demo.sales] });
+    const submittedBatches = Object.fromEntries([...Object.entries(this.demo.submittedBatches ?? {}), [requestKey, { hash, count: sales.length }]].slice(-100));
+    this.persist({ ...this.demo, receipts, submittedBatches, sales: [...sales, ...this.demo.sales] });
     return { duplicate: false, count: sales.length };
   }
   async saveProfile(input: unknown): Promise<Profile> {

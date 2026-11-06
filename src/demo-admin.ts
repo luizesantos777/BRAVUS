@@ -33,6 +33,12 @@ export async function demoAdminRequest(path: string, method: string, payload?: u
     const status = url.searchParams.get('status') ?? 'pending', attendant = url.searchParams.get('attendantId') ?? '', page = Number(url.searchParams.get('page') ?? 1);
     if (!Number.isInteger(page) || page < 1) throw new Error('Página inválida.');
     const sales: AdminSale[] = data.sales.filter(sale => (status === 'all' || sale.status === status) && (!attendant || attendant === profile.id)).map(sale => ({ ...sale, attendantId: profile.id, attendantName: profile.name })).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    for (const sale of sales) {
+      const receipt = data.receipts[sale.receiptId];
+      if (!receipt) continue;
+      const matches = data.sales.filter(other => other.id !== sale.id && data.receipts[other.receiptId]?.base64 === receipt.base64).sort((a, b) => Number(b.status === 'approved') - Number(a.status === 'approved') || b.createdAt.localeCompare(a.createdAt));
+      if (matches.length) sale.receiptDuplicates = { total: matches.length, matches: matches.slice(0, 5).map(other => ({ id: other.id, attendantName: profile.name, date: other.date, time: other.time, amountCents: other.amountCents, status: other.status, cancelledAt: other.cancelledAt })) };
+    }
     return { sales: sales.slice((page - 1) * 50, page * 50), total: sales.length, page, pageSize: 50 } satisfies AdminSalesPage;
   }
   const saleId = url.pathname.match(/^\/sales\/([^/]+)$/)?.[1];

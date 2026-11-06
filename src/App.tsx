@@ -7,11 +7,12 @@ import { ApiError, currentToken, PortalClient, readReceipt } from './client.ts';
 import { Brand, BrandIntro } from './Brand.tsx';
 import ProfileForm, { ProfileAvatar } from './Profile.tsx';
 import { notifyDemoSale } from './notifications.ts';
+import { blankDraftRow as blankRow } from './sales-drafts.ts';
+import type { DraftRow as SaleRow } from './sales-drafts.ts';
+import { useSalesDraft } from './useSalesDraft.ts';
 
 type Tab = 'sales' | 'ranking' | 'payouts' | 'profile';
 type Notice = { text: string; error?: boolean };
-type SaleRow = SaleInput & { id: string };
-const blankRow = (): SaleRow => ({ id: crypto.randomUUID(), amount: '', checkoutId: '', time: businessTime(), note: '', receipt: null });
 const tabs = [{ id: 'sales', label: 'Lançar Vendas', icon: Plus }, { id: 'ranking', label: 'Ranking', icon: Trophy }, { id: 'payouts', label: 'Repasses', icon: History }, { id: 'profile', label: 'Meus Dados e PIX', icon: UserRound }] as const;
 const MANUAL_PIX_KEY = 'd026e4d9-0a17-4ecf-b2fe-61e0ff386e6f';
 const CHECKOUT_URL = 'https://pagamento.bravuspix.shop/checkout';
@@ -53,15 +54,16 @@ function SaleFeePreview({ row, checkout, index, commissionBps }: { row: SaleRow;
   return <div className="sale-fee-preview" aria-label={`Taxas da venda ${index + 1}`}><span>{checkout.name} · {checkoutRateLabel(checkout, amounts?.gross)}</span>{amounts && <span>BRAVUS após taxas: <strong>{money(amounts.business)}</strong><i />Taxa total do gateway: <strong>{money(amounts.fee)}</strong><i />Sua parte da taxa (50%): <strong>{money(amounts.ownFee)}</strong><i />Seu valor: <strong>{money(amounts.net)}</strong></span>}{error && <span className="fee-validation">{error}</span>}</div>;
 }
 function SalesForm({ client, portal, disabled, refresh, notify, preview }: { client: PortalClient; portal: Portal; disabled: boolean; refresh: () => Promise<void>; notify: (notice: Notice) => void; preview: (url: string) => void }) {
-  const [rows, setRows] = useState<SaleRow[]>([blankRow()]);
-  const [date, setDate] = useState(businessToday());
+  const draft = useSalesDraft(client, client.isDemo || portal.profile.id !== 'demo');
+  const { rows, date, pending } = draft.draft;
+  const { setRows, setDate } = draft;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState<Set<string>>(new Set());
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
   const attachments = useRef(new Map<string, symbol>());
   useEffect(() => () => { attachments.current.clear(); }, []);
-  const key = useRef(crypto.randomUUID());
+  const submitting = useRef(false);
   const update = (id: string, patch: Partial<SaleRow>) => setRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));
   async function attach(id: string, file?: File) {
     if (!file) return;
@@ -88,9 +90,9 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     setRows(previous => previous.filter(row => row.id !== id));
   }
   async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); if (busy || disabled || attachments.current.size) return; setError('');
+    event.preventDefault(); if (submitting.current || busy || disabled || !draft.ready || attachments.current.size) return; setError('');
     try {
-      for (const [index, row] of rows.entries()) {
+      for (const [index, row] of pending ? [] : rows.entries()) {
         amountToCents(row.amount);
         if (!row.checkoutId || !row.receipt) throw new Error(`Venda ${index + 1}: selecione o checkout e anexe o print obrigatório.`);
         const checkout = portal.checkouts.find(item => item.id === row.checkoutId);
@@ -100,21 +102,25 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
       const payload = { date, sales: rows.map(({ id: _id, ...row }) => row) };
       const limit = portal.maxRequestBytes ?? 12 * 1024 * 1024;
       if (new Blob([JSON.stringify(payload)]).size > limit) throw new Error(`O envio excede ${Math.floor(limit / 1024 / 1024)} MB. Envie menos vendas ou prints menores por vez.`);
-      setBusy(true); await client.saveSales(payload, key.current);
-      const count = rows.length; setRows([blankRow()]); key.current = crypto.randomUUID();
+      setBusy(true); submitting.current = true;
+      const saved = await draft.beginSubmission();
+      const result = await client.saveSales({ date: saved.date, sales: saved.rows.map(({ id: _id, ...row }) => row) }, saved.requestKey);
+      const count = rows.length; await draft.clear(true); setAttachmentErrors({});
       const total = payload.sales.reduce((sum, row) => sum + amountToCents(row.amount), 0);
       const message = renderSaleAlert(portal.profile.saleAlertTemplate ?? DEFAULT_SALE_ALERT, total, count, portal.profile.name);
       notify({ text: client.isDemo ? message + ' · Demonstração: salva somente neste navegador. Esta venda não foi enviada ao administrador.' : message + ' · Enviada à administração. Aguardando aprovação.' });
-      void notifyDemoSale(client, message);
+      if (!result.duplicate) void notifyDemoSale(client, message);
       await refresh();
-    } catch (cause) { setError((cause as Error).message); }
-    finally { setBusy(false); }
+    } catch (cause) { if (cause instanceof ApiError && (client.isDemo || [400, 401, 403, 404, 413, 422].includes(cause.status))) draft.releaseSubmission(); setError((cause as Error).message); }
+    finally { setBusy(false); submitting.current = false; }
   }
   return <section className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
+    <div className={`draft-status ${draft.failed ? 'draft-error' : ''}`}><p aria-live="polite">{draft.message}</p><button type="button" className="button secondary" disabled={!draft.ready || !draft.dirty || draft.clearing || busy || pending || preparing.size > 0} onClick={() => void draft.clear().then(cleared => { if (cleared) setError(''); })}><Trash2 size={14} />Descartar rascunho</button></div>
+    {pending && <p className="draft-pending" aria-live="polite">Envio aguardando confirmação. Toque em Confirmar envio para concluir sem duplicar as vendas.</p>}
     <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main')} />
     <ManualPixCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'pix')} />
-    <form onSubmit={submit}><fieldset disabled={busy || disabled}>
+    <form onSubmit={submit}><fieldset disabled={busy || disabled || !draft.ready || draft.clearing}><fieldset disabled={pending}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />
       <p className="field-label sales-count">Vendas a Lançar ({rows.length})</p>
       <div className="sale-rows">{rows.map((row, index) => <div className="sale-row" key={row.id}>
@@ -129,9 +135,9 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
         <SaleFeePreview row={row} checkout={portal.checkouts.find(checkout => checkout.id === row.checkoutId)} index={index} commissionBps={portal.profile.commissionBps} />
         {attachmentErrors[row.id] && <div role="alert" className="form-error attachment-error"><AlertCircle size={14} />{attachmentErrors[row.id]}</div>}
         {row.receipt && <div className="attachment-detail"><FileImage size={12} /><button type="button" onClick={() => preview(`data:${row.receipt!.mime};base64,${row.receipt!.base64}`)}>{row.receipt.name}</button><button className="remove-attachment" type="button" aria-label={`Remover print venda ${index + 1}`} onClick={() => update(row.id, { receipt: null })}><X size={12} /></button></div>}
-      </div>)}</div>
+      </div>)}</div></fieldset>
       {error && <div role="alert" className="form-error"><AlertCircle size={14} />{error}</div>}
-      <div className="sales-actions"><button type="button" className="button secondary" disabled={rows.length >= 10} onClick={() => setRows(previous => [...previous, blankRow()])}><Plus size={15} />Adicionar Outra Venda</button><button type="submit" className="button primary" disabled={preparing.size > 0}>{busy || preparing.size ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{busy ? 'Enviando vendas...' : preparing.size ? 'Preparando imagens...' : 'Salvar e Enviar Vendas'}</button></div>
+      <div className="sales-actions"><button type="button" className="button secondary" disabled={pending || rows.length >= 10} onClick={() => setRows(previous => [...previous, blankRow()])}><Plus size={15} />Adicionar Outra Venda</button><button type="submit" className="button primary" disabled={preparing.size > 0}>{busy || preparing.size ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{busy ? 'Enviando vendas...' : preparing.size ? 'Preparando imagens...' : pending ? 'Confirmar envio' : 'Salvar e Enviar Vendas'}</button></div>
       <p className="form-caption">Até 10 vendas por envio · Imagens de até 20 MB, reduzidas automaticamente quando necessário. Confira a prévia do print antes de enviar.</p>
     </fieldset></form>
   </section>;

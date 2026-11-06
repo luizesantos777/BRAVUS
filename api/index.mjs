@@ -200,6 +200,7 @@ var pixLabels = { "": "Selecione o tipo", email: "E-mail", cpf: "CPF", cnpj: "CN
 var MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 var MAX_SALE_CENTS = 1e8;
 var DEFAULT_COMMISSION_BPS = 5e3;
+var PARTNER_GATEWAY_FEE_BPS = 1e3;
 var GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 var ATTENDANT_GATEWAY_FEE_BPS = 5e3;
 var ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -226,6 +227,12 @@ function validateAvatar(value) {
 var money = (cents) => new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(cents / 100);
 function splitGatewayFee(feeCents) {
   return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5e3) / 1e4);
+}
+function allocatedSaleFee(feeCents, accountKind) {
+  return accountKind === "partner" ? feeCents : splitGatewayFee(feeCents);
+}
+function accountCheckouts(checkouts, accountKind) {
+  return accountKind === "partner" ? checkouts.map((checkout) => ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
 }
 function attendantSaleFee(sale) {
   return sale.attendantFeeCents ?? sale.feeCents;
@@ -461,6 +468,7 @@ var PortalStore = class _PortalStore {
         await store.sql.exec("UPDATE payouts SET gateway_fee_cents = withdrawal_fee_cents WHERE status = 'paid'");
       }
       const profileColumns = new Set((await store.sql.prepare("PRAGMA table_info(attendants)").all()).map((column) => column.name));
+      if (!profileColumns.has("account_kind")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN account_kind TEXT NOT NULL DEFAULT 'attendant' CHECK(account_kind IN ('attendant','partner'))");
       if (!profileColumns.has("photo_url")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
       if (!profileColumns.has("sale_alert_template")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '\u2705 Venda de {valor} lan\xE7ada com sucesso!'");
       await store.sql.exec("CREATE TABLE IF NOT EXISTS push_subscriptions (endpoint_hash TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), subscription TEXT NOT NULL)");
@@ -491,7 +499,7 @@ var PortalStore = class _PortalStore {
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-buckpay-v1");
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
-        await store.sql.prepare("UPDATE attendants SET commission_bps = ?").run(DEFAULT_COMMISSION_BPS);
+        await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("attendant-gross-share-50-v1");
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("payout-fee-on-payment-v1")) {
@@ -515,7 +523,7 @@ var PortalStore = class _PortalStore {
   }
   async adminDashboard() {
     return this.sql.transaction(async (db) => {
-      const rows2 = await db.prepare("SELECT id, name, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
+      const rows2 = await db.prepare("SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
       const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
@@ -588,19 +596,24 @@ var PortalStore = class _PortalStore {
   }
   async adminCreateAttendant(input, actor = systemActor) {
     const data = { commission: String(DEFAULT_COMMISSION_BPS / 100), ...this.adminFields(input) };
-    if (typeof data.name !== "string" || typeof data.commission !== "string") invalid("Informe nome e comiss\xE3o.");
-    let commission;
-    try {
-      commission = percentageToBps(data.commission);
-    } catch (error) {
-      return invalid(error.message);
+    const accountKind = data.accountKind === void 0 ? "attendant" : data.accountKind;
+    if (accountKind !== "attendant" && accountKind !== "partner") return invalid("Tipo de conta inv\xE1lido.");
+    if (typeof data.name !== "string") invalid("Informe o nome da conta.");
+    let commission = 1e4;
+    if (accountKind === "attendant") {
+      if (typeof data.commission !== "string") invalid("Informe nome e comiss\xE3o.");
+      try {
+        commission = percentageToBps(data.commission);
+      } catch (error) {
+        return invalid(error.message);
+      }
     }
     const name = data.name.trim();
     if (data.token !== void 0 && typeof data.token !== "string") invalid("Informe um token v\xE1lido.");
     const chosenToken = typeof data.token === "string" ? data.token.trim() : "";
     if (chosenToken && !/^[A-Za-z0-9_-]{32,160}$/.test(chosenToken)) invalid("O token deve ter de 32 a 160 letras, n\xFAmeros, h\xEDfen ou sublinhado.");
-    const { id, token } = await this.createAttendant(name, commission, chosenToken || void 0, actor);
-    return { attendantId: id, name, token };
+    const { id, token } = await this.createAttendant(name, commission, chosenToken || void 0, actor, accountKind);
+    return { attendantId: id, name, token, accountKind };
   }
   adminFields(input) {
     if (!input || typeof input !== "object" || Array.isArray(input)) return invalid("Dados inv\xE1lidos.");
@@ -608,14 +621,15 @@ var PortalStore = class _PortalStore {
   }
   async rotateToken(id, actor = systemActor) {
     return this.withTransaction(async (store) => {
-      const row = await store.sql.prepare("SELECT name, active FROM attendants WHERE id = ?").get(id);
+      const row = await store.sql.prepare("SELECT name, active, account_kind FROM attendants WHERE id = ?").get(id);
       if (!row) throw new PortalError(404, "Atendente n\xE3o encontrado.");
       if (row.active !== 1) invalid("Reative o atendente antes de gerar um novo token.");
-      const token = `atd_${randomBytes(32).toString("base64url")}`;
+      const accountKind = row.account_kind === "partner" ? "partner" : "attendant";
+      const token = `${accountKind === "partner" ? "par" : "atd"}_${randomBytes(32).toString("base64url")}`;
       await store.sql.prepare("UPDATE attendants SET token_hash = ? WHERE id = ?").run(tokenHash(token), id);
       await store.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
       await store.audit(actor, "attendant.token_rotated", id, String(row.name), null, { renewed: true });
-      return { attendantId: id, name: String(row.name), token };
+      return { attendantId: id, name: String(row.name), token, accountKind };
     });
   }
   async setAttendantActive(id, input, actor = systemActor) {
@@ -677,17 +691,22 @@ var PortalStore = class _PortalStore {
       await store.audit(actor, "checkout.updated", id, current.name, values(current), values({ ...current, name: data.name.trim(), feeBps: fee, fixedFeeCents: fixedFee, minAmountCents: minimum, higherTier }));
     });
   }
-  async createAttendant(name, commissionBps, providedToken, actor = systemActor) {
+  async createAttendant(name, commissionBps, providedToken, actor = systemActor, accountKind = "attendant") {
+    if (accountKind !== "attendant" && accountKind !== "partner") invalid("Tipo de conta inv\xE1lido.");
+    if (accountKind === "partner") commissionBps = 1e4;
     if (!name.trim() || name.length > 120 || !Number.isInteger(commissionBps) || commissionBps < 0 || commissionBps > 1e4) invalid("Nome e comiss\xE3o s\xE3o obrigat\xF3rios e devem ser v\xE1lidos.");
-    const token = providedToken ?? `atd_${randomBytes(32).toString("base64url")}`;
+    const token = providedToken ?? `${accountKind === "partner" ? "par" : "atd"}_${randomBytes(32).toString("base64url")}`;
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) invalid("Token inv\xE1lido.");
     return this.withTransaction(async (store) => {
       if (await store.sql.prepare("SELECT id FROM attendants WHERE token_hash = ?").get(tokenHash(token))) throw new PortalError(409, "Esse token j\xE1 est\xE1 em uso. Defina outro token para este atendente.");
       const id = randomUUID2();
-      await store.sql.prepare("INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at) VALUES (?, ?, ?, ?, 1, ?)").run(id, tokenHash(token), name.trim(), commissionBps, (/* @__PURE__ */ new Date()).toISOString());
-      await store.audit(actor, "attendant.created", id, name.trim(), null, { name: name.trim(), commissionBps, active: true });
+      await store.sql.prepare("INSERT INTO attendants (id, token_hash, name, commission_bps, daily_goal_cents, created_at, account_kind) VALUES (?, ?, ?, ?, 1, ?, ?)").run(id, tokenHash(token), name.trim(), commissionBps, (/* @__PURE__ */ new Date()).toISOString(), accountKind);
+      await store.audit(actor, "attendant.created", id, name.trim(), null, { name: name.trim(), accountKind, commissionBps, active: true });
       return { id, token };
     });
+  }
+  async createPartner(name, providedToken, actor = systemActor) {
+    return this.createAttendant(name, 1e4, providedToken, actor, "partner");
   }
   async authenticate(token) {
     if (!/^[A-Za-z0-9_-]{12,160}$/.test(token)) throw new PortalError(401, "Atendente n\xE3o encontrado pelo token informado.");
@@ -696,9 +715,9 @@ var PortalStore = class _PortalStore {
     return { id: String(row.id) };
   }
   async profile(auth) {
-    const row = await this.sql.prepare("SELECT id, name, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?").get(auth.id);
+    const row = await this.sql.prepare("SELECT id, name, account_kind, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?").get(auth.id);
     if (!row) throw new PortalError(401, "Atendente n\xE3o encontrado pelo token informado.");
-    return { id: row.id, name: row.name, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
+    return { id: row.id, name: row.name, accountKind: row.account_kind, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
   async checkouts() {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
@@ -714,7 +733,7 @@ var PortalStore = class _PortalStore {
   }
   async portal(auth, period = "today") {
     const profile = await this.profile(auth), sales = await this.sales(auth), costs = await this.costs(auth), payouts = await this.payouts(auth), today = businessToday();
-    return { profile, checkouts: await this.checkouts(), sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
+    return { profile, checkouts: accountCheckouts(await this.checkouts(), profile.accountKind), sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
   }
   async saveProfile(auth, input) {
     let fields;
@@ -744,7 +763,7 @@ var PortalStore = class _PortalStore {
     const batch = input;
     if (typeof batch.date !== "string" || !validDate(batch.date) || batch.date > businessToday()) invalid("Informe uma data v\xE1lida, at\xE9 hoje.");
     if (!Array.isArray(batch.sales) || !batch.sales.length || batch.sales.length > 10) invalid("Envie entre 1 e 10 vendas por vez.");
-    const profile = await this.profile(auth), checkouts = await this.checkouts();
+    const profile = await this.profile(auth), checkouts = accountCheckouts(await this.checkouts(), profile.accountKind);
     const normalized = batch.sales.map((row) => {
       if (!row || typeof row !== "object" || typeof row.amount !== "string" || typeof row.note !== "string" || row.note.length > 500 || typeof row.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) return invalid("Confira o valor, o hor\xE1rio e a observa\xE7\xE3o de cada venda.");
       const checkout = checkouts.find((item) => item.id === row.checkoutId);
@@ -775,7 +794,7 @@ var PortalStore = class _PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID2();
         await store.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, splitGatewayFee(row.feeCents));
+        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(row.feeCents, profile.accountKind));
       }
       await store.audit({ id: auth.id, name: profile.name }, "sales.submitted", batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
       return { duplicate: false, count: normalized.length };
@@ -787,7 +806,8 @@ var PortalStore = class _PortalStore {
     return { mime: String(row.mime), bytes: row.bytes };
   }
   async ranking(auth, period) {
-    const attendants = await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1").all();
+    if ((await this.profile(auth)).accountKind === "partner") return [];
+    const attendants = await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1 AND account_kind = 'attendant'").all();
     return (await Promise.all(attendants.map(async (attendant) => {
       const sales = (await this.sales({ id: String(attendant.id) })).filter((sale) => sale.status === "approved").filter((sale) => inPeriod(sale.date, period, businessToday()));
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
@@ -1408,7 +1428,8 @@ async function importArchive(db, archive) {
     for (const name of TABLES) {
       const table = archive.tables.find((item) => item.name === name);
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
-      if (!Array.isArray(table.columns) || table.columns.length !== expected.length || new Set(table.columns).size !== expected.length || table.columns.some((column) => !expected.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
+      const required = name === "attendants" && Array.isArray(table.columns) && !table.columns.includes("account_kind") ? expected.filter((column) => column !== "account_kind") : expected;
+      if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some((column) => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map((column) => '"' + column + '"').join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
       for (const row of table.rows) {
         if (!Array.isArray(row) || row.length !== table.columns.length) throw new Error("Invalid backup row");

@@ -2,6 +2,18 @@
 
 Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
 
+## Simulação de rastreio em HTML
+
+A página está em `public/rastreio.html`: um único arquivo com HTML, CSS e JavaScript incorporados, sem dependências, APIs ou dados de clientes. Pode ser publicado sozinho em qualquer hospedagem estática. No projeto, acesse `/rastreio.html`, `/rastreio` ou `/#/rastreio`.
+
+A primeira abertura cria um código fictício e salva a data/hora real do navegador no cookie `bravus_tracking_demo_v1`, com duração de 365 dias. Reabrir no mesmo navegador e domínio preserva o início. O cronograma usa dias exatos de 24 horas: **recebido por 1 dia**, **em preparação pelos próximos 3 dias**, **em trânsito pelos próximos 5 dias** e **entregue após 9 dias no total**. Datas das etapas são calculadas a partir desse início; a página atualiza mesmo sem recarregar.
+
+Publique o HTML e abra por HTTP/HTTPS para persistir cookies; abrir pelo sistema de arquivos (`file://`) não oferece esse suporte de forma confiável. A página avisa quando os cookies não estão disponíveis. Outro navegador, cookies apagados ou cookie expirado iniciam uma nova simulação. O relógio é o do aparelho; não existe sincronização com servidor.
+
+O layout adapta o rodapé, as quebras de texto e o espaçamento a telas estreitas e em paisagem, respeita fonte ampliada e as áreas seguras do iPhone. As atualizações ocorrem por minuto ou na próxima mudança de etapa, com timers suspensos quando a aba está oculta. A validação no Chromium cobre larguras de 280 a 1024 px, retrato/paisagem, fonte de 100% a 200% e as quatro etapas; não substitui testes em aparelhos físicos.
+
+Para publicar como um site independente, copie `public/rastreio.html` como `index.html` em uma pasta exclusiva. Com a CLI Vercel autenticada, execute nessa pasta `vercel deploy --prod --project rastreiobrasil --create-if-missing --yes`. O projeto usa hospedagem estática, sem API, dependências de instalação ou banco de dados. O nome público depende da disponibilidade na Vercel.
+
 ## Vercel: interface e API real
 
 O endereço do site é **https://bravus-omega.vercel.app/**. O repositório inclui uma função Node.js 24 em `api/index.mjs`, gerada a partir de `server/vercel.ts`, e o roteamento `/api/*` em `vercel.json`. A função usa **Turso/libSQL como banco persistente externo**. Não grava dados em `/tmp` nem usa o disco efêmero da Vercel.
@@ -44,6 +56,14 @@ O arquivo `render.yaml` prepara interface, API e SQLite no mesmo servidor, com d
 5. Cadastre os atendentes, definindo o nome e o token de cada um. A parte do atendente começa em 50% do bruto, menos metade da taxa do gateway. O token pode ser escolhido por você ou gerado pelo sistema. Copie e entregue cada link individual ao atendente correspondente; ele apenas abre esse link para entrar.
 
 O endereço do Render serve o sistema completo; não depende de recompilar o GitHub Pages. Novas versões no Render são implantadas manualmente, pois o blueprint deixa `autoDeploy: false`. O SQLite usa uma única instância com disco persistente, sem escalonamento horizontal. Faça backups privados regulares e mantenha uma cópia fora do disco da aplicação. A recuperação de um backup deve ser planejada antes de usar dados reais.
+
+## Parceiros com taxa de 10%
+
+Na administração, abra **Atendentes → Novo parceiro**, informe o nome e gere o token individual (ou defina um token próprio). A conta aparece como **Parceiro**, abre o **Portal do Parceiro** e acessa somente seus próprios dados, sem permissões administrativas. Renovação de token e revogação funcionam como nos acessos existentes; parceiros ficam fora do ranking de atendentes.
+
+Nas novas vendas do parceiro, o painel calcula **10% sobre o bruto, sem valor fixo adicional**, e destina o restante ao parceiro: uma venda de R$ 100 resulta em R$ 10 de taxa e R$ 90 para ele após aprovação. A regra substitui a comissão de 50% e o rateio da taxa somente nessa conta; preserva os limites dos checkouts e as condições dos atendentes. ADS e taxas de repasse continuam seguindo as regras existentes. Vendas já salvas conservam seus valores originais.
+
+Essa configuração calcula as taxas e os saldos no BRAVUS; não altera a contratação nem as tarifas cobradas pelo provedor do checkout externo. O tipo da conta é definido pela administração no cadastro e não pode ser alterado pelo perfil do parceiro.
 
 ## Executar o sistema completo
 

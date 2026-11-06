@@ -1,7 +1,7 @@
 import { demoAdminRequest } from './demo-admin.ts';
 import { readDemoData } from './demo-store.ts';
 import { ApiError } from './client.ts';
-import type { AdminDashboard, AdminSalesPage, CheckoutTierInput, DailyCost, Invitation, SaleStatus } from './domain.ts';
+import type { AccountKind, AdminDashboard, AdminSalesPage, CheckoutTierInput, DailyCost, Invitation, SaleStatus } from './domain.ts';
 import { financialCsv } from './admin-domain.ts';
 import type { AuditPage, BackupRecord, BackupStatus, FinancialReport } from './admin-domain.ts';
 
@@ -66,7 +66,7 @@ export class AdminClient {
     if (!response.ok) throw new ApiError('Não foi possível abrir o comprovante.', response.status);
     return URL.createObjectURL(await response.blob());
   }
-  createAttendant(name: string, commission: string, token = '') { return this.request<Invitation>('/attendants', 'POST', { name, commission, ...(token.trim() ? { token: token.trim() } : {}) }); }
+  createAttendant(name: string, commission: string, token = '', accountKind: AccountKind = 'attendant') { return this.request<Invitation>('/attendants', 'POST', { name, commission, accountKind, ...(token.trim() ? { token: token.trim() } : {}) }); }
   rotateToken(id: string) { return this.request<Invitation>(`/attendants/${id}/token`, 'POST'); }
   setActive(id: string, active: boolean) { return this.request(`/attendants/${id}`, 'PATCH', { active }); }
   costs(id: string, date: string) { return this.request<DailyCost>(`/attendants/${id}/costs?date=${encodeURIComponent(date)}`); }

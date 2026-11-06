@@ -4,11 +4,12 @@ import type { AdminAttendant } from './domain.ts';
 export default function AdminBalances({ attendants, selected, select }: { attendants: AdminAttendant[]; selected: string; select: (id: string) => void }) {
   const shown = attendants.filter(item => !selected || item.id === selected);
   return <section className="panel admin-balances">
-    <div className="admin-heading"><div><h2>Faturamento e saldo por atendente</h2><p>Todo o histórico, incluindo atendentes com acesso revogado.</p></div></div>
+    <div className="admin-heading"><div><h2>Faturamento e saldo por atendente</h2><p>Todo o histórico de atendentes e parceiros, incluindo acessos revogados.</p></div></div>
     <label className="balance-filter">Atendente dos saldos<select value={selected} onChange={event => select(event.target.value)}><option value="">Todos os atendentes</option>{attendants.map(item => <option key={item.id} value={item.id}>{item.name}{!item.active ? ' (acesso revogado)' : ''}</option>)}</select></label>
     <p className="section-description">O faturamento inclui vendas aprovadas. O saldo desconta a parte do atendente nas taxas, ADS, ajustes e repasses já pagos. Os pagamentos são registrados manualmente pela administração.</p>
     <div className="attendant-balances">{shown.map(item => <article className="attendant-balance" key={item.id}>
       <header><h3>{item.name}</h3><span className={`payout-badge ${item.active ? 'paid' : 'cancelled'}`}>{item.active ? 'Ativo' : 'Acesso revogado'}</span></header>
+      {item.accountKind === 'partner' && <p className="checkout-tariff">Parceiro · Taxa nas vendas: 10% · Líquido após a taxa: 90%</p>}
       <dl>
         <div><dt>Faturamento aprovado</dt><dd>{money(item.finance.grossCents)}</dd><small>{item.finance.count} venda(s) aprovada(s)</small></div>
         <div><dt>Comissão após taxas das vendas</dt><dd>{money(item.finance.commissionCents)}</dd></div>

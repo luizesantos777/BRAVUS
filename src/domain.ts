@@ -1,11 +1,12 @@
 export type Period = 'today' | 'yesterday' | 'week' | 'month' | 'all';
+export type AccountKind = 'attendant' | 'partner';
 export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
 export type PayoutStatus = 'pending' | 'paid' | 'cancelled';
 export type SaleStatus = 'pending' | 'approved' | 'rejected';
 export const saleStatusLabels: Record<SaleStatus, string> = { pending: 'Em análise', approved: 'Aprovada', rejected: 'Recusada' };
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
-export interface Profile { id: string; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
+export interface Profile { id: string; accountKind?: AccountKind; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
 export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
 export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
@@ -23,14 +24,15 @@ export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
-export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance }
+export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; accountKind?: AccountKind; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
-export interface Invitation { attendantId: string; name: string; token: string }
+export interface Invitation { attendantId: string; accountKind?: AccountKind; name: string; token: string }
 export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVersion?: 1; submittedBatches?: Record<string, { hash: string; count: number }>; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;
+export const PARTNER_GATEWAY_FEE_BPS = 1000;
 export const GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 export const ATTENDANT_GATEWAY_FEE_BPS = 5000;
 export const ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -66,6 +68,12 @@ export function validateAvatar(value: string): string {
 }
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 export function splitGatewayFee(feeCents: number): number { return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5000) / 10000); }
+/** Partners retain the gross amount less their full, fixed 10% gateway fee. */
+export function allocatedSaleFee(feeCents: number, accountKind?: AccountKind): number { return accountKind === 'partner' ? feeCents : splitGatewayFee(feeCents); }
+/** Preserve checkout limits and identities; never change the shared gateway tariffs. */
+export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind): Checkout[] {
+  return accountKind === 'partner' ? checkouts.map(checkout => ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
+}
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }
 /** Every sale keeps its own formula and allocated fee; missing allocations preserve historical full-fee records. */
 export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'attendantFeeCents' | 'commissionBps' | 'commissionMode'>): number {

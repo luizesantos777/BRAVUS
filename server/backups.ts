@@ -55,7 +55,10 @@ async function importArchive(db: SqlDatabase, archive: Archive) {
     for (const name of TABLES) {
       const table = archive.tables.find(item => item.name === name)!;
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map(column => String(column.name));
-      if (!Array.isArray(table.columns) || table.columns.length !== expected.length || new Set(table.columns).size !== expected.length || table.columns.some(column => !expected.includes(column)) || !Array.isArray(table.rows)) throw new Error('Invalid backup columns');
+      // Older archives predate the account type. Its schema default restores
+      // those rows as attendants; every other column remains mandatory.
+      const required = name === 'attendants' && Array.isArray(table.columns) && !table.columns.includes('account_kind') ? expected.filter(column => column !== 'account_kind') : expected;
+      if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some(column => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error('Invalid backup columns');
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map(column => '"' + column + '"').join(',')}) VALUES (${table.columns.map(() => '?').join(',')})`);
       for (const row of table.rows) {
         if (!Array.isArray(row) || row.length !== table.columns.length) throw new Error('Invalid backup row');

@@ -115,3 +115,8 @@
 .admin-preview-notice .button { margin: 10px 0 0; }
 @media (max-width: 600px) { .review-hidden-pending { align-items: stretch; flex-direction: column; } }
 .review-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.admin-create-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.account-kind-label { display: block; margin-top: 5px; color: #a7b497; font-size: 10px; }
+.partner-terms { margin: 14px 0; padding: 13px; border: 1px solid #68713e; border-radius: 10px; background: #202818; color: #d7dfbf; font-size: 12px; line-height: 1.8; }
+.portal-tabs.partner-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 600px) { .portal-tabs.partner-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .partner-tabs > button:last-child { grid-column: 1 / -1; } }

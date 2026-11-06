@@ -126,6 +126,25 @@ test('migração do parceiro configura 10% uma vez, registra auditoria e conserv
     assert.deepEqual(await store.sales(auth), previousSales);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
+test('parceiro com gateway exclusivo mantém sua regra de recebimento e não expõe a opção a outros parceiros', async t => {
+  const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
+  const token = 'fixture_exclusive_partner_kind_01234567890123456789';
+  const partner = await store.createPartner('Parceiro com gateway próprio', token), checkoutId = exclusiveCheckoutId(partner.id);
+  const otherToken = 'fixture_other_partner_kind_01234567890123456789';
+  await store.createPartner('Outro parceiro', otherToken);
+  await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(checkoutId, 'Gateway exclusivo', 1000, 0, 1, 100000);
+  const portal = await (await call('/api/portal', token)).json();
+  assert.equal(portal.profile.accountKind, 'partner'); assert.equal(portal.checkouts.length, 1); assert.equal(portal.checkouts[0].id, checkoutId);
+  assert.deepEqual((await (await call('/api/portal', otherToken)).json()).checkouts.map((checkout: { id: string }) => checkout.id).sort(), ['buckpay', 'main', 'pix']);
+  assert.equal((await submit(batch(), 'fixture_partner_main_denied', token)).status, 400);
+  const input = batch(); input.sales[0].checkoutId = checkoutId; input.sales[0].amount = '100';
+  assert.equal((await submit(input, 'fixture_partner_kind_exclusive', otherToken)).status, 400);
+  assert.equal((await submit(input, 'fixture_partner_kind_exclusive', token)).status, 200);
+  const sale = (await (await call('/api/portal', token)).json()).sales[0];
+  assert.equal(sale.feeCents, 1000); assert.equal(sale.attendantFeeCents, 1000); assert.equal(sale.commissionBps, 10000);
+  await store.reviewSale(sale.id, { status: 'approved', note: 'Conferida' });
+  assert.equal((await (await call('/api/portal', token)).json()).finance.availableCents, 9000);
+});
 test('comprovante repetido alerta só o administrador, inclusive entre vendedores e situações diferentes', async t => {
   const { call, submit } = await fixture(t, { approveSales: false });
   assert.equal((await submit()).status, 200);

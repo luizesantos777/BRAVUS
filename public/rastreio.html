@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f1f4f8">
+  <meta name="description" content="Demonstração visual do acompanhamento de um pedido.">
+  <meta name="referrer" content="no-referrer">
+  <title>Rastreio Brasil — Demonstração</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📦%3C/text%3E%3C/svg%3E">
+  <style>
+html.tracking-page {
+  color-scheme: light;
+  background: #f1f4f8;
+}
+
+.tracking-page body {
+  background: #f1f4f8;
+}
+
+.tracking-shell {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  padding: 64px 20px 32px;
+  padding-top: max(32px, min(10vh, 88px), env(safe-area-inset-top, 0px));
+  padding-right: max(20px, env(safe-area-inset-right, 0px));
+  padding-bottom: max(32px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(20px, env(safe-area-inset-left, 0px));
+  background: #f1f4f8;
+  color: #15252e;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 1rem;
+  line-height: 1.4;
+  color-scheme: light;
+}
+
+.tracking-card {
+  width: 100%;
+  min-width: 0;
+  max-width: 360px;
+  padding: 20px;
+  border-radius: 32px;
+  background: #fff;
+  box-shadow: 0 18px 46px rgb(34 52 73 / 9%);
+}
+
+.tracking-heading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  min-height: 24px;
+  margin-bottom: 12px;
+}
+
+.tracking-heading h1 {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -.5px;
+}
+
+.tracking-heading h1 span {
+  font-size: 1.3125rem;
+  letter-spacing: 0;
+}
+
+.tracking-code {
+  padding: 2px 12px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #30475b;
+  max-width: 100%;
+  font-size: .875rem;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.tracking-order {
+  padding: 10px 18px;
+  border: 1px solid #ebedf0;
+  border-radius: 19px;
+  background: #f8f9fb;
+}
+
+.tracking-order > p {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.4375;
+  overflow-wrap: anywhere;
+}
+
+.tracking-order > .tracking-order-date {
+  color: #626c73;
+  font-size: .875rem;
+  font-weight: 400;
+  line-height: 1.45;
+}
+
+.tracking-status-wrap {
+  display: flex;
+  justify-content: center;
+  margin-top: 26px;
+}
+
+.tracking-status {
+  margin: 0;
+  padding: 7px 21px;
+  border-radius: 999px;
+  background: #2463e8;
+  color: #fff;
+  box-shadow: 0 5px 13px rgb(36 99 232 / 20%);
+  max-width: 100%;
+  text-align: center;
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1.4375;
+  overflow-wrap: anywhere;
+}
+
+.tracking-timeline {
+  position: relative;
+  margin: 54px 0 40px;
+  padding: 0 0 0 48px;
+  list-style: none;
+}
+
+.tracking-timeline::before {
+  position: absolute;
+  top: 5px;
+  bottom: -2px;
+  left: 20px;
+  width: 3px;
+  border-radius: 2px;
+  background: #e2e8ed;
+  content: '';
+}
+
+.tracking-step {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  min-height: 50px;
+  color: #90969a;
+}
+
+.tracking-step:last-child {
+  min-height: 24px;
+}
+
+.tracking-step-current {
+  min-height: 106px;
+  color: #15252e;
+}
+
+.tracking-step h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.tracking-step time {
+  display: block;
+  color: #77868d;
+  font-size: .75rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.tracking-step p {
+  margin: 0;
+  color: #52656e;
+  font-size: .875rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.tracking-marker {
+  position: absolute;
+  top: 3px;
+  left: -38px;
+  width: 22px;
+  height: 22px;
+  border: 2px solid #e7edf1;
+  border-radius: 50%;
+  background: rgb(247 249 251 / 60%);
+}
+
+.tracking-marker::after {
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: #e7edf1;
+  content: '';
+}
+
+.tracking-step-current .tracking-marker {
+  top: 5px;
+  left: -35px;
+  width: 16px;
+  height: 16px;
+  border: 2px solid #fff;
+  background: #2463e8;
+}
+
+.tracking-step-current .tracking-marker::after {
+  content: none;
+}
+
+.tracking-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 18px;
+  border-top: 1px solid #eceff2;
+  color: #7b8a94;
+  font-size: .8125rem;
+  line-height: 1.25;
+}
+
+.tracking-footer p {
+  margin: 0;
+}
+
+.tracking-availability {
+  flex: 1 1 8.25em;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.tracking-updated {
+  flex: 1 1 11.5em;
+  min-width: 0;
+  padding: 4px 13px;
+  border-radius: 999px;
+  background: #f1f4f8;
+}
+
+.tracking-updated time {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 340px) {
+  .tracking-shell { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+  .tracking-card { padding: 16px; border-radius: 28px; }
+  .tracking-heading { gap: 8px; }
+  .tracking-code { padding-inline: 9px; }
+  .tracking-order { padding-inline: 12px; }
+  .tracking-timeline { padding-left: 38px; }
+  .tracking-footer { gap: 10px; font-size: .75rem; }
+  .tracking-updated { padding-inline: 10px; }
+}
+
+@media (max-height: 600px) {
+  .tracking-shell { padding-top: max(16px, env(safe-area-inset-top, 0px)); padding-bottom: max(16px, env(safe-area-inset-bottom, 0px)); }
+  .tracking-timeline { margin-top: 32px; margin-bottom: 28px; }
+}
+
+
+    * { box-sizing: border-box; }
+    html { color-scheme: light; background: #f1f4f8; font-size: 100%; -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+    body { margin: 0; min-width: 0; }
+    h1, h2, p { margin: 0; }
+    [hidden] { display: none !important; }
+    .tracking-shell { flex-direction: column; gap: 16px; }
+    .tracking-step { padding-bottom: 14px; }
+    .tracking-step > div { min-width: 0; }
+    .tracking-step:last-child { padding-bottom: 0; }
+    .tracking-timeline::before { content: none; }
+    .tracking-step::before { position: absolute; top: 5px; bottom: -5px; left: -28px; width: 3px; border-radius: 2px; background: #e2e8ed; content: ''; }
+    .tracking-step:last-child::before { content: none; }
+    .tracking-step-complete { min-height: 76px; color: #52656e; }
+    .tracking-step-complete .tracking-marker { border-color: #c9dcfb; background: #eaf1fe; }
+    .tracking-step-complete .tracking-marker::after { background: #7da7ed; }
+    .tracking-notice { margin-top: 18px; padding: 12px; border: 1px solid #e9d29a; border-radius: 12px; background: #fff8e8; color: #765b23; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
+    noscript p { margin: 20px; font: 16px/1.6 Arial, sans-serif; color: #765b23; }
+
+  </style>
+</head>
+<body>
+  <noscript><p>Ative o JavaScript do navegador para iniciar a demonstração de rastreio.</p></noscript>
+  <main class="tracking-shell">
+    <article class="tracking-card" id="tracking-card" aria-labelledby="tracking-title">
+      <header class="tracking-heading">
+        <h1 id="tracking-title"><span aria-hidden="true">📦</span> Rastreio</h1>
+        <span class="tracking-code" id="order-code">—</span>
+      </header>
+      <section class="tracking-order" aria-label="Dados do pedido">
+        <p>Pedido: <strong id="order-number">—</strong></p>
+        <p class="tracking-order-date">Data do pedido: <time id="order-date">—</time></p>
+      </section>
+      <div class="tracking-status-wrap">
+        <p class="tracking-status" id="current-status" role="status" aria-live="polite">Iniciando rastreio</p>
+      </div>
+      <ol class="tracking-timeline" aria-label="Etapas da entrega">
+        <li class="tracking-step" data-step="0">
+          <span class="tracking-marker" aria-hidden="true"></span>
+          <div><h2>Pedido recebido</h2><time hidden></time><p hidden>Seu pedido foi confirmado e aguarda processamento.</p></div>
+        </li>
+        <li class="tracking-step" data-step="1">
+          <span class="tracking-marker" aria-hidden="true"></span>
+          <div><h2>Em preparação</h2><time hidden></time><p hidden>Seu pedido está sendo separado e preparado para envio.</p></div>
+        </li>
+        <li class="tracking-step" data-step="2">
+          <span class="tracking-marker" aria-hidden="true"></span>
+          <div><h2>Em trânsito</h2><time hidden></time><p hidden>Seu pedido foi enviado e está a caminho do destino.</p></div>
+        </li>
+        <li class="tracking-step" data-step="3">
+          <span class="tracking-marker" aria-hidden="true"></span>
+          <div><h2>Entregue</h2><time hidden></time><p hidden>Seu pedido foi entregue. Obrigado pela confiança!</p></div>
+        </li>
+      </ol>
+      <footer class="tracking-footer">
+        <p class="tracking-availability"><span aria-hidden="true">🔒</span> Código de<br>rastreio disponível</p>
+        <p class="tracking-updated">Atualizado em<br><time id="updated-at">—</time></p>
+      </footer>
+      <p class="tracking-notice" id="cookie-notice" role="alert" hidden></p>
+    </article>
+  </main>
+  <script>
+    (function () {
+      'use strict';
+
+      // Arquivo independente: não consulta APIs e não coleta dados de clientes.
+      // A contagem usa o relógio do navegador e dias exatos de 24 horas.
+      // 1 dia recebido + 3 dias em preparação + 5 dias em trânsito = 9 dias.
+      // O cookie guarda apenas o início e um código fictício por 365 dias.
+      var COOKIE_NAME = 'bravus_tracking_demo_v1';
+      var DAY = 24 * 60 * 60 * 1000;
+      var OFFSETS = [0, DAY, 4 * DAY, 9 * DAY];
+      var LABELS = ['Pedido recebido', 'Em preparação', 'Em trânsito', 'Entregue'];
+      var KEYS = ['received', 'preparing', 'in-transit', 'delivered'];
+      var dateFormat = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+      var timeFormat = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false });
+      var card = document.getElementById('tracking-card');
+      var steps = Array.from(document.querySelectorAll('[data-step]'));
+      var status = document.getElementById('current-status');
+      var notice = document.getElementById('cookie-notice');
+      var order = null;
+      var cookieAvailable = true;
+
+      function readCookie() {
+        try {
+          var prefix = COOKIE_NAME + '=';
+          var item = document.cookie.split(';').map(function (part) { return part.trim(); })
+            .find(function (part) { return part.indexOf(prefix) === 0; });
+          if (!item) return null;
+          var saved = JSON.parse(decodeURIComponent(item.slice(prefix.length)));
+          if (saved.version !== 1 || !Number.isSafeInteger(saved.startedAt) || saved.startedAt <= 0
+            || saved.startedAt > 8640000000000000 - 9 * DAY
+            || typeof saved.code !== 'string' || !/^BR-[0-9]{4}-[0-9]{4}$/.test(saved.code)) return null;
+          return saved;
+        } catch (error) {
+          return null;
+        }
+      }
+
+      function writeCookie(value) {
+        try {
+          document.cookie = COOKIE_NAME + '=' + encodeURIComponent(JSON.stringify(value))
+            + '; Max-Age=31536000; Path=/; SameSite=Lax'
+            + (location.protocol === 'https:' ? '; Secure' : '');
+          var saved = readCookie();
+          return !!saved && saved.startedAt === value.startedAt && saved.code === value.code;
+        } catch (error) {
+          return false;
+        }
+      }
+
+      function text(element, value) {
+        if (element.textContent !== value) element.textContent = value;
+      }
+
+      function setTime(element, timestamp, separator) {
+        var date = new Date(timestamp);
+        var formatted = dateFormat.format(date);
+        if (separator !== null) formatted += separator + timeFormat.format(date);
+        text(element, formatted);
+        var iso = date.toISOString();
+        if (element.dateTime !== iso) element.dateTime = iso;
+      }
+
+      function render() {
+        // Releitura permite que abas abertas na mesma origem compartilhem o início.
+        var persisted = readCookie();
+        if (persisted) order = persisted;
+        var now = Date.now();
+        var elapsed = Math.max(0, now - order.startedAt);
+        var stage = 0;
+        for (var i = 1; i < OFFSETS.length; i++) {
+          if (elapsed >= OFFSETS[i]) stage = i;
+        }
+
+        text(document.getElementById('order-code'), order.code);
+        text(document.getElementById('order-number'), order.code);
+        setTime(document.getElementById('order-date'), order.startedAt, null);
+        setTime(document.getElementById('updated-at'), now, ', ');
+        text(status, LABELS[stage]);
+        card.dataset.stage = KEYS[stage];
+
+        steps.forEach(function (step, index) {
+          var reached = index <= stage;
+          var current = index === stage;
+          step.classList.toggle('tracking-step-current', current);
+          step.classList.toggle('tracking-step-complete', index < stage);
+          if (current) step.setAttribute('aria-current', 'step');
+          else step.removeAttribute('aria-current');
+          var time = step.querySelector('time');
+          time.hidden = !reached;
+          if (reached) setTime(time, order.startedAt + OFFSETS[index], ' ');
+          step.querySelector('p').hidden = !current;
+        });
+      }
+
+      order = readCookie();
+      if (!order) {
+        var startedAt = Date.now();
+        order = {
+          version: 1,
+          startedAt: startedAt,
+          code: 'BR-' + new Date(startedAt).getFullYear() + '-' + (Math.floor(Math.random() * 9000) + 1000)
+        };
+        cookieAvailable = writeCookie(order);
+      }
+
+      if (!cookieAvailable) {
+        notice.hidden = false;
+        text(notice, location.protocol === 'file:'
+          ? 'Para salvar o início da simulação, publique este HTML e abra pelo link HTTP ou HTTPS. Arquivos abertos diretamente no aparelho não permitem cookies de forma confiável. Aqui, a contagem reinicia ao recarregar.'
+          : 'Os cookies estão bloqueados. Permita cookies para este site para manter o início salvo ao voltar. Nesta sessão, a simulação continua funcionando.');
+      }
+
+      // Atualiza no próximo minuto ou na virada exata de uma etapa, sem
+      // executar trabalho a cada segundo nem manter timers em abas ocultas.
+      var refreshTimer = null;
+      function refresh() {
+        window.clearTimeout(refreshTimer);
+        render();
+        if (document.visibilityState === 'hidden') return;
+        var now = Date.now();
+        var delay = 60000 - (now % 60000);
+        OFFSETS.slice(1).forEach(function (offset) {
+          var remaining = order.startedAt + offset - now;
+          if (remaining > 0) delay = Math.min(delay, remaining);
+        });
+        refreshTimer = window.setTimeout(refresh, Math.max(20, delay));
+      }
+
+      refresh();
+      window.addEventListener('pageshow', refresh);
+      window.addEventListener('focus', refresh);
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'visible') refresh();
+        else window.clearTimeout(refreshTimer);
+      });
+    }());
+  </script>
+</body>
+</html>
+

@@ -12,7 +12,7 @@
     "dev:api": "node --env-file-if-exists=.env server/index.ts",
     "start": "node --env-file-if-exists=.env server/index.ts",
     "manage": "node --env-file-if-exists=.env server/manage.ts",
-    "build": "tsc --noEmit && vite build && npm run build:api",
+    "build": "tsc --noEmit && vite build && node scripts/build-partner-html.mjs && npm run build:api",
     "build:pages": "npm run build && node scripts/build-pages.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",

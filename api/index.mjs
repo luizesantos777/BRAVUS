@@ -1337,7 +1337,7 @@ function createPortalHandler(store, options = {}) {
       if (request.method !== "GET" && request.method !== "HEAD") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
       if (!options.staticDir) throw new PortalError(404, "Interface n\xE3o dispon\xEDvel. Execute npm run build.");
       const root = resolve(options.staticDir);
-      const requested = resolve(root, "." + decodeURIComponent(url.pathname));
+      const requested = resolve(root, "." + decodeURIComponent(/^\/parceiro\/?$/.test(url.pathname) ? "/parceiro.html" : url.pathname));
       if (requested !== root && !requested.startsWith(root + sep)) throw new PortalError(404, "P\xE1gina n\xE3o encontrada.");
       let filename = requested;
       try {

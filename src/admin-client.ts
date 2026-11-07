@@ -1,6 +1,7 @@
 import { demoAdminRequest } from './demo-admin.ts';
 import { readDemoData } from './demo-store.ts';
 import { ApiError } from './client.ts';
+import { publicAssetUrl } from './pwa.ts';
 import type { AccountKind, AdminDashboard, AdminSalesPage, CheckoutTierInput, DailyCost, Invitation, SaleStatus } from './domain.ts';
 import { financialCsv } from './admin-domain.ts';
 import type { AuditPage, BackupRecord, BackupStatus, FinancialReport } from './admin-domain.ts';
@@ -82,9 +83,8 @@ function saveFile(blob: Blob, filename: string) {
   window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
 
-export function invitationUrl(token: string) {
-  const url = new URL(window.location.href);
-  url.pathname = url.pathname.replace(/\/admin\/?$/, '/');
+export function invitationUrl(token: string, accountKind?: AccountKind) {
+  const url = new URL(publicAssetUrl(accountKind === 'partner' ? 'parceiro.html' : ''));
   url.search = ''; url.hash = `/atendente/${token}`;
   return url.href;
 }

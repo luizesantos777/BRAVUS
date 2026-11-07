@@ -172,7 +172,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
       if (request.method !== 'GET' && request.method !== 'HEAD') throw new PortalError(405, 'Método não permitido.');
       if (!options.staticDir) throw new PortalError(404, 'Interface não disponível. Execute npm run build.');
       const root = resolve(options.staticDir);
-      const requested = resolve(root, '.' + decodeURIComponent(url.pathname));
+      const requested = resolve(root, '.' + decodeURIComponent(/^\/parceiro\/?$/.test(url.pathname) ? '/parceiro.html' : url.pathname));
       if (requested !== root && !requested.startsWith(root + sep)) throw new PortalError(404, 'Página não encontrada.');
       let filename = requested;
       try { if (!(await stat(filename)).isFile()) filename = resolve(root, 'index.html'); } catch { filename = resolve(root, 'index.html'); }

@@ -12,6 +12,8 @@ import type { DraftRow as SaleRow } from './sales-drafts.ts';
 import { useSalesDraft } from './useSalesDraft.ts';
 import PartnerAds from './PartnerAds.tsx';
 import PartnerFinancialSummary from './PartnerFinancialSummary.tsx';
+import { applyPageMetadata } from './page-metadata.ts';
+import { publicAssetUrl } from './pwa.ts';
 
 type Tab = 'sales' | 'marketing' | 'ranking' | 'payouts' | 'profile';
 type Notice = { text: string; error?: boolean };
@@ -167,13 +169,26 @@ export default function App() {
   const profile = display.profile, finance = display.finance, partner = profile.accountKind === 'partner';
   const partnerPortal = partner || display.checkouts.some(checkout => checkout.id === 'exclusive_' + profile.id);
   const visibleTabs = tabs.filter(item => (item.id !== 'marketing' || partnerPortal) && (item.id !== 'ranking' || !partner));
-  useEffect(() => { document.title = partnerPortal ? 'Lucro Certo — Portal do Parceiro BRAVUS' : 'Lucro Certo — Portal do Atendente BRAVUS'; if (partner && tab === 'ranking' || !partnerPortal && tab === 'marketing') setTab('sales'); }, [partnerPortal, partner, tab]);
+  const identified = client.isDemo || !!portal;
+  const partnerEntry = document.documentElement.dataset.portalEntry === 'partner' || /\/parceiro(?:\.html)?\/?$/.test(window.location.pathname);
+  const publicPartnerEntry = partnerEntry && client.isDemo;
+  useEffect(() => {
+    applyPageMetadata(publicPartnerEntry ? 'partner' : identified ? partnerPortal ? 'partner' : 'attendant' : partnerEntry ? 'partner' : 'loading');
+    if (identified && !client.isDemo && (partnerPortal || partnerEntry)) {
+      const url = new URL(publicAssetUrl(partnerPortal ? 'parceiro.html' : ''));
+      url.search = window.location.search; url.hash = '/atendente/' + client.token;
+      url.searchParams.delete('token');
+      if (url.href !== window.location.href) window.history.replaceState(window.history.state, '', url);
+    }
+  }, [identified, partnerPortal, partnerEntry, publicPartnerEntry, client]);
+  useEffect(() => { if (partner && tab === 'ranking' || !partnerPortal && tab === 'marketing') setTab('sales'); }, [partnerPortal, partner, tab]);
+  if (publicPartnerEntry) return <div className="portal-shell"><header className="portal-header"><span className="brand"><Brand /></span></header><main><BrandIntro accountKind="partner" /><section className="panel"><h2>Acesso individual do parceiro</h2><p className="section-description">Use o link individual enviado pela administração para abrir suas vendas e pagamentos.</p></section></main></div>;
   return <div className="portal-shell"><a className="skip-link" href="#portal-main" onClick={event => { event.preventDefault(); document.getElementById('portal-main')?.focus(); }}>Pular para o conteúdo</a>
     <header className="portal-header"><a className="brand" href="#" onClick={event => { event.preventDefault(); setTab('sales'); }} aria-label="BRAVUS início"><Brand /></a><div className="header-access"><span className={`access-status ${client.isDemo ? 'demo' : ''}`}><ShieldCheck size={12} />{client.isDemo ? 'Demonstração' : 'Acesso individual'}</span><span className="attendant-name">{portal?.profile.name ?? 'Seu portal'}</span><button className="avatar" aria-label="Abrir meus dados" onClick={() => setTab('profile')}><ProfileAvatar photoUrl={profile.photoUrl} name={profile.name} /></button></div></header>
     <main id="portal-main" tabIndex={-1}>
-      {tab !== 'profile' && <BrandIntro accountKind={partnerPortal ? 'partner' : profile.accountKind} />}
+      {tab !== 'profile' && (identified || partnerEntry) && <BrandIntro accountKind={partnerPortal || !identified && partnerEntry ? 'partner' : profile.accountKind} />}
       {error && <div className="auth-error" role="alert"><AlertCircle size={15} /><span>{error.text}{error.status === 401 && ' Peça um novo link ao responsável pelo BRAVUS.'}</span>{error.status !== 401 && <button onClick={() => void refresh()}>Tentar novamente</button>}</div>}
-      {tab !== 'profile' && <section className="panel financial-panel" aria-busy={loading}><div className="financial-heading"><div className="section-title"><DollarSign size={18} /><h2>{partnerPortal ? 'EXTRATO FINANCEIRO DO PARCEIRO' : 'EXTRATO FINANCEIRO & COMISSÕES'}</h2></div><div className="period-picker"><CalendarDays size={15} /><select aria-label="Período do extrato" value={period} onChange={event => setPeriod(event.target.value as Period)}>{Object.entries(periodLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><ChevronDown size={13} /></div></div>
+      {tab !== 'profile' && identified && <section className="panel financial-panel" aria-busy={loading}><div className="financial-heading"><div className="section-title"><DollarSign size={18} /><h2>{partnerPortal ? 'EXTRATO FINANCEIRO DO PARCEIRO' : 'EXTRATO FINANCEIRO & COMISSÕES'}</h2></div><div className="period-picker"><CalendarDays size={15} /><select aria-label="Período do extrato" value={period} onChange={event => setPeriod(event.target.value as Period)}>{Object.entries(periodLabels).map(([key, label]) => <option value={key} key={key}>{label}</option>)}</select><ChevronDown size={13} /></div></div>
         {partnerPortal ? <PartnerFinancialSummary portal={display} /> : <>
         <div className="financial-grid"><article className="metric"><h3>FATURAMENTO<br />CONSOLIDADO</h3><strong>{money(finance.grossCents)}</strong><small>{finance.count} {finance.count === 1 ? 'venda' : 'vendas'}</small></article><article className="metric"><h3>TAXAS + SAQUES</h3><strong>- {money(finance.feeCents)}</strong><small>{partner ? 'Gateway + taxas de repasse pagas' : 'Sua parte nas taxas + repasses pagos'}</small></article><article className="metric"><h3>CUSTO ADS ( <span className="status-dot" /> )</h3><strong>- {money(finance.adsCents)}</strong><small>Repasse por gasto</small></article><article className={`metric balance ${finance.availableCents < 0 ? 'negative' : ''}`}><h3>SALDO ACUMULADO ATUAL</h3><strong>{money(finance.availableCents)}</strong><small>Disponível para repasse</small></article></div>
         <dl className="finance-breakdown">{!partner && <div><dt>BRAVUS após taxas no período</dt><dd>− {money(finance.businessShareCents)}</dd></div>}<div><dt>{partner ? 'Taxa do gateway nas vendas' : 'Sua parte nas taxas das vendas'}</dt><dd>− {money(finance.transactionFeeCents)}</dd></div><div><dt>Seu valor após as taxas</dt><dd>{money(finance.commissionCents)}</dd></div><div><dt>Repasses pagos e ajustes</dt><dd>− {money(finance.withdrawalFeeCents)}</dd></div></dl>

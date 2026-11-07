@@ -4,6 +4,7 @@ import App from './App.tsx';
 import Admin from './Admin.tsx';
 import Tracking from './Tracking.tsx';
 import { publicAssetUrl } from './pwa.ts';
+import { applyPageMetadata } from './page-metadata.ts';
 import './styles.css';
 import './brand.css';
 import './profile.css';
@@ -39,8 +40,6 @@ function Router() {
   React.useEffect(() => {
     const theme = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
     if (theme) theme.content = tracking ? '#f1f4f8' : '#070907';
-    const description = document.querySelector<HTMLMetaElement>('meta[name="description"]');
-    if (description) description.content = tracking ? 'Acompanhe as etapas da entrega do seu pedido.' : 'Portal individual do atendente BRAVUS. Lance suas vendas, acompanhe comissões, ranking e repasses.';
     const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest) manifest.href = publicAssetUrl(admin ? 'admin.webmanifest' : 'manifest.webmanifest');
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
@@ -49,7 +48,8 @@ function Router() {
     if (appName) appName.content = admin ? 'Lucro Certo Gestão' : 'Lucro Certo';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
-    document.title = tracking ? 'Rastreio — Acompanhe seu pedido' : admin ? 'Lucro Certo Gestão — Administração BRAVUS' : 'Lucro Certo — Portal do Atendente BRAVUS';
+    // The authenticated portal owns its title; the router must not overwrite it.
+    if (admin || tracking) applyPageMetadata(tracking ? 'tracking' : 'admin');
   }, [admin, tracking]);
   return tracking ? <Tracking /> : admin ? <Admin /> : <App />;
 }

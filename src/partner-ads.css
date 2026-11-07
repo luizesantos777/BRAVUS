@@ -20,3 +20,8 @@
   .partner-roi-grid .metric strong { font-size: 17px; }
   .partner-ads-panel .table-scroll table { min-width: 280px; }
 }
+
+.portal-shell .financial-panel .partner-financial-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.partner-financial-grid .metric strong { overflow-wrap: anywhere; }
+.partner-financial-grid .negative strong { color: #f4a0a8; }
+@media (max-width: 600px) { .portal-shell .financial-panel .partner-financial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

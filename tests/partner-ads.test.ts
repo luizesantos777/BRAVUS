@@ -21,7 +21,7 @@ const receipt = { name: 'ads.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANS
 const before = (days: number) => { const date = new Date(businessToday() + 'T12:00:00Z'); date.setUTCDate(date.getUTCDate() - days); return date.toISOString().slice(0, 10); };
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-ads-')), store = await PortalStore.open(join(directory, 'portal.sqlite'));
-  const account = await store.createAttendant('Parceiro com ADS próprio', 5000, token);
+  const account = await store.createPartner('Parceiro com ADS próprio', token);
   const ordinary = await store.createAttendant('Atendente comum', 5000, ordinaryToken);
   const partner = await store.createPartner('Parceiro nativo', partnerToken), checkoutId = exclusiveCheckoutId(account.id);
   await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(checkoutId, 'Gateway exclusivo', 1200, 0, 1, 300000);
@@ -45,16 +45,16 @@ test('ADS próprio altera lucro e ROI; saldo, custos administrativos e taxas de 
   assert.equal(data.finance.availableCents, balanceBefore); assert.equal(data.marketing.roiPercent, -100); assert.equal(data.marketing.totalAdsCents, 3500); assert.equal(data.marketing.earningsCents, 0);
   await store.reviewSale(data.sales[0].id, { status: 'approved', note: '' });
   data = await portal();
-  assert.equal(data.finance.availableCents, 3200); assert.equal(data.finance.adsCents, 1000);
-  assert.equal(data.marketing.earningsCents, 4400); assert.equal(data.marketing.profitCents, 900); assert.equal(data.marketing.roiPercent, 900 / 3500 * 100);
+  assert.equal(data.finance.availableCents, 7600); assert.equal(data.finance.adsCents, 1000);
+  assert.equal(data.marketing.earningsCents, 8800); assert.equal(data.marketing.profitCents, 5300); assert.equal(data.marketing.roiPercent, 5300 / 3500 * 100);
   assert.deepEqual(await (await call('/api/partner/ads?date=' + businessToday())).json(), { date: businessToday(), adsCents: 2500 });
   assert.equal((await save('15')).status, 200); data = await portal();
-  assert.equal(data.finance.availableCents, 3200); assert.equal(data.marketing.roiPercent, 76); assert.equal(data.marketing.history.length, 1);
+  assert.equal(data.finance.availableCents, 7600); assert.equal(data.marketing.roiPercent, 252); assert.equal(data.marketing.history.length, 1);
   await Promise.all([store.setCosts(account.id, businessToday(), 2000, 300), store.savePartnerAds({ id: account.id }, { date: businessToday(), ads: '20' })]);
   assert.deepEqual({ ...await store.adminCosts(account.id, businessToday()) }, { date: businessToday(), adsCents: 2000, withdrawalFeeCents: 300 });
-  data = await portal(); assert.equal(data.marketing.ownAdsCents, 2000); assert.equal(data.finance.availableCents, 2100);
+  data = await portal(); assert.equal(data.marketing.ownAdsCents, 2000); assert.equal(data.finance.availableCents, 6500);
   assert.equal((await save('0')).status, 200); data = await portal();
-  assert.equal(data.marketing.ownAdsCents, 0); assert.equal(data.marketing.roiPercent, 120); assert.equal(data.finance.availableCents, 2100);
+  assert.equal(data.marketing.ownAdsCents, 0); assert.equal(data.marketing.roiPercent, 340); assert.equal(data.finance.availableCents, 6500);
 });
 
 test('somente parceiros editam seu próprio ADS, sem alterar outras contas, taxas ou permissões administrativas', async t => {

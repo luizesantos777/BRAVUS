@@ -9,7 +9,7 @@ export default function AdminBalances({ attendants, selected, select }: { attend
     <p className="section-description">O faturamento inclui vendas aprovadas. O saldo desconta a parte do atendente nas taxas, ADS, ajustes e repasses já pagos. Os pagamentos são registrados manualmente pela administração.</p>
     <div className="attendant-balances">{shown.map(item => <article className="attendant-balance" key={item.id}>
       <header><h3>{item.name}</h3><span className={`payout-badge ${item.active ? 'paid' : 'cancelled'}`}>{item.active ? 'Ativo' : 'Acesso revogado'}</span></header>
-      {item.accountKind === 'partner' && <p className="checkout-tariff">Parceiro · Taxa nas vendas: 10% · Líquido após a taxa: 90%</p>}
+      {item.accountKind === 'partner' && <p className="checkout-tariff">Parceiro · Recebe o valor das vendas após as taxas registradas em cada lançamento.</p>}
       <dl>
         <div><dt>Faturamento aprovado</dt><dd>{money(item.finance.grossCents)}</dd><small>{item.finance.count} venda(s) aprovada(s)</small></div>
         <div><dt>Comissão após taxas das vendas</dt><dd>{money(item.finance.commissionCents)}</dd></div>

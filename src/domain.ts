@@ -70,11 +70,11 @@ export function validateAvatar(value: string): string {
 }
 export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(cents / 100);
 export function splitGatewayFee(feeCents: number): number { return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5000) / 10000); }
-/** Partners retain the gross amount less their full, fixed 10% gateway fee. */
+/** Partners bear the gateway fee in full and retain the remaining gross amount. */
 export function allocatedSaleFee(feeCents: number, accountKind?: AccountKind): number { return accountKind === 'partner' ? feeCents : splitGatewayFee(feeCents); }
 /** Preserve checkout limits and identities; never change the shared gateway tariffs. */
 export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind): Checkout[] {
-  return accountKind === 'partner' ? checkouts.map(checkout => ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
+  return accountKind === 'partner' ? checkouts.map(checkout => checkout.id.startsWith('exclusive_') ? checkout : ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
 }
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }
 /** Every sale keeps its own formula and allocated fee; missing allocations preserve historical full-fee records. */

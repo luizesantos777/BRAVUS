@@ -232,7 +232,7 @@ function allocatedSaleFee(feeCents, accountKind) {
   return accountKind === "partner" ? feeCents : splitGatewayFee(feeCents);
 }
 function accountCheckouts(checkouts, accountKind) {
-  return accountKind === "partner" ? checkouts.map((checkout) => ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
+  return accountKind === "partner" ? checkouts.map((checkout) => checkout.id.startsWith("exclusive_") ? checkout : { ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null }) : checkouts;
 }
 function attendantSaleFee(sale) {
   return sale.attendantFeeCents ?? sale.feeCents;
@@ -403,6 +403,7 @@ var PARTNER_GATEWAY_SEED = {
   migration: "exclusive-partner-gateway-2026-11-06-v1",
   limitMigration: "exclusive-partner-limit-3000-2026-11-06-v1",
   feeMigration: "exclusive-partner-fee-12-2026-11-06-v1",
+  settlementMigration: "exclusive-partner-net-88-2026-11-06-v1",
   tokenHash: "81671f382c4f28195f09eedf618fe21032d0b0237cee3a2d378b94b922a78551",
   feeBps: 1200,
   fixedFeeCents: 0,
@@ -559,6 +560,14 @@ var PortalStore = class _PortalStore {
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
         await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("attendant-gross-share-50-v1");
+      }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(PARTNER_GATEWAY_SEED.settlementMigration)) {
+        const partner = await store.sql.prepare("SELECT a.id, a.name, a.account_kind, a.commission_bps FROM attendants a JOIN checkouts c ON c.id = 'exclusive_' || a.id WHERE a.token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (partner) {
+          await store.sql.prepare("UPDATE attendants SET account_kind = 'partner', commission_bps = 10000 WHERE id = ?").run(String(partner.id));
+          await store.audit(systemActor, "attendant.rule_updated", String(partner.id), String(partner.name), { accountKind: String(partner.account_kind), commissionBps: Number(partner.commission_bps) }, { accountKind: "partner", commissionBps: 1e4 });
+          await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.settlementMigration);
+        }
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("payout-fee-on-payment-v1")) {
         await store.sql.exec("UPDATE payouts SET withdrawal_fee_cents = 0 WHERE status IN ('pending','cancelled')");
@@ -1028,7 +1037,8 @@ var auditActions = {
   "payout.cancelled": "Repasse cancelado",
   "attendant.created": "Atendente cadastrado",
   "attendant.access_changed": "Acesso alterado",
-  "attendant.token_rotated": "Token renovado"
+  "attendant.token_rotated": "Token renovado",
+  "attendant.rule_updated": "Regra financeira da conta alterada"
 };
 function validateDateRange(start, end) {
   if (!validDate(start) || !validDate(end) || start > end || end > businessToday()) throw new Error("Informe um per\xEDodo v\xE1lido, com in\xEDcio at\xE9 o fim e sem datas futuras.");

@@ -140,6 +140,14 @@ export class PortalStore {
         (await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('attendant-gross-share-50-v1'));
       }
+      if (!await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(PARTNER_GATEWAY_SEED.settlementMigration)) {
+        const partner = await store.sql.prepare("SELECT a.id, a.name, a.account_kind, a.commission_bps FROM attendants a JOIN checkouts c ON c.id = 'exclusive_' || a.id WHERE a.token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (partner) {
+          await store.sql.prepare("UPDATE attendants SET account_kind = 'partner', commission_bps = 10000 WHERE id = ?").run(String(partner.id));
+          await store.audit(systemActor, 'attendant.rule_updated', String(partner.id), String(partner.name), { accountKind: String(partner.account_kind), commissionBps: Number(partner.commission_bps) }, { accountKind: 'partner', commissionBps: 10000 });
+          await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(PARTNER_GATEWAY_SEED.settlementMigration);
+        }
+      }
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('payout-fee-on-payment-v1'))) {
         (await store.sql.exec("UPDATE payouts SET withdrawal_fee_cents = 0 WHERE status IN ('pending','cancelled')"));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('payout-fee-on-payment-v1'));

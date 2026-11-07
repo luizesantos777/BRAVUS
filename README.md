@@ -177,6 +177,10 @@ A configuração solicitada em 06/11/2026 identifica o parceiro pelo hash do tok
 
 Esse acesso apresenta **Portal do Parceiro** e **Acompanhe suas vendas e pagamentos.** no cabeçalho, inclusive quando o cadastro original ainda é do tipo atendente. A apresentação não converte o tipo financeiro da conta nem altera sua comissão ou a divisão de taxas.
 
+Na aba **ADS e ROI**, o parceiro informa e edita o total de anúncios pago por ele em cada dia. Esse valor é guardado separadamente em `costs.partner_ads_cents` e **não é descontado do saldo de repasse**. Salvar substitui o total próprio da data; informar zero limpa esse gasto. O parceiro não pode alterar os ADS ou ajustes registrados pela administração, nem ler ou editar os custos de outra conta. Atendentes comuns não têm acesso a essa função. Os endpoints autenticados `GET /api/partner/ads?date=...` e `POST /api/partner/ads` usam sempre a conta do token; alterações geram auditoria com o ator do parceiro.
+
+O ROI considera a participação real do parceiro nas **vendas aprovadas após as taxas**, menos os ADS próprios e os ADS cobrados pela administração no mesmo período: **ROI = (valor após taxas − ADS total) / ADS total × 100**. Não usa o faturamento bruto como se fosse lucro, nem desconta repasses e ajustes nesse indicador. Sem investimento em ADS, mostra “—”; um investimento sem vendas aprovadas mostra −100%. O seletor do extrato controla também o período do ROI. O histórico exibe até 100 dias, mas os totais usam todos os registros. Os backups incluem o novo campo; arquivos anteriores restauram ADS próprio com zero, preservando a contabilidade existente.
+
 Rascunhos ainda não enviados passam a selecionar o gateway permitido preservando os campos e prints. Uma tentativa já enviada e aguardando confirmação conserva o conteúdo e o identificador originais até a resposta do servidor, para confirmar um recebimento anterior sem criar outra venda.
 
 ### Rascunhos de vendas e comprovantes repetidos

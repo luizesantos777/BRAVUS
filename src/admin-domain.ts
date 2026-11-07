@@ -4,7 +4,7 @@ import type { AdminAttendant, AdminCost, AdminPayout, AdminSale } from './domain
 export const auditActions = {
   'sale.approved': 'Venda aprovada', 'sale.rejected': 'Venda recusada',
   'sale.cancelled': 'Aprovação da venda cancelada',
-  'sales.submitted': 'Vendas lançadas', 'costs.updated': 'Custos alterados',
+  'sales.submitted': 'Vendas lançadas', 'costs.updated': 'Custos alterados', 'partner.ads_updated': 'ADS próprio do parceiro alterado',
   'checkout.updated': 'Taxas alteradas', 'payout.paid': 'Repasse confirmado',
   'payout.cancelled': 'Repasse cancelado', 'attendant.created': 'Atendente cadastrado',
   'attendant.access_changed': 'Acesso alterado', 'attendant.token_rotated': 'Token renovado',

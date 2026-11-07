@@ -1,6 +1,6 @@
 import { readDemoData, writeDemoData } from './demo-store.ts';
 import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
-import type { DemoData, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
+import type { DemoData, PartnerAdsCost, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
 export function currentToken() {
@@ -86,6 +86,8 @@ export class PortalClient {
     const fields = validateProfile(input), profile = { ...this.demo.profile, ...fields };
     this.persist({ ...this.demo, profile }); return profile;
   }
+  partnerAds(date: string) { return this.request<PartnerAdsCost>(`/partner/ads?date=${encodeURIComponent(date)}`); }
+  savePartnerAds(date: string, ads: string) { return this.request<PartnerAdsCost>('/partner/ads', { method: 'POST', body: JSON.stringify({ date, ads }) }); }
   async ranking(period: Period): Promise<RankingEntry[]> {
     this.reloadDemo();
     if (!this.isDemo) return this.request(`/ranking?period=${period}`);

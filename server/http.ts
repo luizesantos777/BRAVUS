@@ -150,6 +150,8 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         }
         else if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, { ...(await store.portal(auth, period)), maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
         else if (url.pathname === '/api/profile' && request.method === 'PATCH') json(response, 200, (await store.saveProfile(auth, await readJson(request, options.bodyLimit))));
+        else if (url.pathname === '/api/partner/ads' && request.method === 'GET') json(response, 200, await store.partnerAds(auth, url.searchParams.get('date') ?? ''));
+        else if (url.pathname === '/api/partner/ads' && request.method === 'POST') json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === '/api/sales' && request.method === 'POST') {
           const batch = await readJson(request, options.bodyLimit), result = (await store.recordSales(auth, batch, String(request.headers['idempotency-key'] ?? '')));
           if (!result.duplicate && options.push) await Promise.allSettled([

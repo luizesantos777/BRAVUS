@@ -320,6 +320,12 @@ function calculateFinance(sales, costs, payouts, period, today) {
   const paidPayoutNetCents = payouts.filter((payout) => payout.status === "paid").reduce((sum, payout) => sum + payoutNet(payout), 0);
   return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, gatewayFeeCents, businessGatewayFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
 }
+function calculateMarketing(finance, ownCosts, period, today) {
+  const history = ownCosts.filter((cost) => inPeriod(cost.date, period, today));
+  const ownAdsCents = history.reduce((sum, cost) => sum + cost.adsCents, 0), totalAdsCents = finance.adsCents + ownAdsCents;
+  const profitCents = finance.commissionCents - totalAdsCents;
+  return { earningsCents: finance.commissionCents, chargedAdsCents: finance.adsCents, ownAdsCents, totalAdsCents, profitCents, roiPercent: totalAdsCents > 0 ? profitCents / totalAdsCents * 100 : null, history: history.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100) };
+}
 function validateSaleReview(input) {
   if (!input || typeof input !== "object") throw new Error("Informe a decis\xE3o sobre a venda.");
   const data = input;
@@ -473,6 +479,8 @@ var PortalStore = class _PortalStore {
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `);
       await store.sql.exec(controlsSchema);
+      const costColumns = new Set((await store.sql.prepare("PRAGMA table_info(costs)").all()).map((column) => column.name));
+      if (!costColumns.has("partner_ads_cents")) await store.sql.exec("ALTER TABLE costs ADD COLUMN partner_ads_cents INTEGER NOT NULL DEFAULT 0 CHECK(partner_ads_cents BETWEEN 0 AND 100000000)");
       const saleColumns = new Set((await store.sql.prepare("PRAGMA table_info(sales)").all()).map((column) => column.name));
       if (!saleColumns.has("status")) await store.sql.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected'))");
       if (!saleColumns.has("review_note")) await store.sql.exec("ALTER TABLE sales ADD COLUMN review_note TEXT NOT NULL DEFAULT ''");
@@ -809,7 +817,40 @@ var PortalStore = class _PortalStore {
   }
   async portal(auth, period = "today") {
     const profile = await this.profile(auth), sales = await this.sales(auth), costs = await this.costs(auth), payouts = await this.payouts(auth), today = businessToday();
-    return { profile, checkouts: accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
+    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today);
+    const partner = profile.accountKind === "partner" || checkouts.some((checkout) => checkout.id === exclusiveCheckoutId(auth.id));
+    const ownAds = partner ? (await this.sql.prepare("SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND partner_ads_cents > 0").all(auth.id)).map((row) => ({ date: String(row.date), adsCents: Number(row.adsCents) })) : [];
+    return { profile, checkouts, sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance, ...partner ? { marketing: calculateMarketing(finance, ownAds, period, today) } : {}, today };
+  }
+  async requirePartner(auth) {
+    const profile = await this.profile(auth);
+    if (profile.accountKind !== "partner" && !await this.sql.prepare("SELECT id FROM checkouts WHERE id = ?").get(exclusiveCheckoutId(auth.id))) throw new PortalError(403, "O lan\xE7amento de ADS pr\xF3prio est\xE1 dispon\xEDvel apenas no portal do parceiro.");
+    return profile;
+  }
+  async partnerAds(auth, date) {
+    await this.requirePartner(auth);
+    if (!validDate(date) || date > businessToday()) invalid("Informe uma data v\xE1lida, at\xE9 hoje.");
+    const row = await this.sql.prepare("SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND date = ?").get(auth.id, date);
+    return { date, adsCents: row ? Number(row.adsCents) : 0 };
+  }
+  async savePartnerAds(auth, input) {
+    const data = this.adminFields(input);
+    await this.requirePartner(auth);
+    if (Object.keys(data).some((key) => key !== "date" && key !== "ads") || typeof data.date !== "string" || !validDate(data.date) || data.date > businessToday() || typeof data.ads !== "string") invalid("Informe somente a data e o total de ADS pago por voc\xEA.");
+    let adsCents;
+    try {
+      adsCents = /^0+(?:[.,]0{1,2})?$/.test(data.ads.trim()) ? 0 : amountToCents(data.ads);
+    } catch (error) {
+      return invalid(error.message);
+    }
+    if (adsCents > 1e8) invalid("O custo de ADS deve ser de at\xE9 R$ 1.000.000,00 por dia.");
+    const date = data.date;
+    return this.withTransaction(async (store) => {
+      const profile = await store.requirePartner(auth), before = await store.partnerAds(auth, date);
+      await store.sql.prepare("INSERT INTO costs (attendant_id, date, ads_cents, withdrawal_fee_cents, partner_ads_cents) VALUES (?, ?, 0, 0, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET partner_ads_cents = excluded.partner_ads_cents").run(auth.id, date, adsCents);
+      await store.audit({ id: auth.id, name: profile.name }, "partner.ads_updated", auth.id, profile.name, { date, partnerAdsCents: before.adsCents }, { date, partnerAdsCents: adsCents });
+      return { date, adsCents };
+    });
   }
   async saveProfile(auth, input) {
     let fields;
@@ -922,7 +963,7 @@ var PortalStore = class _PortalStore {
       const attendant = await store.sql.prepare("SELECT name FROM attendants WHERE id = ?").get(attendantId);
       if (!attendant) throw new PortalError(404, "Atendente n\xE3o encontrado.");
       const before = await store.adminCosts(attendantId, date);
-      await store.sql.prepare("INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents").run(attendantId, date, adsCents, withdrawalFeeCents);
+      await store.sql.prepare("INSERT INTO costs (attendant_id, date, ads_cents, withdrawal_fee_cents) VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents").run(attendantId, date, adsCents, withdrawalFeeCents);
       await store.audit(actor, "costs.updated", attendantId, String(attendant.name), { date, adsCents: before.adsCents, withdrawalFeeCents: before.withdrawalFeeCents }, { date, adsCents, withdrawalFeeCents });
     });
   }
@@ -981,6 +1022,7 @@ var auditActions = {
   "sale.cancelled": "Aprova\xE7\xE3o da venda cancelada",
   "sales.submitted": "Vendas lan\xE7adas",
   "costs.updated": "Custos alterados",
+  "partner.ads_updated": "ADS pr\xF3prio do parceiro alterado",
   "checkout.updated": "Taxas alteradas",
   "payout.paid": "Repasse confirmado",
   "payout.cancelled": "Repasse cancelado",
@@ -1264,6 +1306,8 @@ function createPortalHandler(store, options = {}) {
           else throw new PortalError(404, "Recurso n\xE3o encontrado.");
         } else if (url.pathname === "/api/portal" && request.method === "GET") json(response, 200, { ...await store.portal(auth, period), maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
         else if (url.pathname === "/api/profile" && request.method === "PATCH") json(response, 200, await store.saveProfile(auth, await readJson(request, options.bodyLimit)));
+        else if (url.pathname === "/api/partner/ads" && request.method === "GET") json(response, 200, await store.partnerAds(auth, url.searchParams.get("date") ?? ""));
+        else if (url.pathname === "/api/partner/ads" && request.method === "POST") json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === "/api/sales" && request.method === "POST") {
           const batch = await readJson(request, options.bodyLimit), result = await store.recordSales(auth, batch, String(request.headers["idempotency-key"] ?? ""));
           if (!result.duplicate && options.push) await Promise.allSettled([
@@ -1509,7 +1553,8 @@ async function importArchive(db, archive) {
     for (const name of TABLES) {
       const table = archive.tables.find((item) => item.name === name);
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
-      const required = name === "attendants" && Array.isArray(table.columns) && !table.columns.includes("account_kind") ? expected.filter((column) => column !== "account_kind") : expected;
+      const optional = name === "attendants" ? "account_kind" : name === "costs" ? "partner_ads_cents" : void 0;
+      const required = optional && Array.isArray(table.columns) && !table.columns.includes(optional) ? expected.filter((column) => column !== optional) : expected;
       if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some((column) => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map((column) => '"' + column + '"').join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
       for (const row of table.rows) {

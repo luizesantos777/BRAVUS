@@ -2,8 +2,8 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { accountCheckouts, allocatedSaleFee, amountToCents, businessToday, calculateFinance, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
-import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
+import { accountCheckouts, allocatedSaleFee, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, PartnerAdsCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
 import { exclusiveCheckoutId, isExclusiveCheckout, PARTNER_GATEWAY_SEED } from './partner-checkouts.ts';
@@ -59,6 +59,8 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS payouts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), status TEXT NOT NULL CHECK(status IN ('pending','paid','cancelled')), requested_at TEXT NOT NULL, paid_at TEXT, note TEXT NOT NULL, pix_type TEXT NOT NULL, pix_key TEXT NOT NULL, pix_owner TEXT NOT NULL);
     `));
       await store.sql.exec(controlsSchema);
+      const costColumns = new Set((await store.sql.prepare('PRAGMA table_info(costs)').all()).map(column => column.name));
+      if (!costColumns.has('partner_ads_cents')) await store.sql.exec('ALTER TABLE costs ADD COLUMN partner_ads_cents INTEGER NOT NULL DEFAULT 0 CHECK(partner_ads_cents BETWEEN 0 AND 100000000)');
       const saleColumns = new Set((await store.sql.prepare('PRAGMA table_info(sales)').all()).map(column => column.name));
       if (!saleColumns.has('status')) (await store.sql.exec("ALTER TABLE sales ADD COLUMN status TEXT NOT NULL DEFAULT 'approved' CHECK(status IN ('pending','approved','rejected'))"));
       if (!saleColumns.has('review_note')) (await store.sql.exec("ALTER TABLE sales ADD COLUMN review_note TEXT NOT NULL DEFAULT ''"));
@@ -371,7 +373,37 @@ export class PortalStore {
   async payouts(auth: Authenticated): Promise<Payout[]> { return (await this.sql.prepare('SELECT id, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id)) as unknown as Payout[]; }
   async portal(auth: Authenticated, period: Period = 'today'): Promise<Portal> {
     const profile = (await this.profile(auth)), sales = (await this.sales(auth)), costs = (await this.costs(auth)), payouts = (await this.payouts(auth)), today = businessToday();
-    return { profile, checkouts: accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance: calculateFinance(sales, costs, payouts, period, today), today };
+    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today);
+    const partner = profile.accountKind === 'partner' || checkouts.some(checkout => checkout.id === exclusiveCheckoutId(auth.id));
+    const ownAds = partner ? (await this.sql.prepare('SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND partner_ads_cents > 0').all(auth.id)).map(row => ({ date: String(row.date), adsCents: Number(row.adsCents) })) : [];
+    return { profile, checkouts, sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance, ...(partner ? { marketing: calculateMarketing(finance, ownAds, period, today) } : {}), today };
+  }
+  private async requirePartner(auth: Authenticated): Promise<Profile> {
+    const profile = await this.profile(auth);
+    if (profile.accountKind !== 'partner' && !await this.sql.prepare('SELECT id FROM checkouts WHERE id = ?').get(exclusiveCheckoutId(auth.id))) throw new PortalError(403, 'O lançamento de ADS próprio está disponível apenas no portal do parceiro.');
+    return profile;
+  }
+  async partnerAds(auth: Authenticated, date: string): Promise<PartnerAdsCost> {
+    await this.requirePartner(auth);
+    if (!validDate(date) || date > businessToday()) invalid('Informe uma data válida, até hoje.');
+    const row = await this.sql.prepare('SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND date = ?').get(auth.id, date);
+    return { date, adsCents: row ? Number(row.adsCents) : 0 };
+  }
+  async savePartnerAds(auth: Authenticated, input: unknown): Promise<PartnerAdsCost> {
+    const data = this.adminFields(input);
+    await this.requirePartner(auth);
+    if (Object.keys(data).some(key => key !== 'date' && key !== 'ads') || typeof data.date !== 'string' || !validDate(data.date) || data.date > businessToday() || typeof data.ads !== 'string') invalid('Informe somente a data e o total de ADS pago por você.');
+    let adsCents: number;
+    try { adsCents = /^0+(?:[.,]0{1,2})?$/.test((data.ads as string).trim()) ? 0 : amountToCents(data.ads as string); }
+    catch (error) { return invalid((error as Error).message); }
+    if (adsCents > 100000000) invalid('O custo de ADS deve ser de até R$ 1.000.000,00 por dia.');
+    const date = data.date as string;
+    return this.withTransaction(async store => {
+      const profile = await store.requirePartner(auth), before = await store.partnerAds(auth, date);
+      await store.sql.prepare('INSERT INTO costs (attendant_id, date, ads_cents, withdrawal_fee_cents, partner_ads_cents) VALUES (?, ?, 0, 0, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET partner_ads_cents = excluded.partner_ads_cents').run(auth.id, date, adsCents);
+      await store.audit({ id: auth.id, name: profile.name }, 'partner.ads_updated', auth.id, profile.name, { date, partnerAdsCents: before.adsCents }, { date, partnerAdsCents: adsCents });
+      return { date, adsCents };
+    });
   }
   async saveProfile(auth: Authenticated, input: unknown): Promise<Profile> {
     let fields: ReturnType<typeof validateProfile>;
@@ -464,7 +496,7 @@ export class PortalStore {
     const attendant = await store.sql.prepare('SELECT name FROM attendants WHERE id = ?').get(attendantId);
     if (!attendant) throw new PortalError(404, 'Atendente não encontrado.');
     const before = await store.adminCosts(attendantId, date);
-    (await store.sql.prepare('INSERT INTO costs VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents').run(attendantId, date, adsCents, withdrawalFeeCents));
+    (await store.sql.prepare('INSERT INTO costs (attendant_id, date, ads_cents, withdrawal_fee_cents) VALUES (?, ?, ?, ?) ON CONFLICT(attendant_id,date) DO UPDATE SET ads_cents=excluded.ads_cents, withdrawal_fee_cents=excluded.withdrawal_fee_cents').run(attendantId, date, adsCents, withdrawalFeeCents));
     await store.audit(actor, 'costs.updated', attendantId, String(attendant.name), { date, adsCents: before.adsCents, withdrawalFeeCents: before.withdrawalFeeCents }, { date, adsCents, withdrawalFeeCents });
     });
   }

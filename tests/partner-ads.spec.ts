@@ -1,0 +1,40 @@
+import { expect, test } from '@playwright/test';
+
+const owner = 'fixture_browser_admin_012345678901234567890123456789';
+const receipt = { name: 'ads.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
+
+test('parceiro salva ADS, acompanha ROI de vendas aprovadas e conserva o saldo de repasse', async ({ page }, info) => {
+  const token = `fixture_${info.project.name}_exclusive_ads_01234567890123456789`, headers = { Authorization: `Bearer ${token}` };
+  const initial = await (await page.request.get('/api/portal', { headers })).json(), errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`/#/atendente/${token}`);
+  await page.getByRole('tab', { name: 'ADS e ROI', exact: true }).click();
+  const ads = page.getByLabel('Meu custo de ADS (R$)', { exact: true }), roi = page.getByLabel('ROI do parceiro', { exact: true });
+  await expect(ads).toHaveValue('0.00'); await expect(roi).toContainText('—');
+  await ads.fill('50'); await page.getByRole('button', { name: 'Salvar meu ADS', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Custo de ADS salvo'); await expect(roi).toContainText('-100%');
+  await expect(page.locator('.metric.balance')).toContainText('0,00');
+  await page.reload(); await page.getByRole('tab', { name: 'ADS e ROI', exact: true }).click();
+  await expect(ads).toHaveValue('50.00');
+  const payload = { date: initial.today, sales: [{ amount: '500', checkoutId: initial.checkouts[0].id, time: '12:00', note: '', receipt }] };
+  const submitted = await page.request.post('/api/sales', { headers: { ...headers, 'Idempotency-Key': `fixture_ads_browser_${info.project.name}` }, data: payload }); expect(submitted.status()).toBe(200);
+  await page.getByRole('button', { name: 'Atualizar ADS e ROI', exact: true }).click(); await expect(ads).toBeEnabled();
+  await expect(roi).toContainText('-100%');
+  const pending = await (await page.request.get('/api/portal', { headers })).json();
+  const approved = await page.request.patch(`/api/admin/sales/${pending.sales[0].id}`, { headers: { Authorization: `Bearer ${owner}` }, data: { status: 'approved', note: 'Conferida' } }); expect(approved.status()).toBe(200);
+  await page.getByRole('button', { name: 'Atualizar ADS e ROI', exact: true }).click();
+  await expect(roi).toContainText('340%'); await expect(page.getByLabel('Resultado após ADS', { exact: true })).toContainText('170,00');
+  await expect(page.locator('.metric.balance')).toContainText('220,00');
+  await expect(ads).toBeEnabled(); await ads.fill('100'); await page.getByRole('button', { name: 'Salvar meu ADS', exact: true }).click();
+  await expect(roi).toContainText('120%'); await expect(page.locator('.metric.balance')).toContainText('220,00');
+  const result = await (await page.request.get('/api/portal', { headers })).json(); expect(result.finance.availableCents).toBe(22000); expect(result.finance.adsCents).toBe(0); expect(result.marketing.ownAdsCents).toBe(10000);
+  await page.getByLabel('Período do extrato', { exact: true }).selectOption('yesterday'); await expect(roi).toContainText('—');
+  await expect(page.locator('.partner-ads-history')).toContainText('Nenhum custo próprio');
+  await page.getByLabel('Período do extrato', { exact: true }).selectOption('today'); await expect(roi).toContainText('120%');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: info.outputPath('parceiro-ads-roi.png'), fullPage: true });
+  await page.goto(`/#/atendente/fixture_${info.project.name}_primary_01234567890123456789`);
+  await expect(page.getByRole('heading', { name: 'Portal do Atendente.', exact: true })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'ADS e ROI', exact: true })).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

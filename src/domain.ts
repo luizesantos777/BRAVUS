@@ -17,12 +17,14 @@ export interface AdminSale extends Sale { attendantId: string; attendantName: st
 export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
 export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
+export interface PartnerAdsCost { date: string; adsCents: number }
+export interface MarketingReport { earningsCents: number; chargedAdsCents: number; ownAdsCents: number; totalAdsCents: number; profitCents: number; roiPercent: number | null; history: PartnerAdsCost[] }
 export interface Payout { id: string; amountCents: number; withdrawalFeeCents?: number; gatewayFeeCents?: number; status: PayoutStatus; requestedAt: string; paidAt: string | null; note: string }
 export interface ReceiptInput { name: string; mime: string; base64: string }
 export interface SaleInput { amount: string; checkoutId: string; time: string; note: string; receipt: ReceiptInput | null }
 export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
-export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; today: string }
+export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; marketing?: MarketingReport; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
 export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; accountKind?: AccountKind; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
@@ -170,6 +172,12 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   const businessShareCents = filtered.reduce((sum, sale) => sum + sale.amountCents - sale.feeCents - saleEarnings(sale), 0);
   const paidPayoutNetCents = payouts.filter(payout => payout.status === 'paid').reduce((sum, payout) => sum + payoutNet(payout), 0);
   return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, gatewayFeeCents, businessGatewayFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
+}
+export function calculateMarketing(finance: Finance, ownCosts: PartnerAdsCost[], period: Period, today: string): MarketingReport {
+  const history = ownCosts.filter(cost => inPeriod(cost.date, period, today));
+  const ownAdsCents = history.reduce((sum, cost) => sum + cost.adsCents, 0), totalAdsCents = finance.adsCents + ownAdsCents;
+  const profitCents = finance.commissionCents - totalAdsCents;
+  return { earningsCents: finance.commissionCents, chargedAdsCents: finance.adsCents, ownAdsCents, totalAdsCents, profitCents, roiPercent: totalAdsCents > 0 ? profitCents / totalAdsCents * 100 : null, history: history.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100) };
 }
 export function validateSaleReview(input: unknown): { status: 'approved' | 'rejected'; note: string } {
   if (!input || typeof input !== 'object') throw new Error('Informe a decisão sobre a venda.');

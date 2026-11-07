@@ -10,7 +10,7 @@ import { exclusiveCheckoutId } from '../server/partner-checkouts.ts';
 const directory = mkdtempSync(join(tmpdir(), 'bravus-browser-'));
 const store = await PortalStore.open(join(directory, 'portal.sqlite'));
 for (const platform of ['desktop', 'mobile']) {
-  for (const scenario of ['exclusive', 'exclusive_resume']) {
+  for (const scenario of ['exclusive', 'exclusive_resume', 'exclusive_ads']) {
     const partner = await store.createAttendant(`Parceiro ${scenario} ${platform}`, 5000, `fixture_${platform}_${scenario}_01234567890123456789`);
     await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(exclusiveCheckoutId(partner.id), 'Gateway exclusivo', 1200, 0, 1, 300000);
   }

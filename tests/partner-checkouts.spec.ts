@@ -15,7 +15,7 @@ async function changeStoredCheckout(page: Page, pending: boolean) {
     };
   }), pending);
 }
-test('parceiro vê um único gateway de 10%, recupera rascunho e os outros vendedores conservam suas opções', async ({ page }, info) => {
+test('parceiro vê um único gateway de 12%, recupera rascunho e os outros vendedores conservam suas opções', async ({ page }, info) => {
   const token = `fixture_${info.project.name}_exclusive_01234567890123456789`, headers = { Authorization: `Bearer ${token}` };
   const portal = await (await page.request.get('/api/portal', { headers })).json(), id = portal.checkouts[0].id;
   await page.goto(`/#/atendente/${token}`);
@@ -24,7 +24,7 @@ test('parceiro vê um único gateway de 10%, recupera rascunho e os outros vende
   await expect(page).toHaveTitle('Lucro Certo — Portal do Parceiro BRAVUS');
   const select = page.getByLabel('Checkout venda 1', { exact: true });
   await expect(select).toHaveValue(id); await expect(select.locator('option:not([disabled])')).toHaveCount(1);
-  await expect(page.locator('.checkout-tariff')).toContainText('10,00%'); await expect(page.locator('.checkout-tariff')).toContainText('0,00');
+  await expect(page.locator('.checkout-tariff')).toContainText('12,00%'); await expect(page.locator('.checkout-tariff')).toContainText('0,00');
   await expect(page.locator('.checkout-tariff')).toContainText('3.000,00');
   await expect(page.locator('.manual-pix-card')).toHaveCount(0);
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('3000,01');
@@ -35,10 +35,10 @@ test('parceiro vê um único gateway de 10%, recupera rascunho e os outros vende
   await changeStoredCheckout(page, false); await page.reload();
   await expect(select).toHaveValue(id); await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toHaveValue('3000');
   await expect(page.getByRole('button', { name: 'parceiro.png', exact: true })).toBeVisible();
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('300,00'); await expect(page.getByLabel('Taxas da venda 1')).toContainText('1.350,00');
+  await expect(page.getByLabel('Taxas da venda 1')).toContainText('360,00'); await expect(page.getByLabel('Taxas da venda 1')).toContainText('1.320,00');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
   const result = await (await page.request.get('/api/portal?period=all', { headers })).json();
-  expect(result.sales).toHaveLength(1); expect(result.sales[0].checkoutId).toBe(id); expect(result.sales[0].feeCents).toBe(30000); expect(result.sales[0].attendantFeeCents).toBe(15000);
+  expect(result.sales).toHaveLength(1); expect(result.sales[0].checkoutId).toBe(id); expect(result.sales[0].feeCents).toBe(36000); expect(result.sales[0].attendantFeeCents).toBe(18000);
   expect(result.profile.accountKind).toBe('attendant'); expect(result.profile.commissionBps).toBe(5000);
   const normal = `fixture_${info.project.name}_primary_01234567890123456789`;
   await page.goto(`/#/atendente/${normal}`);
@@ -66,5 +66,5 @@ test('confirmação de rascunho antigo conserva o envio original e troca o gatew
   expect((await (await page.request.get('/api/portal', { headers })).json()).sales).toHaveLength(0);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
   expect(requests.map(request => request.checkout)).toEqual(['main', id]); expect(requests[1].key).toBe(requests[0].key);
-  const result = await (await page.request.get('/api/portal', { headers })).json(); expect(result.sales).toHaveLength(1); expect(result.sales[0].feeCents).toBe(1000);
+  const result = await (await page.request.get('/api/portal', { headers })).json(); expect(result.sales).toHaveLength(1); expect(result.sales[0].feeCents).toBe(1200);
 });

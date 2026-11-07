@@ -124,6 +124,16 @@ export class PortalStore {
           await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(PARTNER_GATEWAY_SEED.limitMigration);
         }
       }
+      if (!await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(PARTNER_GATEWAY_SEED.feeMigration)) {
+        const checkout = await store.sql.prepare("SELECT c.*, a.name AS attendant_name FROM attendants a JOIN checkouts c ON c.id = 'exclusive_' || a.id WHERE a.token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (checkout) {
+          if (Number(checkout.fee_bps) !== PARTNER_GATEWAY_SEED.feeBps || Number(checkout.fixed_fee_cents) !== 0 || checkout.tier_above_cents != null) {
+            await store.sql.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = 0, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?').run(PARTNER_GATEWAY_SEED.feeBps, String(checkout.id));
+            await store.audit(systemActor, 'checkout.updated', String(checkout.id), 'Gateway exclusivo · ' + String(checkout.attendant_name), { feeBps: Number(checkout.fee_bps), fixedFeeCents: Number(checkout.fixed_fee_cents), aboveAmountCents: checkout.tier_above_cents == null ? null : Number(checkout.tier_above_cents) }, { feeBps: PARTNER_GATEWAY_SEED.feeBps, fixedFeeCents: 0, aboveAmountCents: null });
+          }
+          await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(PARTNER_GATEWAY_SEED.feeMigration);
+        }
+      }
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('attendant-gross-share-50-v1'))) {
         (await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('attendant-gross-share-50-v1'));

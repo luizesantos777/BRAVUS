@@ -396,8 +396,9 @@ var controlsSchema = `
 var PARTNER_GATEWAY_SEED = {
   migration: "exclusive-partner-gateway-2026-11-06-v1",
   limitMigration: "exclusive-partner-limit-3000-2026-11-06-v1",
+  feeMigration: "exclusive-partner-fee-12-2026-11-06-v1",
   tokenHash: "81671f382c4f28195f09eedf618fe21032d0b0237cee3a2d378b94b922a78551",
-  feeBps: 1e3,
+  feeBps: 1200,
   fixedFeeCents: 0,
   maxAmountCents: 3e5
 };
@@ -535,6 +536,16 @@ var PortalStore = class _PortalStore {
             await store.audit(systemActor, "checkout.updated", String(checkout.id), "Gateway exclusivo \xB7 " + String(checkout.name), { maxAmountCents: checkout.max_amount_cents == null ? null : Number(checkout.max_amount_cents) }, { maxAmountCents: PARTNER_GATEWAY_SEED.maxAmountCents });
           }
           await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.limitMigration);
+        }
+      }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(PARTNER_GATEWAY_SEED.feeMigration)) {
+        const checkout = await store.sql.prepare("SELECT c.*, a.name AS attendant_name FROM attendants a JOIN checkouts c ON c.id = 'exclusive_' || a.id WHERE a.token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
+        if (checkout) {
+          if (Number(checkout.fee_bps) !== PARTNER_GATEWAY_SEED.feeBps || Number(checkout.fixed_fee_cents) !== 0 || checkout.tier_above_cents != null) {
+            await store.sql.prepare("UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = 0, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?").run(PARTNER_GATEWAY_SEED.feeBps, String(checkout.id));
+            await store.audit(systemActor, "checkout.updated", String(checkout.id), "Gateway exclusivo \xB7 " + String(checkout.attendant_name), { feeBps: Number(checkout.fee_bps), fixedFeeCents: Number(checkout.fixed_fee_cents), aboveAmountCents: checkout.tier_above_cents == null ? null : Number(checkout.tier_above_cents) }, { feeBps: PARTNER_GATEWAY_SEED.feeBps, fixedFeeCents: 0, aboveAmountCents: null });
+          }
+          await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.feeMigration);
         }
       }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {

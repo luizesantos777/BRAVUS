@@ -41,6 +41,6 @@ test('HTML do parceiro já identifica o acesso enquanto a API carrega, sem expor
     await partnerMetadata(page); await expect(page.getByRole('heading', { name: 'Portal do Parceiro.', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Portal do Atendente.', exact: true })).toHaveCount(0);
     expect(new URL(page.url()).pathname).not.toContain(token);
-    release(); await expect(page.getByLabel('Checkout venda 1', { exact: true })).toBeEnabled(); await partnerMetadata(page);
+    release(); await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toBeEnabled(); await expect(page.getByLabel('Checkout venda 1', { exact: true })).toHaveCount(0); await partnerMetadata(page);
   } finally { release(); }
 });

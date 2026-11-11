@@ -16,7 +16,7 @@
     "build:pages": "npm run build && node scripts/build-pages.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 4173 --strictPort",
     "typecheck": "tsc --noEmit",
-    "test": "npm run build:api && node --test tests/domain.test.ts tests/api.test.ts tests/cloud.test.ts tests/controls.test.ts tests/partners.test.ts tests/partner-ads.test.ts",
+    "test": "npm run build:api && node --test tests/domain.test.ts tests/api.test.ts tests/cloud.test.ts tests/controls.test.ts tests/partners.test.ts tests/partner-ads.test.ts tests/partner-terms.test.ts",
     "test:e2e": "npm run build && playwright test",
     "build:api": "node scripts/build-api.mjs"
   },

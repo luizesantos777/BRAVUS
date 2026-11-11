@@ -9,6 +9,7 @@ export const auditActions = {
   'payout.cancelled': 'Repasse cancelado', 'attendant.created': 'Atendente cadastrado',
   'attendant.access_changed': 'Acesso alterado', 'attendant.token_rotated': 'Token renovado',
   'attendant.rule_updated': 'Regra financeira da conta alterada',
+  'partner.sale_repriced': 'Taxa da venda do parceiro recalculada',
 } as const;
 export type AuditAction = keyof typeof auditActions;
 export type AuditValues = Record<string, string | number | boolean | null>;

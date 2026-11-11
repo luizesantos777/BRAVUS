@@ -166,7 +166,7 @@ test('instâncias libSQL concorrentes inicializam o esquema uma vez sem perder d
     stores.push(...opened);
     const account = await stores[0].adminCreateAttendant({ name: 'Conta persistente', token });
     assert.equal((await stores[1].profile(await stores[1].authenticate(token))).id, account.attendantId);
-    assert.deepEqual((await stores[1].checkouts()).map(checkout => checkout.id).sort(), ['buckpay', 'main', 'pix']);
+    assert.deepEqual((await stores[1].checkouts()).map(checkout => checkout.id).sort(), ['buckpay', 'main', 'partner', 'pix']);
   } finally { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('artefato implantado na Vercel carrega sem TypeScript e sem credenciais no build', () => {

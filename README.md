@@ -1,5 +1,15 @@
 # BRAVUS — Portal do Atendente
 
+## Regra atual dos parceiros — 11/11/2026
+
+- Todas as contas de parceiro usam **12% por venda**, sem taxa fixa. O parceiro recebe o valor bruto menos essa taxa, arredondada em centavos por venda; uma venda de R$ 100 libera R$ 88 após aprovação.
+- A atualização também recalcula **todas as vendas antigas dos parceiros**, preservando comprovantes, valores brutos, datas, checkout original, decisões de aprovação/recusa e cancelamentos. Os saldos, relatórios e ROI passam a usar a regra corrigida. O ADS próprio continua fora do saldo de repasse.
+- O lançamento usa uma gateway automática: o parceiro não escolhe checkout. Rascunhos antigos e pedidos já enviados conservam a chave de idempotência para não duplicar vendas.
+- **Novos repasses de parceiros não cobram taxa de saque**, inclusive registros manuais e quitação de pedidos pendentes antigos. O valor debitado é o valor integral do PIX. Repasses já pagos conservam o que foi realmente transferido e as taxas históricas já cobradas.
+- A migração `partners-twelve-percent-history-2026-11-11-v1` é executada automaticamente na inicialização da API, dentro de uma transação. Cada venda recalculada registra os valores anteriores e posteriores no histórico (`partner.sale_repriced`). Falha reverte dados e auditoria; reabrir a API não repete a atualização. Após restaurar um backup anterior à regra, reinicie a API para aplicar a migração aos registros recuperados.
+- Contas de atendente conservam sua regra de comissão e suas tarifas. Acessos revogados continuam revogados; a atualização não renova tokens nem efetua transferências bancárias.
+
+
 Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
 
 ## Simulação de rastreio em HTML

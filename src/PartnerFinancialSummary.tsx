@@ -1,4 +1,4 @@
-import { ATTENDANT_WITHDRAWAL_FEE_CENTS, checkoutRateLabel, money } from './domain.ts';
+import { checkoutRateLabel, money } from './domain.ts';
 import type { Portal } from './domain.ts';
 
 export default function PartnerFinancialSummary({ portal }: { portal: Portal }) {
@@ -19,7 +19,7 @@ export default function PartnerFinancialSummary({ portal }: { portal: Portal }) 
       <div><dt>Taxas e ajustes no período</dt><dd>− {money(finance.withdrawalFeeCents)}</dd></div>
       <div><dt>PIX já pagos · Todo o histórico</dt><dd>{money(finance.paidPayoutNetCents)}</dd></div>
     </dl>
-    <p className="payout-help">Tarifa atual: <strong>{checkouts[0] ? checkoutRateLabel(checkouts[0]) : 'Consulte o gateway da venda'}</strong>. Nas novas vendas, você recebe o valor bruto menos a taxa do gateway. Os ADS pagos por você entram somente no lucro e no ROI, sem desconto no repasse. Vendas antigas mantêm a regra registrada no lançamento.</p>
-    <p className="payout-help">Sua taxa de saque é <strong>{money(ATTENDANT_WITHDRAWAL_FEE_CENTS)} por repasse pago</strong>, cobrada uma única vez quando a administração registra o pagamento.</p>
+    <p className="payout-help">Tarifa atual: <strong>{checkouts[0] ? checkoutRateLabel(checkouts[0]) : 'Consulte o gateway da venda'}</strong>. Todas as suas vendas, inclusive as antigas, usam a taxa padrão de 12%: você recebe 88% do valor bruto. Os ADS pagos por você entram somente no lucro e no ROI, sem desconto no repasse.</p>
+    <p className="payout-help">Novos repasses são <strong>sem taxa de saque</strong>. O valor registrado é o valor enviado no PIX.</p>
   </>;
 }

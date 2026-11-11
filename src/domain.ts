@@ -34,7 +34,8 @@ export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVers
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;
-export const PARTNER_GATEWAY_FEE_BPS = 1000;
+export const PARTNER_GATEWAY_FEE_BPS = 1200;
+export const PARTNER_CHECKOUT: Checkout = { id: 'partner', name: 'Gateway do parceiro', feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, minAmountCents: 1, maxAmountCents: 300000, higherTier: null };
 export const GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 export const ATTENDANT_GATEWAY_FEE_BPS = 5000;
 export const ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -72,10 +73,13 @@ export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 
 export function splitGatewayFee(feeCents: number): number { return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5000) / 10000); }
 /** Partners bear the gateway fee in full and retain the remaining gross amount. */
 export function allocatedSaleFee(feeCents: number, accountKind?: AccountKind): number { return accountKind === 'partner' ? feeCents : splitGatewayFee(feeCents); }
-/** Preserve checkout limits and identities; never change the shared gateway tariffs. */
+/** One automatic partner tariff; shared attendant tariffs remain separate. */
 export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind): Checkout[] {
-  return accountKind === 'partner' ? checkouts.map(checkout => checkout.id.startsWith('exclusive_') ? checkout : ({ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null })) : checkouts;
+  if (accountKind !== 'partner') return checkouts.filter(checkout => checkout.id !== PARTNER_CHECKOUT.id);
+  const checkout = checkouts.find(item => item.id.startsWith('exclusive_')) ?? checkouts.find(item => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
+  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null }];
 }
+export function withdrawalFees(accountKind?: AccountKind) { return accountKind === 'partner' ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS }; }
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }
 /** Every sale keeps its own formula and allocated fee; missing allocations preserve historical full-fee records. */
 export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'attendantFeeCents' | 'commissionBps' | 'commissionMode'>): number {
@@ -83,11 +87,12 @@ export function saleEarnings(sale: Pick<Sale, 'amountCents' | 'feeCents' | 'atte
   return Math.round((sale.amountCents - sale.feeCents) * sale.commissionBps / 10000);
 }
 export function payoutNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents'>): number { return payout.amountCents - (payout.withdrawalFeeCents ?? 0); }
-export function payoutExpectedNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents' | 'status'>): number {
-  return payout.status === 'pending' ? payout.amountCents - ATTENDANT_WITHDRAWAL_FEE_CENTS : payoutNet(payout);
+export function payoutExpectedNet(payout: Pick<Payout, 'amountCents' | 'withdrawalFeeCents' | 'status'>, accountKind?: AccountKind): number {
+  return payout.status === 'pending' ? payout.amountCents - withdrawalFees(accountKind).withdrawalFeeCents : payoutNet(payout);
 }
-export function validatePayoutAmount(amountCents: number, availableCents: number): void {
-  if (amountCents <= ATTENDANT_WITHDRAWAL_FEE_CENTS) throw new Error(`O saque deve ser maior que sua parte da taxa: ${money(ATTENDANT_WITHDRAWAL_FEE_CENTS)}.`);
+export function validatePayoutAmount(amountCents: number, availableCents: number, accountKind?: AccountKind): void {
+  const fee = withdrawalFees(accountKind).withdrawalFeeCents;
+  if (!Number.isSafeInteger(amountCents) || amountCents <= fee) throw new Error(fee ? `O saque deve ser maior que sua parte da taxa: ${money(fee)}.` : 'Informe um valor de repasse maior que zero.');
   if (amountCents > availableCents) throw new Error('O valor ultrapassa seu saldo disponível para repasse.');
 }
 export function checkoutFee(amountCents: number, checkout: Checkout): number {

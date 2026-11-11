@@ -2,7 +2,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { accountCheckouts, allocatedSaleFee, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, PartnerAdsCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
@@ -105,6 +105,7 @@ export class PortalStore {
         await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run('buckpay', 'Checkout Buckpay', BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
         await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-buckpay-v1');
       }
+      await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(PARTNER_CHECKOUT.id, PARTNER_CHECKOUT.name, PARTNER_CHECKOUT.feeBps, 0, PARTNER_CHECKOUT.minAmountCents, PARTNER_CHECKOUT.maxAmountCents);
       if (!await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(PARTNER_GATEWAY_SEED.migration)) {
         const partner = await store.sql.prepare('SELECT id, name FROM attendants WHERE token_hash = ?').get(PARTNER_GATEWAY_SEED.tokenHash);
         if (partner) {
@@ -162,7 +163,37 @@ export class PortalStore {
         }
         await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('admin-manual-payouts-v1');
       }
+      await store.applyPartnerTerms();
     });
+  }
+  /** Runs inside initialization's write transaction, including the audit and marker. */
+  private async applyPartnerTerms() {
+    const migration = 'partners-twelve-percent-history-2026-11-11-v1';
+    if (await this.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(migration)) return;
+    const accounts = await this.sql.prepare("SELECT id, name, account_kind, commission_bps FROM attendants a WHERE account_kind = 'partner' OR EXISTS (SELECT 1 FROM checkouts c WHERE c.id = 'exclusive_' || a.id)").all();
+    for (const account of accounts) {
+      if (account.account_kind !== 'partner' || Number(account.commission_bps) !== 10000) {
+        await this.sql.prepare("UPDATE attendants SET account_kind = 'partner', commission_bps = 10000 WHERE id = ?").run(String(account.id));
+        await this.audit(systemActor, 'attendant.rule_updated', String(account.id), String(account.name), { accountKind: String(account.account_kind), commissionBps: Number(account.commission_bps) }, { accountKind: 'partner', commissionBps: 10000 });
+      }
+    }
+    // Each old snapshot is recorded before a single bulk update. No receipts,
+    // sale decisions, payments, ADS, tokens or original checkout IDs are rewritten.
+    const fee = `CAST((amount_cents * ${PARTNER_CHECKOUT.feeBps} + 5000) / 10000 AS INTEGER)`;
+    const changed = `attendant_id IN (SELECT id FROM attendants WHERE account_kind = 'partner') AND (fee_cents <> ${fee} OR attendant_fee_cents IS NULL OR attendant_fee_cents <> ${fee} OR commission_bps <> 10000 OR commission_mode <> 'gross-share-less-fees')`;
+    await this.sql.prepare(`INSERT INTO audit_events (id, created_at, actor_id, actor_name, action, target_id, target_name, before_json, after_json)
+      SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.sale_repriced', id, (SELECT a.name FROM attendants a WHERE a.id = sales.attendant_id),
+        json_object('amountCents', amount_cents, 'feeCents', fee_cents, 'attendantFeeCents', attendant_fee_cents, 'commissionBps', commission_bps, 'commissionMode', commission_mode),
+        json_object('amountCents', amount_cents, 'feeCents', ${fee}, 'attendantFeeCents', ${fee}, 'commissionBps', 10000, 'commissionMode', 'gross-share-less-fees')
+      FROM sales WHERE ${changed}`).run(new Date().toISOString(), systemActor.id, systemActor.name);
+    await this.sql.exec(`UPDATE sales SET fee_cents = ${fee}, attendant_fee_cents = ${fee}, commission_bps = 10000, commission_mode = 'gross-share-less-fees' WHERE ${changed}`);
+    const dedicated = await this.sql.prepare("SELECT c.*, a.name AS owner_name FROM checkouts c JOIN attendants a ON c.id = 'exclusive_' || a.id WHERE a.account_kind = 'partner'").all();
+    for (const checkout of dedicated) {
+      if (Number(checkout.fee_bps) === PARTNER_CHECKOUT.feeBps && Number(checkout.fixed_fee_cents) === 0 && checkout.tier_above_cents == null) continue;
+      await this.sql.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = 0, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?').run(PARTNER_CHECKOUT.feeBps, String(checkout.id));
+      await this.audit(systemActor, 'checkout.updated', String(checkout.id), String(checkout.owner_name), { feeBps: Number(checkout.fee_bps), fixedFeeCents: Number(checkout.fixed_fee_cents), aboveAmountCents: checkout.tier_above_cents == null ? null : Number(checkout.tier_above_cents) }, { feeBps: PARTNER_CHECKOUT.feeBps, fixedFeeCents: 0, aboveAmountCents: null });
+    }
+    await this.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(migration);
   }
   close() { this.sql.close(); }
   async adminDashboard(): Promise<AdminDashboard> {
@@ -316,6 +347,7 @@ export class PortalStore {
     return this.withTransaction(async store => {
     const current = (await store.checkouts()).find(checkout => checkout.id === id);
     if (!current) throw new PortalError(404, 'Checkout não encontrado.');
+    if (id === PARTNER_CHECKOUT.id || isExclusiveCheckout(id)) invalid('A taxa dos parceiros é padrão de 12%, sem taxa fixa. Não é necessário escolher checkout.');
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
     if (data.fixedFee !== undefined && typeof data.fixedFee !== 'string' || data.minimum !== undefined && typeof data.minimum !== 'string') invalid('Informe valores válidos para a taxa fixa e o mínimo por venda.');
     let fee: number, fixedFee: number, minimum: number, higherTier = current.higherTier;
@@ -374,7 +406,7 @@ export class PortalStore {
   }
   async checkoutsFor(auth: Authenticated): Promise<Checkout[]> {
     const checkouts = await this.checkouts(), exclusive = checkouts.find(checkout => checkout.id === exclusiveCheckoutId(auth.id));
-    return exclusive ? [exclusive] : checkouts.filter(checkout => !isExclusiveCheckout(checkout.id));
+    return exclusive ? [exclusive] : checkouts.filter(checkout => !isExclusiveCheckout(checkout.id) && checkout.id !== PARTNER_CHECKOUT.id);
   }
   async sales(auth: Authenticated): Promise<Sale[]> { return (await this.sql.prepare(`SELECT id, date, time, checkout_id AS checkoutId, checkout_name AS checkoutName, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode, note, receipt_id AS receiptId, created_at AS createdAt, status, review_note AS reviewNote, reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s WHERE attendant_id = ? ORDER BY date DESC, time DESC, created_at DESC`).all(auth.id)) as unknown as Sale[]; }
   async costs(auth: Authenticated): Promise<DailyCost[]> { return (await this.sql.prepare('SELECT date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE attendant_id = ?').all(auth.id)) as unknown as DailyCost[]; }
@@ -446,7 +478,7 @@ export class PortalStore {
     const profile = (await this.profile(auth)), checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind);
     const normalized = batch.sales.map(row => {
       if (!row || typeof row !== 'object' || typeof row.amount !== 'string' || typeof row.note !== 'string' || row.note.length > 500 || typeof row.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) return invalid('Confira o valor, o horário e a observação de cada venda.');
-      const checkout = checkouts.find(item => item.id === row.checkoutId);
+      const checkout = profile.accountKind === 'partner' ? checkouts[0] : checkouts.find(item => item.id === row.checkoutId);
       if (!checkout) return invalid('Selecione um checkout válido para cada venda.');
       let amountCents: number;
       try { amountCents = amountToCents(row.amount); } catch (error) { return invalid((error as Error).message); }
@@ -492,7 +524,7 @@ export class PortalStore {
     return this.withTransaction(async store => {
       const profile = (await store.profile(auth)), portal = (await store.portal(auth, 'all'));
       if (!profile.pixKey || !profile.pixOwner) invalid('Cadastre sua chave PIX e o titular antes de solicitar um repasse.');
-      try { validatePayoutAmount(amountCents, portal.finance.availableCents); } catch (error) { return invalid((error as Error).message); }
+      try { validatePayoutAmount(amountCents, portal.finance.availableCents, profile.accountKind); } catch (error) { return invalid((error as Error).message); }
       const id = randomUUID(), requestedAt = new Date().toISOString();
       (await store.sql.prepare('INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)').run(id, auth.id, amountCents, 'pending', requestedAt, null, '', profile.pixType, profile.pixKey, profile.pixOwner, 0, 0));
       return { id, amountCents, withdrawalFeeCents: 0, gatewayFeeCents: 0, status: 'pending', requestedAt, paidAt: null, note: '' };
@@ -511,15 +543,16 @@ export class PortalStore {
   async markPayout(id: string, status: 'paid' | 'cancelled', note: string, actor = systemActor) {
     if (!['paid', 'cancelled'].includes(status) || note.length > 500) invalid('Status ou observação inválidos.');
     return this.withTransaction(async store => {
-    const before = await store.sql.prepare('SELECT p.status, p.amount_cents, p.withdrawal_fee_cents, p.gateway_fee_cents, p.note, a.name FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.id = ?').get(id);
+    const before = await store.sql.prepare('SELECT p.status, p.amount_cents, p.withdrawal_fee_cents, p.gateway_fee_cents, p.note, a.name, a.account_kind FROM payouts p JOIN attendants a ON a.id = p.attendant_id WHERE p.id = ?').get(id);
+    const fees = withdrawalFees(before?.account_kind as AccountKind);
     if (status === 'paid') {
       const pending = (await store.sql.prepare("SELECT amount_cents, attendant_id FROM payouts WHERE id = ? AND status = 'pending'").get(id));
-      if (pending && Number(pending.amount_cents) <= ATTENDANT_WITHDRAWAL_FEE_CENTS) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
+      if (pending && Number(pending.amount_cents) <= fees.withdrawalFeeCents) invalid(`O repasse precisa ser maior que a sua parte da taxa de ${ATTENDANT_WITHDRAWAL_FEE_CENTS / 100} reais. Cancele o pedido e solicite um valor maior.`);
       if (pending && (await store.portal({ id: String(pending.attendant_id) }, 'all')).finance.availableCents < 0) invalid('Saldo insuficiente após alterações nas vendas ou nos custos. Confira o saldo e cancele os pedidos de repasse sem cobertura antes de confirmar pagamentos.');
     }
-    const result = (await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, id));
+    const result = (await store.sql.prepare("UPDATE payouts SET status = ?, paid_at = ?, note = ?, withdrawal_fee_cents = ?, gateway_fee_cents = ? WHERE id = ? AND status = 'pending'").run(status, status === 'paid' ? new Date().toISOString() : null, note, status === 'paid' ? fees.withdrawalFeeCents : 0, status === 'paid' ? fees.gatewayFeeCents : 0, id));
     if (!result.changes) invalid('Repasse pendente não encontrado.');
-    await store.audit(actor, status === 'paid' ? 'payout.paid' : 'payout.cancelled', id, String(before!.name), { status: String(before!.status), amountCents: Number(before!.amount_cents), withdrawalFeeCents: Number(before!.withdrawal_fee_cents), gatewayFeeCents: Number(before!.gateway_fee_cents), note: String(before!.note) }, { status, amountCents: Number(before!.amount_cents), withdrawalFeeCents: status === 'paid' ? ATTENDANT_WITHDRAWAL_FEE_CENTS : 0, gatewayFeeCents: status === 'paid' ? GATEWAY_WITHDRAWAL_FEE_CENTS : 0, note });
+    await store.audit(actor, status === 'paid' ? 'payout.paid' : 'payout.cancelled', id, String(before!.name), { status: String(before!.status), amountCents: Number(before!.amount_cents), withdrawalFeeCents: Number(before!.withdrawal_fee_cents), gatewayFeeCents: Number(before!.gateway_fee_cents), note: String(before!.note) }, { status, amountCents: Number(before!.amount_cents), withdrawalFeeCents: status === 'paid' ? fees.withdrawalFeeCents : 0, gatewayFeeCents: status === 'paid' ? fees.gatewayFeeCents : 0, note });
     });
   }
   async recordManualPayout(input: unknown, requestKey: string, actor = systemActor) {
@@ -541,10 +574,10 @@ export class PortalStore {
       if (!await store.sql.prepare('SELECT id FROM attendants WHERE id = ?').get(attendantId)) throw new PortalError(404, 'Atendente não encontrado.');
       const portal = await store.portal({ id: attendantId }, 'all'), profile = portal.profile;
       if (!profile.pixKey || !profile.pixOwner) invalid('O atendente precisa cadastrar sua chave PIX e o titular antes de registrar o pagamento.');
-      try { validatePayoutAmount(amountCents, portal.finance.availableCents); } catch (error) { return invalid((error as Error).message); }
-      const paidAt = new Date().toISOString();
-      await store.sql.prepare("INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?)").run(id, attendantId, amountCents, paidAt, paidAt, note, profile.pixType, profile.pixKey, profile.pixOwner, ATTENDANT_WITHDRAWAL_FEE_CENTS, GATEWAY_WITHDRAWAL_FEE_CENTS);
-      await store.audit(actor, 'payout.paid', id, profile.name, null, { status: 'paid', amountCents, pixNetCents: amountCents - ATTENDANT_WITHDRAWAL_FEE_CENTS, withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS, note });
+      try { validatePayoutAmount(amountCents, portal.finance.availableCents, profile.accountKind); } catch (error) { return invalid((error as Error).message); }
+      const paidAt = new Date().toISOString(), fees = withdrawalFees(profile.accountKind);
+      await store.sql.prepare("INSERT INTO payouts (id, attendant_id, amount_cents, status, requested_at, paid_at, note, pix_type, pix_key, pix_owner, withdrawal_fee_cents, gateway_fee_cents) VALUES (?, ?, ?, 'paid', ?, ?, ?, ?, ?, ?, ?, ?)").run(id, attendantId, amountCents, paidAt, paidAt, note, profile.pixType, profile.pixKey, profile.pixOwner, fees.withdrawalFeeCents, fees.gatewayFeeCents);
+      await store.audit(actor, 'payout.paid', id, profile.name, null, { status: 'paid', amountCents, pixNetCents: amountCents - fees.withdrawalFeeCents, withdrawalFeeCents: fees.withdrawalFeeCents, gatewayFeeCents: fees.gatewayFeeCents, note });
       return { id, duplicate: false };
     });
   }

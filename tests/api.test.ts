@@ -127,10 +127,10 @@ test('migração do parceiro configura 12% uma vez, registra auditoria e conserv
     assert.equal(checkouts.length, 1); assert.equal(checkouts[0].id, checkoutId); assert.equal(checkouts[0].feeBps, 1200); assert.equal(checkouts[0].fixedFeeCents, 0); assert.equal(checkouts[0].maxAmountCents, 300000);
     assert.deepEqual(await store.checkoutsFor({ id: other.id }), globals); assert.deepEqual(await store.sales(auth), previousSales);
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
-    await store.adminSetCheckout(checkoutId, { name: 'Gateway exclusivo', fee: '13', fixedFee: '0' });
+    await assert.rejects(store.adminSetCheckout(checkoutId, { name: 'Gateway exclusivo', fee: '13', fixedFee: '0' }), /padrão de 12%/);
     store.close(); store = undefined; store = await PortalStore.open(file);
-    assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1300);
-    assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 2);
+    assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1200);
+    assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].id, checkoutId);
     assert.deepEqual(await store.sales(auth), previousSales);
@@ -225,10 +225,10 @@ test('parceiro com gateway exclusivo mantém sua regra de recebimento e não exp
   await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(checkoutId, 'Gateway exclusivo', 1200, 0, 1, 100000);
   const portal = await (await call('/api/portal', token)).json();
   assert.equal(portal.profile.accountKind, 'partner'); assert.equal(portal.checkouts.length, 1); assert.equal(portal.checkouts[0].id, checkoutId); assert.equal(portal.checkouts[0].feeBps, 1200);
-  assert.deepEqual((await (await call('/api/portal', otherToken)).json()).checkouts.map((checkout: { id: string }) => checkout.id).sort(), ['buckpay', 'main', 'pix']);
-  assert.equal((await submit(batch(), 'fixture_partner_main_denied', token)).status, 400);
+  assert.deepEqual((await (await call('/api/portal', otherToken)).json()).checkouts.map((checkout: { id: string }) => checkout.id).sort(), ['partner']);
+  assert.equal((await submit(batch(), 'fixture_partner_main_denied', token)).status, 200);
   const input = batch(); input.sales[0].checkoutId = checkoutId; input.sales[0].amount = '100';
-  assert.equal((await submit(input, 'fixture_partner_kind_exclusive', otherToken)).status, 400);
+  assert.equal((await submit(input, 'fixture_partner_kind_exclusive', otherToken)).status, 200);
   assert.equal((await submit(input, 'fixture_partner_kind_exclusive', token)).status, 200);
   const sale = (await (await call('/api/portal', token)).json()).sales[0];
   assert.equal(sale.feeCents, 1200); assert.equal(sale.attendantFeeCents, 1200); assert.equal(sale.commissionBps, 10000);

@@ -327,11 +327,13 @@ function calculateFinance(sales, costs, payouts, period, today) {
   const paidPayoutNetCents = payouts.filter((payout) => payout.status === "paid").reduce((sum, payout) => sum + payoutNet(payout), 0);
   return { grossCents: filtered.reduce((sum, sale) => sum + sale.amountCents, 0), feeCents: transactionFeeCents + withdrawalFeeCents, transactionFeeCents, gatewayFeeCents, businessGatewayFeeCents, withdrawalFeeCents, businessShareCents, adsCents: filteredCosts.reduce((sum, cost) => sum + cost.adsCents, 0), commissionCents, availableCents: earned - pendingPayoutCents - paidPayoutCents, pendingPayoutCents, paidPayoutCents, paidPayoutNetCents, debtCents, count: filtered.length, pendingSalesCount: pending.length, pendingSalesCents: pending.reduce((sum, sale) => sum + sale.amountCents, 0), rejectedSalesCount };
 }
+function calculateMarketingSummary(earningsCents, chargedAdsCents, ownAdsCents) {
+  const totalAdsCents = chargedAdsCents + ownAdsCents, profitCents = earningsCents - totalAdsCents;
+  return { earningsCents, chargedAdsCents, ownAdsCents, totalAdsCents, profitCents, roiPercent: totalAdsCents > 0 ? profitCents / totalAdsCents * 100 : null };
+}
 function calculateMarketing(finance, ownCosts, period, today) {
-  const history = ownCosts.filter((cost) => inPeriod(cost.date, period, today));
-  const ownAdsCents = history.reduce((sum, cost) => sum + cost.adsCents, 0), totalAdsCents = finance.adsCents + ownAdsCents;
-  const profitCents = finance.commissionCents - totalAdsCents;
-  return { earningsCents: finance.commissionCents, chargedAdsCents: finance.adsCents, ownAdsCents, totalAdsCents, profitCents, roiPercent: totalAdsCents > 0 ? profitCents / totalAdsCents * 100 : null, history: history.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100) };
+  const history = ownCosts.filter((cost) => inPeriod(cost.date, period, today)).map((cost) => ({ date: cost.date, adsCents: cost.adsCents }));
+  return { ...calculateMarketingSummary(finance.commissionCents, finance.adsCents, history.reduce((sum, cost) => sum + cost.adsCents, 0)), history: history.sort((a, b) => b.date.localeCompare(a.date)).slice(0, 100) };
 }
 function validateSaleReview(input) {
   if (!input || typeof input !== "object") throw new Error("Informe a decis\xE3o sobre a venda.");
@@ -630,6 +632,7 @@ var PortalStore = class _PortalStore {
       const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
+      const partnerAds = await db.prepare("SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0").all();
       function byAttendant(records) {
         const grouped = /* @__PURE__ */ new Map();
         for (const record of records) {
@@ -639,10 +642,11 @@ var PortalStore = class _PortalStore {
         }
         return grouped;
       }
-      const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), today = businessToday();
+      const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), ownPartnerAds = byAttendant(partnerAds), today = businessToday();
       const attendants = rows2.map((row) => {
         const records = ownSales.get(String(row.id)) ?? [];
-        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance: calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today) };
+        const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today);
+        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today) } : {} };
       });
       return { attendants, payouts, checkouts: await new _PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter((sale) => sale.status === "pending").length, todayAdsCents: costs.filter((cost) => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, "read");
@@ -654,7 +658,7 @@ var PortalStore = class _PortalStore {
     const args = [status, status, attendantId, attendantId];
     return this.sql.transaction(async (database) => {
       const total = Number((await database.prepare("SELECT COUNT(*) AS count FROM sales s " + where).get(...args)).count);
-      const sales = await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+      const sales = await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, a.account_kind AS accountKind, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
       if (sales.length) {
         const matches = await database.prepare(`WITH receipt_matches AS (
           SELECT source.id AS sourceSaleId, related.id, owner.name AS attendantName, related.date, related.time, related.amount_cents AS amountCents, related.status,
@@ -1086,7 +1090,7 @@ function financialReport(input, start, end, attendantId = "") {
   validateDateRange(start, end);
   const inside = (date) => date >= start && date <= end;
   const empty = () => ({ count: 0, pendingCount: 0, rejectedCount: 0, grossCents: 0, gatewayFeeCents: 0, commissionCents: 0, adsCents: 0, adjustmentsCents: 0, netCommissionCents: 0, paidPayoutCents: 0, paidPayoutNetCents: 0, withdrawalGatewayFeeCents: 0, attendantWithdrawalFeeCents: 0, businessWithdrawalFeeCents: 0, businessProfitCents: 0, cashMovementCents: 0 });
-  const rows2 = new Map(input.attendants.filter((a) => !attendantId || a.id === attendantId).map((a) => [a.id, { ...empty(), attendantId: a.id, attendantName: a.name }]));
+  const rows2 = new Map(input.attendants.filter((a) => !attendantId || a.id === attendantId).map((a) => [a.id, { ...empty(), attendantId: a.id, attendantName: a.name, accountKind: a.accountKind }]));
   for (const sale of input.sales) {
     const row = rows2.get(sale.attendantId);
     if (!row || !inside(sale.date)) continue;
@@ -1117,21 +1121,30 @@ function financialReport(input, start, end, attendantId = "") {
     row.withdrawalGatewayFeeCents += payout.gatewayFeeCents ?? 0;
     row.attendantWithdrawalFeeCents += payout.withdrawalFeeCents ?? 0;
   }
+  const ownAds = /* @__PURE__ */ new Map();
+  for (const cost of input.partnerAds ?? []) if (inside(cost.date) && rows2.get(cost.attendantId)?.accountKind === "partner") ownAds.set(cost.attendantId, (ownAds.get(cost.attendantId) ?? 0) + cost.adsCents);
+  let partnerEarnings = 0, partnerChargedAds = 0, partnerOwnAds = 0;
   const totals = empty();
   for (const row of rows2.values()) {
     row.businessWithdrawalFeeCents = row.withdrawalGatewayFeeCents - row.attendantWithdrawalFeeCents;
     row.netCommissionCents = row.commissionCents - row.adsCents - row.adjustmentsCents - row.attendantWithdrawalFeeCents;
     row.businessProfitCents = row.grossCents - row.gatewayFeeCents - row.commissionCents - row.businessWithdrawalFeeCents;
     row.cashMovementCents = row.grossCents - row.gatewayFeeCents - row.adsCents - row.adjustmentsCents - row.paidPayoutNetCents - row.withdrawalGatewayFeeCents;
+    if (row.accountKind === "partner") {
+      row.marketing = calculateMarketingSummary(row.commissionCents, row.adsCents, ownAds.get(row.attendantId) ?? 0);
+      partnerEarnings += row.commissionCents;
+      partnerChargedAds += row.adsCents;
+      partnerOwnAds += row.marketing.ownAdsCents;
+    }
     for (const key of Object.keys(totals)) totals[key] += row[key];
   }
-  return { start, end, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), totals, attendants: [...rows2.values()].sort((a, b) => a.attendantName.localeCompare(b.attendantName, "pt-BR")) };
+  return { start, end, generatedAt: (/* @__PURE__ */ new Date()).toISOString(), totals, marketing: calculateMarketingSummary(partnerEarnings, partnerChargedAds, partnerOwnAds), attendants: [...rows2.values()].sort((a, b) => a.attendantName.localeCompare(b.attendantName, "pt-BR")) };
 }
 function financialCsv(report) {
   const text = (value) => '"' + (/^[\s]*[=+\-@]/.test(value) ? "'" + value : value).replaceAll('"', '""') + '"';
-  const headings = ["Atendente", "In\xEDcio", "Fim", "Vendas aprovadas", "Faturamento", "Taxas de venda", "Comiss\xE3o ap\xF3s taxas de venda", "ADS", "Ajustes", "Parte do atendente no saque", "Comiss\xE3o ap\xF3s descontos", "Repasses brutos pagos", "PIX l\xEDquido pago", "Taxa total de saque", "Parte BRAVUS no saque", "Lucro BRAVUS", "Movimenta\xE7\xE3o de caixa"];
-  const row = (name, values) => [text(name), report.start, report.end, values.count, ...["grossCents", "gatewayFeeCents", "commissionCents", "adsCents", "adjustmentsCents", "attendantWithdrawalFeeCents", "netCommissionCents", "paidPayoutCents", "paidPayoutNetCents", "withdrawalGatewayFeeCents", "businessWithdrawalFeeCents", "businessProfitCents", "cashMovementCents"].map((key) => (values[key] / 100).toFixed(2).replace(".", ","))].join(";");
-  return "\uFEFF" + [headings.map(text).join(";"), ...report.attendants.map((a) => row(a.attendantName, a)), row("TOTAL", report.totals)].join("\r\n") + "\r\n";
+  const headings = ["Atendente", "In\xEDcio", "Fim", "Vendas aprovadas", "Faturamento", "Taxas de venda", "Comiss\xE3o ap\xF3s taxas de venda", "ADS", "Ajustes", "Parte do atendente no saque", "Comiss\xE3o ap\xF3s descontos", "Repasses brutos pagos", "PIX l\xEDquido pago", "Taxa total de saque", "Parte BRAVUS no saque", "Lucro BRAVUS", "Movimenta\xE7\xE3o de caixa", "ADS pr\xF3prios do parceiro", "ADS totais do parceiro", "Lucro do parceiro ap\xF3s ADS", "ROI do parceiro (%)"];
+  const row = (name, values, marketing) => [text(name), report.start, report.end, values.count, ...["grossCents", "gatewayFeeCents", "commissionCents", "adsCents", "adjustmentsCents", "attendantWithdrawalFeeCents", "netCommissionCents", "paidPayoutCents", "paidPayoutNetCents", "withdrawalGatewayFeeCents", "businessWithdrawalFeeCents", "businessProfitCents", "cashMovementCents"].map((key) => (values[key] / 100).toFixed(2).replace(".", ",")), ...["ownAdsCents", "totalAdsCents", "profitCents"].map((key) => marketing ? (marketing[key] / 100).toFixed(2).replace(".", ",") : ""), marketing?.roiPercent == null ? "" : marketing.roiPercent.toFixed(2).replace(".", ",")].join(";");
+  return "\uFEFF" + [headings.map(text).join(";"), ...report.attendants.map((a) => row(a.attendantName, a, a.marketing)), row("TOTAL", report.totals, report.marketing)].join("\r\n") + "\r\n";
 }
 
 // server/admin-controls.ts
@@ -1143,12 +1156,13 @@ async function readFinancialReport(store, start, end, attendantId = "") {
   }
   if (attendantId && !/^[a-zA-Z0-9_-]{1,100}$/.test(attendantId)) throw new PortalError(400, "Atendente inv\xE1lido.");
   return store.sql.transaction(async (db) => {
-    const attendants = await db.prepare("SELECT id, name FROM attendants WHERE (? = '' OR id = ?)").all(attendantId, attendantId);
+    const attendants = await db.prepare("SELECT id, name, account_kind AS accountKind FROM attendants WHERE (? = '' OR id = ?)").all(attendantId, attendantId);
     if (attendantId && !attendants.length) throw new PortalError(404, "Atendente n\xE3o encontrado.");
     const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
     const costs = await db.prepare("SELECT attendant_id AS attendantId, date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
     const payouts = await db.prepare("SELECT attendant_id AS attendantId, status, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, paid_at AS paidAt, requested_at AS requestedAt FROM payouts WHERE status = 'paid' AND (? = '' OR attendant_id = ?)").all(attendantId, attendantId);
-    return financialReport({ attendants, sales, costs, payouts }, start, end, attendantId);
+    const partnerAds = await db.prepare("SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0 AND date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
+    return financialReport({ attendants, sales, costs, payouts, partnerAds }, start, end, attendantId);
   }, "read");
 }
 async function readAudit(store, parameters) {

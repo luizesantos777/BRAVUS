@@ -1,6 +1,6 @@
 import { auditActions, financialReport, validateDateRange } from '../src/admin-domain.ts';
 import type { AuditEntry, AuditPage } from '../src/admin-domain.ts';
-import type { AdminAttendant, AdminCost, AdminPayout, AdminSale } from '../src/domain.ts';
+import type { AdminAttendant, AdminCost, AdminPayout, AdminSale, PartnerAdsCost } from '../src/domain.ts';
 import { PortalError } from './store.ts';
 import type { PortalStore } from './store.ts';
 
@@ -8,12 +8,13 @@ export async function readFinancialReport(store: PortalStore, start: string, end
   try { validateDateRange(start, end); } catch (error) { throw new PortalError(400, (error as Error).message); }
   if (attendantId && !/^[a-zA-Z0-9_-]{1,100}$/.test(attendantId)) throw new PortalError(400, 'Atendente inválido.');
   return store.sql.transaction(async db => {
-    const attendants = await db.prepare('SELECT id, name FROM attendants WHERE (? = \'\' OR id = ?)').all(attendantId, attendantId) as unknown as AdminAttendant[];
+    const attendants = await db.prepare('SELECT id, name, account_kind AS accountKind FROM attendants WHERE (? = \'\' OR id = ?)').all(attendantId, attendantId) as unknown as AdminAttendant[];
     if (attendantId && !attendants.length) throw new PortalError(404, 'Atendente não encontrado.');
     const sales = await db.prepare('SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales WHERE date BETWEEN ? AND ? AND (? = \'\' OR attendant_id = ?)').all(start, end, attendantId, attendantId) as unknown as AdminSale[];
     const costs = await db.prepare('SELECT attendant_id AS attendantId, date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE date BETWEEN ? AND ? AND (? = \'\' OR attendant_id = ?)').all(start, end, attendantId, attendantId) as unknown as AdminCost[];
     const payouts = await db.prepare("SELECT attendant_id AS attendantId, status, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, paid_at AS paidAt, requested_at AS requestedAt FROM payouts WHERE status = 'paid' AND (? = '' OR attendant_id = ?)").all(attendantId, attendantId) as unknown as AdminPayout[];
-    return financialReport({ attendants, sales, costs, payouts }, start, end, attendantId);
+    const partnerAds = await db.prepare("SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0 AND date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId) as unknown as (PartnerAdsCost & { attendantId: string })[];
+    return financialReport({ attendants, sales, costs, payouts, partnerAds }, start, end, attendantId);
   }, 'read');
 }
 

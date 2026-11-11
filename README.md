@@ -1,5 +1,13 @@
 # BRAVUS — Portal do Atendente
 
+## Transações e lucro dos parceiros na administração
+
+A aprovação de vendas identifica o tipo da conta e mostra, para parceiros, somente o valor bruto, a taxa única do gateway e o valor do parceiro a liberar/liberado/recusado/cancelado. As telas e confirmações não repetem a taxa como “taxa do atendente” nem apresentam os campos de comissão e BRAVUS da regra de atendentes. Uma venda de R$ 219 tem R$ 26,28 de gateway e R$ 192,72 após a taxa.
+
+O dashboard mostra o lucro total dos parceiros e o lucro individual na lista de contas e nos saldos. O fechamento por período e o CSV também incluem ADS próprios, lucro após ADS e ROI. Admin e portal usam a mesma fórmula: vendas aprovadas após a taxa de 12%, menos ADS cobrados pela administração e ADS pagos pelo parceiro por fora. Repasses são liquidações do saldo; não são abatidos outra vez do lucro. Ajustes financeiros e taxas históricas de repasse permanecem identificados no saldo e não fazem parte do indicador “lucro após ADS”.
+
+Os totais usam todos os registros, sem truncamento pelos limites das listas de vendas e custos. A exibição de lucro e dos ADS próprios exige acesso administrativo. Esta atualização acrescenta informações de leitura e corrige rótulos; não regrava lançamentos nem cria cobranças. Revisões posteriores dos gastos e cancelamentos aparecem ao atualizar o painel.
+
 ## Regra atual dos parceiros — 11/11/2026
 
 - Todas as contas de parceiro usam **12% por venda**, sem taxa fixa. O parceiro recebe o valor bruto menos essa taxa, arredondada em centavos por venda; uma venda de R$ 100 libera R$ 88 após aprovação.

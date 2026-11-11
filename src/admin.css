@@ -120,3 +120,5 @@
 .partner-terms { margin: 14px 0; padding: 13px; border: 1px solid #68713e; border-radius: 10px; background: #202818; color: #d7dfbf; font-size: 12px; line-height: 1.8; }
 .portal-tabs.partner-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 600px) { .portal-tabs.partner-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); } .partner-tabs > button:last-child { grid-column: 1 / -1; } }
+
+.attendant-balance .partner-profit dd{color:#e7c857}.attendant-balance .negative dd{color:#f3a4ad}.partner-review-values dd{font-size:18px}.partner-report-metrics{margin-top:14px}

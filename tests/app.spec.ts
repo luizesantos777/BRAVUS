@@ -129,7 +129,7 @@ test('prints grandes da galeria são reduzidos e chegam com imagem ao administra
   await page.getByLabel('Filtrar por atendente').selectOption({ label: name });
   await expect(page.locator('.review-sale')).toHaveCount(2);
   await page.locator('.review-sale').first().getByRole('button', { name: 'Ver comprovante' }).click();
-  const received = page.getByRole('img', { name: 'Comprovante enviado pelo atendente' }); await expect(received).toBeVisible();
+  const received = page.getByRole('img', { name: 'Comprovante da venda' }); await expect(received).toBeVisible();
   expect(await received.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBeGreaterThanOrEqual(768);
   await page.screenshot({ path: info.outputPath('comprovante-reduzido-admin.png'), fullPage: true });
 });
@@ -193,7 +193,7 @@ test('venda de outro aparelho aparece na fila administrativa aberta sem atualiza
     await page.bringToFront(); await page.clock.runFor(10_100);
     const received = page.locator('.review-sale').filter({ hasText: name });
     await expect(received).toHaveCount(1); await expect(received).toContainText('100,00'); await expect(received).toContainText('Em análise');
-    await received.getByRole('button', { name: 'Ver comprovante' }).click(); await expect(page.getByRole('img', { name: 'Comprovante enviado pelo atendente' })).toBeVisible();
+    await received.getByRole('button', { name: 'Ver comprovante' }).click(); await expect(page.getByRole('img', { name: 'Comprovante da venda' })).toBeVisible();
   } finally { await personal.close(); }
 });
 test('atualizar com filtro de aprovadas mostra aviso das pendentes e permite encontrar a venda enviada', async ({ page }, info) => {
@@ -790,7 +790,7 @@ test('admin confere prints, aprova, recusa e lança ADS com reflexo no portal do
   await expect(page.locator('.review-sale')).toHaveCount(2);
   const first = page.locator(`[data-sale-id="${own.sales.find((sale: { amountCents: number }) => sale.amountCents === 10000).id}"]`);
   await first.getByRole('button', { name: 'Ver comprovante' }).click();
-  await expect(page.getByRole('img', { name: 'Comprovante enviado pelo atendente' })).toBeVisible();
+  await expect(page.getByRole('img', { name: 'Comprovante da venda' })).toBeVisible();
   await page.getByRole('button', { name: 'Fechar janela' }).click();
   await page.screenshot({ path: info.outputPath('admin-aprovar-vendas.png'), fullPage: true });
   await first.getByRole('button', { name: 'Aprovar venda', exact: true }).click();

@@ -203,15 +203,17 @@ export class PortalStore {
       const sales = await db.prepare('SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales').all() as unknown as AdminSale[];
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
       const costs = await db.prepare('SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name').all() as unknown as AdminCost[];
+      const partnerAds = await db.prepare('SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0').all() as unknown as (PartnerAdsCost & { attendantId: string })[];
       function byAttendant<T extends { attendantId: string }>(records: T[]) {
         const grouped = new Map<string, T[]>();
         for (const record of records) { const group = grouped.get(record.attendantId); if (group) group.push(record); else grouped.set(record.attendantId, [record]); }
         return grouped;
       }
-      const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), today = businessToday();
+      const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), ownPartnerAds = byAttendant(partnerAds), today = businessToday();
       const attendants = rows.map(row => {
         const records = ownSales.get(String(row.id)) ?? [];
-        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance: calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], 'all', today) };
+        const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], 'all', today);
+        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...(row.accountKind === 'partner' ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], 'all', today) } : {}) };
       }) as unknown as AdminAttendant[];
       return { attendants, payouts, checkouts: await new PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter(sale => sale.status === 'pending').length, todayAdsCents: costs.filter(cost => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, 'read');
@@ -223,7 +225,7 @@ export class PortalStore {
     const args = [status, status, attendantId, attendantId];
     return this.sql.transaction(async database => {
       const total = Number((await database.prepare('SELECT COUNT(*) AS count FROM sales s ' + where).get(...args))!.count);
-      const sales = (await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize)) as unknown as AdminSale[];
+      const sales = (await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, a.account_kind AS accountKind, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize)) as unknown as AdminSale[];
       // The compact expression index narrows candidates; the full bytes must also
       // match. Names, amounts, MIME labels and image prefixes alone never flag a sale.
       if (sales.length) {

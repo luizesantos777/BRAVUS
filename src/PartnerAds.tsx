@@ -28,11 +28,11 @@ export default function PartnerAds({ client, report, period, disabled, refresh, 
     {report && <><div className="partner-roi-heading"><TrendingUp size={16} /><h3>Resultado · {periodLabels[period]}</h3></div>
       <div className="financial-grid partner-roi-grid">
         <article className="metric" aria-label="Seu valor nas vendas no ROI"><h3>SEU VALOR NAS VENDAS</h3><strong>{money(report.earningsCents)}</strong><small>Somente vendas aprovadas</small></article>
-        <article className="metric" aria-label="Investimento em ADS no ROI"><h3>INVESTIMENTO EM ADS</h3><strong>{money(report.totalAdsCents)}</strong><small>Seus anúncios e ADS da administração</small></article>
+        <article className="metric" aria-label="Investimento em ADS no ROI"><h3>INVESTIMENTO EM ADS</h3><strong>{money(report.totalAdsCents)}</strong><small>Anúncios registrados no período</small></article>
         <article className={`metric ${report.profitCents < 0 ? 'negative' : ''}`} aria-label="Resultado após ADS"><h3>RESULTADO APÓS ADS</h3><strong>{money(report.profitCents)}</strong><small>Indicador financeiro · Não altera o repasse</small></article>
         <article className={`metric partner-roi ${report.roiPercent != null && report.roiPercent < 0 ? 'negative' : ''}`} aria-label="ROI do parceiro"><h3>ROI</h3><strong>{roi}</strong><small>{report.roiPercent == null ? 'Informe um custo de ADS para calcular' : 'Retorno sobre o investimento em ADS'}</small></article>
       </div>
-      <p className="payout-help">ADS pagos por você: <strong>{money(report.ownAdsCents)}</strong> · ADS registrados pela administração (apenas controle): <strong>{money(report.chargedAdsCents)}</strong>.</p>
+      <p className="payout-help">ADS pagos por você: <strong>{money(report.ownAdsCents)}</strong>.</p>
       <p className="partner-roi-rule">ROI = (seu valor nas vendas aprovadas − ADS do período) ÷ ADS do período × 100. Vendas em análise, vendas canceladas, ajustes e repasses não entram neste cálculo.</p>
     </>}
     <form className="partner-ads-form" onSubmit={async event => {
@@ -44,7 +44,7 @@ export default function PartnerAds({ client, report, period, disabled, refresh, 
     }}><h3>Lançar ou editar meu ADS do dia</h3><fieldset disabled={saving || disabled}>
       <div className="partner-ads-fields"><label>Data do ADS<input type="date" required value={date} max={businessToday()} onChange={event => setDate(event.target.value)} /></label>
         <label>Meu custo de ADS (R$)<input required inputMode="decimal" maxLength={16} disabled={!ready || loading} value={ads} onChange={event => setAds(event.target.value)} /></label></div>
-      <p className="payout-help">Salvar substitui somente o total que você informou para essa data. Para zerar o seu custo do dia, informe 0. Os custos lançados pela administração são mantidos.</p>
+      <p className="payout-help">Salvar substitui o total que você informou para essa data. Para zerar o seu custo do dia, informe 0.</p>
       <button className="button primary" disabled={!ready || loading}>{saving || loading ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{saving ? 'Salvando ADS...' : loading ? 'Carregando ADS...' : 'Salvar meu ADS'}</button>
     </fieldset></form>
     {error && <div className="form-error" role="alert"><AlertCircle size={15} />{error}<button type="button" className="button secondary" disabled={loading || saving} onClick={() => setReload(value => value + 1)}>Tentar novamente</button></div>}

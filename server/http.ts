@@ -127,6 +127,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           }
           else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'POST') { (await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
           else if (route?.[1] === 'attendants' && !route[3] && request.method === 'PATCH') { (await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'attendants' && !route[3] && request.method === 'DELETE') json(response, 200, await store.deleteRevokedAccount(route[2], actor));
           else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { (await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
           else if (route?.[1] === 'payouts' && !route[3] && request.method === 'PATCH') {
             const input = await readJson(request, options.bodyLimit) as { status?: unknown; note?: unknown } | null;

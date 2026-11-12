@@ -9,6 +9,7 @@ export const auditActions = {
   'checkout.updated': 'Taxas alteradas', 'payout.paid': 'Repasse confirmado',
   'payout.cancelled': 'Repasse cancelado', 'attendant.created': 'Atendente cadastrado',
   'attendant.access_changed': 'Acesso alterado', 'attendant.token_rotated': 'Token renovado',
+  'attendant.deleted': 'Cadastro revogado excluído',
   'attendant.rule_updated': 'Regra financeira da conta alterada',
   'partner.sale_repriced': 'Taxa da venda do parceiro recalculada',
   'partner.gateway_cost_recorded': 'Custo do gateway do parceiro registrado',

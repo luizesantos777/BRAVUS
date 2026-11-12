@@ -101,6 +101,8 @@ O servidor também gera `.bravus/admin.key`, com permissão de leitura restrita 
 
 ## Administrar pelo navegador
 
+Em **Atendentes**, a linha de um cadastro revogado oferece **Excluir** quando não há vendas, custos, repasses, lotes enviados ou comprovantes vinculados. A API administrativa revalida essa condição dentro da transação, independentemente do que o navegador mostra. A exclusão usa o ID da conta e preserva contas de mesmo nome. Remove o cadastro vazio, eventuais inscrições antigas de push e o gateway exclusivo sem uso. Não apaga histórico financeiro. O evento `attendant.deleted` permanece na auditoria, com responsável e nome da conta, sem tokens. Ativos precisam ser revogados primeiro; cadastros com histórico continuam revogados ou podem ser reativados. Não há exclusão automática por nome ou apenas por estar revogado.
+
 Somente a administração cadastra atendentes e define seus tokens. O painel permite criar atendentes com token escolhido pelo responsável ou gerado pelo sistema, gerar um novo token para o mesmo atendente, revogar ou reativar acessos, aprovar ou recusar vendas com comprovantes, lançar custos de ADS por atendente e dia, configurar taxas e registrar pagamentos ou cancelamentos de repasses. O novo link individual aparece após a criação ou rotação; a lista de atendentes não revela tokens. A rotação invalida imediatamente o link anterior e preserva o histórico. Revogar bloqueia o acesso sem apagar vendas ou PIX; reativar volta a permitir o token mais recente.
 
 O portal do atendente não tem cadastro nem formulário para digitar tokens. O acesso é feito pelo link individual entregue pela administração. O atendente pode atualizar seus dados pessoais e PIX e registrar vendas, mas não criar contas ou alterar tokens.

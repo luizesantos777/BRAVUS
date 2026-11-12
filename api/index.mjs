@@ -458,6 +458,7 @@ var PortalError = class extends Error {
   }
 };
 var systemActor = { id: "system", name: "Sistema / terminal" };
+var accountHistorySql = ["sales", "costs", "payouts", "batches", "receipts"].map((table) => `EXISTS (SELECT 1 FROM ${table} WHERE attendant_id = a.id)`).join(" OR ");
 var tokenHash = (token) => createHash("sha256").update(token).digest("hex");
 var invalid = (message) => {
   throw new PortalError(400, message);
@@ -665,7 +666,7 @@ var PortalStore = class _PortalStore {
   }
   async adminDashboard() {
     return this.sql.transaction(async (db) => {
-      const rows2 = await db.prepare("SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
+      const rows2 = await db.prepare(`SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
       const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
@@ -683,7 +684,7 @@ var PortalStore = class _PortalStore {
       const attendants = rows2.map((row) => {
         const records = ownSales.get(String(row.id)) ?? [];
         const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today, row.accountKind);
-        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today), business: calculatePartnerBusiness(records, "all", today) } : {} };
+        return { ...row, active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today), business: calculatePartnerBusiness(records, "all", today) } : {} };
       });
       return { attendants, payouts, checkouts: await new _PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter((sale) => sale.status === "pending").length, todayAdsCents: costs.filter((cost) => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, "read");
@@ -807,6 +808,19 @@ var PortalStore = class _PortalStore {
       if (!result.changes) throw new PortalError(404, "Atendente n\xE3o encontrado.");
       if (!data.active) await store.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
       await store.audit(actor, "attendant.access_changed", id, String(before.name), { active: before.active === 1 }, { active: data.active });
+    });
+  }
+  async deleteRevokedAccount(id, actor = systemActor) {
+    return this.withTransaction(async (store) => {
+      const before = await store.sql.prepare(`SELECT name, active, account_kind, (${accountHistorySql}) AS hasHistory FROM attendants a WHERE id = ?`).get(id);
+      if (!before) throw new PortalError(404, "Cadastro n\xE3o encontrado.");
+      if (before.active !== 0) throw new PortalError(409, "Revogue o acesso antes de excluir o cadastro.");
+      if (before.hasHistory) throw new PortalError(409, "Este cadastro possui vendas, custos, repasses ou comprovantes. A exclus\xE3o n\xE3o \xE9 permitida para preservar o hist\xF3rico.");
+      await store.sql.prepare("DELETE FROM push_subscriptions WHERE attendant_id = ?").run(id);
+      await store.sql.prepare("DELETE FROM attendants WHERE id = ? AND active = 0").run(id);
+      await store.sql.prepare("DELETE FROM checkouts WHERE id = ? AND NOT EXISTS (SELECT 1 FROM sales WHERE checkout_id = checkouts.id)").run(exclusiveCheckoutId(id));
+      await store.audit(actor, "attendant.deleted", id, String(before.name), { exists: true, active: false, accountKind: String(before.account_kind) }, { exists: false });
+      return { deleted: true };
     });
   }
   async adminSetCosts(id, input, actor = systemActor) {
@@ -1117,6 +1131,7 @@ var auditActions = {
   "attendant.created": "Atendente cadastrado",
   "attendant.access_changed": "Acesso alterado",
   "attendant.token_rotated": "Token renovado",
+  "attendant.deleted": "Cadastro revogado exclu\xEDdo",
   "attendant.rule_updated": "Regra financeira da conta alterada",
   "partner.sale_repriced": "Taxa da venda do parceiro recalculada",
   "partner.gateway_cost_recorded": "Custo do gateway do parceiro registrado"
@@ -1379,7 +1394,8 @@ function createPortalHandler(store, options = {}) {
           } else if (route?.[1] === "attendants" && !route[3] && request.method === "PATCH") {
             await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
-          } else if (route?.[1] === "checkouts" && !route[3] && request.method === "PATCH") {
+          } else if (route?.[1] === "attendants" && !route[3] && request.method === "DELETE") json(response, 200, await store.deleteRevokedAccount(route[2], actor));
+          else if (route?.[1] === "checkouts" && !route[3] && request.method === "PATCH") {
             await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
           } else if (route?.[1] === "payouts" && !route[3] && request.method === "PATCH") {

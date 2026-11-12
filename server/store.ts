@@ -13,6 +13,9 @@ export class PortalError extends Error { status: number; constructor(status: num
 export interface Authenticated { id: string }
 export interface AuditActor { id: string; name: string }
 const systemActor: AuditActor = { id: 'system', name: 'Sistema / terminal' };
+// Used in both the dashboard and the deletion transaction. Any record protects history,
+// even a rejected sale, a cancelled payout, a zero cost or a submitted batch without sales.
+const accountHistorySql = ['sales', 'costs', 'payouts', 'batches', 'receipts'].map(table => `EXISTS (SELECT 1 FROM ${table} WHERE attendant_id = a.id)`).join(' OR ');
 interface AttendantRow { id: string; name: string; account_kind: AccountKind; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
@@ -212,7 +215,7 @@ export class PortalStore {
   close() { this.sql.close(); }
   async adminDashboard(): Promise<AdminDashboard> {
     return this.sql.transaction(async db => {
-      const rows = await db.prepare('SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC').all();
+      const rows = await db.prepare(`SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
       // Read all financial records together. Display pagination must never truncate balances.
       const sales = await db.prepare('SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales').all() as unknown as AdminSale[];
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
@@ -227,7 +230,7 @@ export class PortalStore {
       const attendants = rows.map(row => {
         const records = ownSales.get(String(row.id)) ?? [];
         const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], 'all', today, row.accountKind as AccountKind);
-        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...(row.accountKind === 'partner' ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], 'all', today), business: calculatePartnerBusiness(records, 'all', today) } : {}) };
+        return { ...row, active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...(row.accountKind === 'partner' ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], 'all', today), business: calculatePartnerBusiness(records, 'all', today) } : {}) };
       }) as unknown as AdminAttendant[];
       return { attendants, payouts, checkouts: await new PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter(sale => sale.status === 'pending').length, todayAdsCents: costs.filter(cost => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, 'read');
@@ -343,6 +346,19 @@ export class PortalStore {
     if (!result.changes) throw new PortalError(404, 'Atendente não encontrado.');
     if (!data.active) (await store.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id));
     await store.audit(actor, 'attendant.access_changed', id, String(before!.name), { active: before!.active === 1 }, { active: data.active as boolean });
+    });
+  }
+  async deleteRevokedAccount(id: string, actor = systemActor) {
+    return this.withTransaction(async store => {
+      const before = await store.sql.prepare(`SELECT name, active, account_kind, (${accountHistorySql}) AS hasHistory FROM attendants a WHERE id = ?`).get(id);
+      if (!before) throw new PortalError(404, 'Cadastro não encontrado.');
+      if (before.active !== 0) throw new PortalError(409, 'Revogue o acesso antes de excluir o cadastro.');
+      if (before.hasHistory) throw new PortalError(409, 'Este cadastro possui vendas, custos, repasses ou comprovantes. A exclusão não é permitida para preservar o histórico.');
+      await store.sql.prepare('DELETE FROM push_subscriptions WHERE attendant_id = ?').run(id);
+      await store.sql.prepare('DELETE FROM attendants WHERE id = ? AND active = 0').run(id);
+      await store.sql.prepare('DELETE FROM checkouts WHERE id = ? AND NOT EXISTS (SELECT 1 FROM sales WHERE checkout_id = checkouts.id)').run(exclusiveCheckoutId(id));
+      await store.audit(actor, 'attendant.deleted', id, String(before.name), { exists: true, active: false, accountKind: String(before.account_kind) }, { exists: false });
+      return { deleted: true };
     });
   }
   async adminSetCosts(id: string, input: unknown, actor = systemActor) {

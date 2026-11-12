@@ -70,6 +70,7 @@ export class AdminClient {
   createAttendant(name: string, commission: string, token = '', accountKind: AccountKind = 'attendant') { return this.request<Invitation>('/attendants', 'POST', { name, commission, accountKind, ...(token.trim() ? { token: token.trim() } : {}) }); }
   rotateToken(id: string) { return this.request<Invitation>(`/attendants/${id}/token`, 'POST'); }
   setActive(id: string, active: boolean) { return this.request(`/attendants/${id}`, 'PATCH', { active }); }
+  deleteAccount(id: string) { return this.request(`/attendants/${id}`, 'DELETE'); }
   costs(id: string, date: string) { return this.request<DailyCost>(`/attendants/${id}/costs?date=${encodeURIComponent(date)}`); }
   setCosts(id: string, date: string, ads: string, withdrawalFee: string) { return this.request(`/attendants/${id}/costs`, 'POST', { date, ads, withdrawalFee }); }
   setCheckout(id: string, name: string, fee: string, fixedFee: string, minimum: string, higherTier: CheckoutTierInput | null) { return this.request(`/checkouts/${id}`, 'PATCH', { name, fee, fixedFee, minimum, higherTier }); }

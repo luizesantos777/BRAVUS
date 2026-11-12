@@ -263,7 +263,7 @@ test('admin consulta fechamento, exporta CSV, confere alterações e baixa backu
   await expect(page.locator('.financial-table tbody tr')).toHaveCount(1);
   await expect(page.locator('.financial-metrics .profit')).toContainText('39,01');
   await expect(page.locator('.financial-explanation')).toContainText('50,51');
-  await expect(page.locator('.financial-metrics > div').filter({ hasText: 'Comissões após descontos' })).toContainText('29,00');
+  await expect(page.locator('.financial-metrics > div').filter({ hasText: 'Valor gerado para repasse' })).toContainText('29,00');
   const csvPromise = page.waitForEvent('download'); await page.getByRole('button', { name: 'Exportar CSV' }).click();
   const csvDownload = await csvPromise, csvPath = info.outputPath('fechamento.csv'); await csvDownload.saveAs(csvPath);
   const csv = readFileSync(csvPath, 'utf8'); expect(csv).toContain(`Gestão ${info.project.name}`); expect(csv).toContain('39,01'); expect(csv).not.toContain(token); expect(csv).not.toContain(adminKey); expect(csv).not.toContain('@example.com');

@@ -42,7 +42,7 @@ test('parceiro vê um único gateway de 12%, recupera rascunho e os outros vende
   await expect(select).toHaveCount(0); await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toHaveValue('3000');
   await expect(page.getByRole('button', { name: 'parceiro.png', exact: true })).toBeVisible();
   await expect(page.getByLabel('Taxas da venda 1')).toContainText('360,00'); await expect(page.getByLabel('Taxas da venda 1')).toContainText('2.640,00');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('Taxa do gateway (12%)'); await expect(page.getByLabel('Taxas da venda 1')).not.toContainText('50%');
+  await expect(page.getByLabel('Taxas da venda 1')).toContainText('Taxa da venda (12%)'); await expect(page.getByLabel('Taxas da venda 1')).not.toContainText('50%');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
   const result = await (await page.request.get('/api/portal?period=all', { headers })).json();
   expect(result.sales).toHaveLength(1); expect(result.sales[0].checkoutId).toBe(id); expect(result.sales[0].feeCents).toBe(36000); expect(result.sales[0].attendantFeeCents).toBe(36000);

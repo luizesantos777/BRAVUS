@@ -1,3 +1,4 @@
+import type { PartnerBusinessSummary } from './partner-business.ts';
 export type Period = 'today' | 'yesterday' | 'week' | 'month' | 'all';
 export type AccountKind = 'attendant' | 'partner';
 export type PixType = '' | 'email' | 'cpf' | 'cnpj' | 'phone' | 'random';
@@ -13,7 +14,7 @@ export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCe
 export interface Sale { id: string; date: string; time: string; checkoutId: string; checkoutName: string; amountCents: number; feeCents: number; attendantFeeCents?: number | null; commissionBps: number; commissionMode?: 'net-share' | 'gross-share-less-fees'; note: string; receiptId: string; createdAt: string; status: SaleStatus; reviewNote: string; reviewedAt: string | null; cancelledAt?: string | null }
 export function saleStatusLabel(sale: Pick<Sale, 'status' | 'cancelledAt'>) { return sale.cancelledAt ? 'Cancelada' : saleStatusLabels[sale.status]; }
 export interface ReceiptDuplicates { total: number; matches: (Pick<Sale, 'id' | 'date' | 'time' | 'amountCents' | 'status' | 'cancelledAt'> & { attendantName: string })[] }
-export interface AdminSale extends Sale { attendantId: string; attendantName: string; accountKind?: AccountKind; receiptDuplicates?: ReceiptDuplicates }
+export interface AdminSale extends Sale { attendantId: string; attendantName: string; accountKind?: AccountKind; gatewayCostCents?: number | null; receiptDuplicates?: ReceiptDuplicates }
 export interface AdminSalesPage { sales: AdminSale[]; total: number; page: number; pageSize: number }
 export interface AdminCost extends DailyCost { attendantId: string; attendantName: string }
 export interface DailyCost { date: string; adsCents: number; withdrawalFeeCents: number }
@@ -27,7 +28,7 @@ export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; marketing?: MarketingReport; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
-export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; accountKind?: AccountKind; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance; marketing?: MarketingReport }
+export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; accountKind?: AccountKind; name: string; active: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance; marketing?: MarketingReport; business?: PartnerBusinessSummary }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
 export interface Invitation { attendantId: string; accountKind?: AccountKind; name: string; token: string }
@@ -152,7 +153,7 @@ export function inPeriod(date: string, period: Period, today: string) {
   const lower = start.toISOString().slice(0, 10);
   return period === 'yesterday' ? date === lower : date >= lower && date <= today;
 }
-export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Payout[], period: Period, today: string): Finance {
+export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Payout[], period: Period, today: string, accountKind?: AccountKind): Finance {
   const pending = sales.filter(sale => sale.status === 'pending' && inPeriod(sale.date, period, today));
   const rejectedSalesCount = sales.filter(sale => sale.status === 'rejected' && inPeriod(sale.date, period, today)).length;
   sales = sales.filter(sale => !sale.status || sale.status === 'approved');
@@ -161,7 +162,9 @@ export function calculateFinance(sales: Sale[], costs: DailyCost[], payouts: Pay
   for (const date of dates) {
     const daily = sales.filter(sale => sale.date === date);
     const commission = daily.reduce((sum, sale) => sum + saleEarnings(sale), 0);
-    const cost = costs.filter(cost => cost.date === date).reduce((sum, cost) => sum + cost.adsCents + cost.withdrawalFeeCents, 0);
+    // Partner ADS remain available to profit/ROI reporting, but never debit the
+    // payout ledger, regardless of who entered the advertising cost or its date.
+    const cost = costs.filter(cost => cost.date === date).reduce((sum, cost) => sum + (accountKind === 'partner' ? 0 : cost.adsCents) + cost.withdrawalFeeCents, 0);
     earned += commission - cost;
     if (inPeriod(date, period, today)) {
       commissionCents += commission;
@@ -238,5 +241,5 @@ export function demoInitial(): DemoData {
 export const demoCheckouts: Checkout[] = [{ id: 'main', name: 'Checkout principal', ...CHECKOUT_PIX_TARIFF }, { id: 'pix', name: 'PIX manual', ...MANUAL_PIX_TARIFF }, { id: 'buckpay', name: 'Checkout Buckpay', ...BUCKPAY_TARIFF }];
 export function demoPortal(data: DemoData, period: Period): Portal {
   const today = businessToday();
-  return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today), today };
+  return { profile: data.profile, checkouts: demoCheckouts, sales: data.sales.filter(sale => inPeriod(sale.date, period, today)).sort((a, b) => b.createdAt.localeCompare(a.createdAt)), payouts: data.payouts, finance: calculateFinance(data.sales, data.costs, data.payouts, period, today, data.profile.accountKind), today };
 }

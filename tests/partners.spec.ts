@@ -54,7 +54,7 @@ test('administrador cadastra parceiro com link individual e venda de R$ 100 libe
   await partnerPage.getByLabel('Valor bruto venda 1', { exact: true }).fill('100');
   await expect(partnerPage.getByLabel('Checkout venda 1', { exact: true })).toHaveCount(0);
   const preview = partnerPage.getByLabel('Taxas da venda 1', { exact: true });
-  await expect(preview).toContainText('Taxa do gateway (12%)');
+  await expect(preview).toContainText('Taxa da venda (12%)');
   await expect(preview).toContainText('12,00');
   await expect(preview).toContainText('88,00');
   await expect(preview).not.toContainText('50%');

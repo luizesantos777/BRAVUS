@@ -47,13 +47,18 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: admin confe
     assert.deepEqual(report.attendants[0].marketing, report.marketing);assert.equal(report.attendants[0].accountKind, 'partner');
     const csv = financialCsv(report);assert.match(csv, /Lucro do parceiro após ADS/);assert.match(csv, /132,72;221,20/);assert.ok(!csv.includes('test@example.test'));
     await store.recordManualPayout({ attendantId: partner.id, amount: '100', note: 'PIX de teste' }, 'fixture_report_manual_payout');
-    const settled = await store.adminDashboard();assert.equal(settled.attendants.find(item => item.id === partner.id)!.marketing!.profitCents, 19572);assert.equal(settled.attendants.find(item => item.id === partner.id)!.finance.availableCents, 16572);
-    const paidReport = await readFinancialReport(store, today, today, partner.id);assert.equal(paidReport.marketing!.profitCents, 13272);assert.equal(paidReport.totals.paidPayoutNetCents, 10000);
+    const settled = await store.adminDashboard();assert.equal(settled.attendants.find(item => item.id === partner.id)!.marketing!.profitCents, 19572);assert.equal(settled.attendants.find(item => item.id === partner.id)!.finance.availableCents, 18072);
+    const paidReport = await readFinancialReport(store, today, today, partner.id);assert.equal(paidReport.marketing!.profitCents, 13272);assert.equal(paidReport.totals.paidPayoutNetCents, 10000);assert.equal(paidReport.totals.netCommissionCents, 19272);assert.equal(paidReport.totals.gatewayCostCents, 1511);assert.equal(paidReport.totals.businessProfitCents, 1117);assert.equal(paidReport.totals.cashMovementCents, 10389);
     const old = await readFinancialReport(store, yesterday, yesterday, partner.id);assert.equal(old.marketing!.profitCents, 6300);assert.equal(old.marketing!.roiPercent, 252);
     const all = await readFinancialReport(store, yesterday, today);assert.equal(all.marketing!.profitCents, 18572);assert.equal(all.marketing!.ownAdsCents, 8000);assert.equal(all.marketing!.totalAdsCents, 9500);
     const regular = await readFinancialReport(store, today, today, normal.id);assert.equal(regular.attendants[0].marketing, undefined);assert.equal(regular.marketing!.profitCents, 0);
     const preserved = await store.sales(auth);await store.savePartnerAds(auth, { date: today, ads: '70' });
-    const updated = (await store.adminDashboard()).attendants.find(item => item.id === partner.id)!;assert.equal(updated.marketing!.profitCents, 17572);assert.equal(updated.finance.availableCents, 16572);assert.deepEqual(await store.sales(auth), preserved);
+    const updated = (await store.adminDashboard()).attendants.find(item => item.id === partner.id)!;assert.equal(updated.marketing!.profitCents, 17572);assert.equal(updated.finance.availableCents, 18072);assert.deepEqual(await store.sales(auth), preserved);
+    await store.setCosts(partner.id, today, 50000, 0);
+    const loss = (await store.adminDashboard()).attendants.find(item => item.id === partner.id)!;
+    assert.equal(loss.finance.availableCents, 18072);assert.equal(loss.finance.debtCents, 0);assert.equal(loss.marketing!.profitCents, -31428);
+    await store.recordManualPayout({ attendantId: partner.id, amount: '180.72', note: 'Repasse integral sem desconto de ADS' }, 'fixture_ads_control_full_payout');
+    assert.equal((await store.portal(auth, 'all')).finance.availableCents, 0);
     assert.equal((await store.adminSales('all', partner.id)).sales.length, 5);
   } finally { store.close(); }
 });

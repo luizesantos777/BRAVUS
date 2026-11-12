@@ -16,3 +16,5 @@
 .sale-row.partner-sale-row{grid-template-columns:20px minmax(130px,1fr) 106px 126px 25px}
 @media(max-width:600px){.sale-row.partner-sale-row{grid-template-columns:20px minmax(0,1fr) minmax(0,1fr) 26px}.partner-sale-row>input[type=time]{grid-column:2;grid-row:2}.partner-sale-row>.attach-button{grid-column:3;grid-row:2}}
 @media(max-width:400px){.sale-row.partner-sale-row{grid-template-columns:14px minmax(0,1fr) minmax(0,1fr) 22px}}
+
+.partner-ads-notice{background:#162a1d;border:1px solid #38583a;border-left:3px solid #e4bc35;border-radius:10px;padding:13px 15px;margin:14px 0;color:#dce7cf;font-size:12px;line-height:1.8}.partner-ads-notice strong{display:block;color:#f0d570}.partner-ads-notice p{margin:5px 0 0;color:#bac9ac}.attendant-balance .partner-ads-notice{font-size:11px}

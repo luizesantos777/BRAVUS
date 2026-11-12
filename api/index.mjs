@@ -181,19 +181,6 @@ import { createHash as createHash2, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-// server/database.ts
-async function openDatabase(source) {
-  if (typeof source === "string") {
-    const { openSqliteDatabase: openSqliteDatabase2 } = await Promise.resolve().then(() => (init_sqlite_database(), sqlite_database_exports));
-    return openSqliteDatabase2(source);
-  }
-  const { openTursoDatabase: openTursoDatabase2 } = await Promise.resolve().then(() => (init_turso_database(), turso_database_exports));
-  return openTursoDatabase2(source);
-}
-
-// server/store.ts
-import { createHash, randomBytes, randomUUID as randomUUID2 } from "node:crypto";
-
 // src/domain.ts
 var periodLabels = { today: "Hoje", yesterday: "Ontem", week: "\xDAltimos 7 dias", month: "Este m\xEAs", all: "Todo o per\xEDodo" };
 var pixLabels = { "": "Selecione o tipo", email: "E-mail", cpf: "CPF", cnpj: "CNPJ", phone: "Telefone", random: "Chave aleat\xF3ria" };
@@ -300,7 +287,7 @@ function inPeriod(date, period, today) {
   const lower = start.toISOString().slice(0, 10);
   return period === "yesterday" ? date === lower : date >= lower && date <= today;
 }
-function calculateFinance(sales, costs, payouts, period, today) {
+function calculateFinance(sales, costs, payouts, period, today, accountKind) {
   const pending = sales.filter((sale) => sale.status === "pending" && inPeriod(sale.date, period, today));
   const rejectedSalesCount = sales.filter((sale) => sale.status === "rejected" && inPeriod(sale.date, period, today)).length;
   sales = sales.filter((sale) => !sale.status || sale.status === "approved");
@@ -309,7 +296,7 @@ function calculateFinance(sales, costs, payouts, period, today) {
   for (const date of dates) {
     const daily = sales.filter((sale) => sale.date === date);
     const commission = daily.reduce((sum, sale) => sum + saleEarnings(sale), 0);
-    const cost = costs.filter((cost2) => cost2.date === date).reduce((sum, cost2) => sum + cost2.adsCents + cost2.withdrawalFeeCents, 0);
+    const cost = costs.filter((cost2) => cost2.date === date).reduce((sum, cost2) => sum + (accountKind === "partner" ? 0 : cost2.adsCents) + cost2.withdrawalFeeCents, 0);
     earned += commission - cost;
     if (inPeriod(date, period, today)) {
       commissionCents += commission;
@@ -381,6 +368,43 @@ function validateProfile(value) {
   return { name, email, phone, pixType, pixKey, pixOwner, ...extra };
 }
 var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }, { id: "buckpay", name: "Checkout Buckpay", ...BUCKPAY_TARIFF }];
+
+// src/partner-business.ts
+var PARTNER_PROVIDER_FEE_BPS = 599;
+var PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
+function partnerGatewayCost(amountCents) {
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error("Valor inv\xE1lido para calcular o custo do gateway.");
+  return Math.floor((amountCents * PARTNER_PROVIDER_FEE_BPS + 5e3) / 1e4) + PARTNER_PROVIDER_FIXED_FEE_CENTS;
+}
+function recordedPartnerGatewayCost(sale) {
+  if (sale.gatewayCostCents == null) return partnerGatewayCost(sale.amountCents);
+  if (!Number.isSafeInteger(sale.gatewayCostCents) || sale.gatewayCostCents < 0) throw new Error("Custo do gateway inv\xE1lido.");
+  return sale.gatewayCostCents;
+}
+function calculatePartnerBusiness(sales, period, today) {
+  const result = { saleCount: 0, partnerFeeCents: 0, gatewayCostCents: 0, profitCents: 0 };
+  for (const sale of sales) {
+    if (sale.status && sale.status !== "approved" || !inPeriod(sale.date, period, today)) continue;
+    result.saleCount++;
+    result.partnerFeeCents += sale.feeCents;
+    result.gatewayCostCents += recordedPartnerGatewayCost(sale);
+  }
+  result.profitCents = result.partnerFeeCents - result.gatewayCostCents;
+  return result;
+}
+
+// server/database.ts
+async function openDatabase(source) {
+  if (typeof source === "string") {
+    const { openSqliteDatabase: openSqliteDatabase2 } = await Promise.resolve().then(() => (init_sqlite_database(), sqlite_database_exports));
+    return openSqliteDatabase2(source);
+  }
+  const { openTursoDatabase: openTursoDatabase2 } = await Promise.resolve().then(() => (init_turso_database(), turso_database_exports));
+  return openTursoDatabase2(source);
+}
+
+// server/store.ts
+import { createHash, randomBytes, randomUUID as randomUUID2 } from "node:crypto";
 
 // server/controls-schema.ts
 import { randomUUID } from "node:crypto";
@@ -498,6 +522,7 @@ var PortalStore = class _PortalStore {
       await store.sql.exec("CREATE INDEX IF NOT EXISTS sales_status_created ON sales(status, created_at)");
       if (!saleColumns.has("commission_mode")) await store.sql.exec("ALTER TABLE sales ADD COLUMN commission_mode TEXT NOT NULL DEFAULT 'net-share' CHECK(commission_mode IN ('net-share','gross-share-less-fees'))");
       if (!saleColumns.has("attendant_fee_cents")) await store.sql.exec("ALTER TABLE sales ADD COLUMN attendant_fee_cents INTEGER CHECK(attendant_fee_cents IS NULL OR attendant_fee_cents >= 0 AND attendant_fee_cents <= fee_cents)");
+      if (!saleColumns.has("gateway_cost_cents")) await store.sql.exec("ALTER TABLE sales ADD COLUMN gateway_cost_cents INTEGER CHECK(gateway_cost_cents IS NULL OR gateway_cost_cents >= 0)");
       const payoutColumns = new Set((await store.sql.prepare("PRAGMA table_info(payouts)").all()).map((column) => column.name));
       if (!payoutColumns.has("withdrawal_fee_cents")) await store.sql.exec("ALTER TABLE payouts ADD COLUMN withdrawal_fee_cents INTEGER NOT NULL DEFAULT 0 CHECK(withdrawal_fee_cents >= 0 AND withdrawal_fee_cents < amount_cents)");
       if (!payoutColumns.has("gateway_fee_cents")) {
@@ -594,6 +619,7 @@ var PortalStore = class _PortalStore {
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("admin-manual-payouts-v1");
       }
       await store.applyPartnerTerms();
+      await store.recordPartnerGatewayCosts();
     });
   }
   /** Runs inside initialization's write transaction, including the audit and marker. */
@@ -623,13 +649,24 @@ var PortalStore = class _PortalStore {
     }
     await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
   }
+  async recordPartnerGatewayCosts() {
+    const migration = "partner-provider-cost-599-199-2026-11-11-v1";
+    if (await this.sql.prepare("SELECT id FROM schema_migrations WHERE id=?").get(migration)) return;
+    const fee = `CAST((amount_cents * ${PARTNER_PROVIDER_FEE_BPS} + 5000) / 10000 AS INTEGER) + ${PARTNER_PROVIDER_FIXED_FEE_CENTS}`;
+    const where = "gateway_cost_cents IS NULL AND attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner')";
+    await this.sql.prepare(`INSERT INTO audit_events (id,created_at,actor_id,actor_name,action,target_id,target_name,before_json,after_json)
+      SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.gateway_cost_recorded', id, (SELECT a.name FROM attendants a WHERE a.id=sales.attendant_id),
+      json_object('gatewayCostCents',NULL), json_object('gatewayCostCents',${fee},'feeBps',${PARTNER_PROVIDER_FEE_BPS},'fixedFeeCents',${PARTNER_PROVIDER_FIXED_FEE_CENTS}) FROM sales WHERE ${where}`).run((/* @__PURE__ */ new Date()).toISOString(), systemActor.id, systemActor.name);
+    await this.sql.exec(`UPDATE sales SET gateway_cost_cents=${fee} WHERE ${where}`);
+    await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
+  }
   close() {
     this.sql.close();
   }
   async adminDashboard() {
     return this.sql.transaction(async (db) => {
       const rows2 = await db.prepare("SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt FROM attendants ORDER BY created_at DESC").all();
-      const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
+      const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
       const partnerAds = await db.prepare("SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0").all();
@@ -645,8 +682,8 @@ var PortalStore = class _PortalStore {
       const ownSales = byAttendant(sales), ownCosts = byAttendant(costs), ownPayouts = byAttendant(payouts), ownPartnerAds = byAttendant(partnerAds), today = businessToday();
       const attendants = rows2.map((row) => {
         const records = ownSales.get(String(row.id)) ?? [];
-        const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today);
-        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today) } : {} };
+        const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today, row.accountKind);
+        return { ...row, active: row.active === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today), business: calculatePartnerBusiness(records, "all", today) } : {} };
       });
       return { attendants, payouts, checkouts: await new _PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter((sale) => sale.status === "pending").length, todayAdsCents: costs.filter((cost) => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, "read");
@@ -658,7 +695,7 @@ var PortalStore = class _PortalStore {
     const args = [status, status, attendantId, attendantId];
     return this.sql.transaction(async (database) => {
       const total = Number((await database.prepare("SELECT COUNT(*) AS count FROM sales s " + where).get(...args)).count);
-      const sales = await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, a.account_kind AS accountKind, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
+      const sales = await database.prepare(`SELECT s.id, s.attendant_id AS attendantId, a.name AS attendantName, a.account_kind AS accountKind, s.date, s.time, s.checkout_id AS checkoutId, s.checkout_name AS checkoutName, s.amount_cents AS amountCents, s.fee_cents AS feeCents, s.gateway_cost_cents AS gatewayCostCents, s.attendant_fee_cents AS attendantFeeCents, s.commission_bps AS commissionBps, s.commission_mode AS commissionMode, s.note, s.receipt_id AS receiptId, s.created_at AS createdAt, s.status, s.review_note AS reviewNote, s.reviewed_at AS reviewedAt, (SELECT e.created_at FROM audit_events e WHERE e.target_id = s.id AND e.action = 'sale.cancelled' LIMIT 1) AS cancelledAt FROM sales s JOIN attendants a ON a.id = s.attendant_id ${where} ORDER BY s.created_at DESC, s.id LIMIT ? OFFSET ?`).all(...args, pageSize, (page - 1) * pageSize);
       if (sales.length) {
         const matches = await database.prepare(`WITH receipt_matches AS (
           SELECT source.id AS sourceSaleId, related.id, owner.name AS attendantName, related.date, related.time, related.amount_cents AS amountCents, related.status,
@@ -867,7 +904,7 @@ var PortalStore = class _PortalStore {
   }
   async portal(auth, period = "today") {
     const profile = await this.profile(auth), sales = await this.sales(auth), costs = await this.costs(auth), payouts = await this.payouts(auth), today = businessToday();
-    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today);
+    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today, profile.accountKind);
     const partner = profile.accountKind === "partner" || checkouts.some((checkout) => checkout.id === exclusiveCheckoutId(auth.id));
     const ownAds = partner ? (await this.sql.prepare("SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND partner_ads_cents > 0").all(auth.id)).map((row) => ({ date: String(row.date), adsCents: Number(row.adsCents) })) : [];
     return { profile, checkouts, sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance, ...partner ? { marketing: calculateMarketing(finance, ownAds, period, today) } : {}, today };
@@ -966,7 +1003,7 @@ var PortalStore = class _PortalStore {
       for (const row of normalized) {
         const receiptId = randomUUID2();
         await store.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(row.feeCents, profile.accountKind));
+        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(row.feeCents, profile.accountKind), profile.accountKind === "partner" ? partnerGatewayCost(row.amountCents) : null);
       }
       await store.audit({ id: auth.id, name: profile.name }, "sales.submitted", batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
       return { duplicate: false, count: normalized.length };
@@ -1081,7 +1118,8 @@ var auditActions = {
   "attendant.access_changed": "Acesso alterado",
   "attendant.token_rotated": "Token renovado",
   "attendant.rule_updated": "Regra financeira da conta alterada",
-  "partner.sale_repriced": "Taxa da venda do parceiro recalculada"
+  "partner.sale_repriced": "Taxa da venda do parceiro recalculada",
+  "partner.gateway_cost_recorded": "Custo do gateway do parceiro registrado"
 };
 function validateDateRange(start, end) {
   if (!validDate(start) || !validDate(end) || start > end || end > businessToday()) throw new Error("Informe um per\xEDodo v\xE1lido, com in\xEDcio at\xE9 o fim e sem datas futuras.");
@@ -1089,7 +1127,7 @@ function validateDateRange(start, end) {
 function financialReport(input, start, end, attendantId = "") {
   validateDateRange(start, end);
   const inside = (date) => date >= start && date <= end;
-  const empty = () => ({ count: 0, pendingCount: 0, rejectedCount: 0, grossCents: 0, gatewayFeeCents: 0, commissionCents: 0, adsCents: 0, adjustmentsCents: 0, netCommissionCents: 0, paidPayoutCents: 0, paidPayoutNetCents: 0, withdrawalGatewayFeeCents: 0, attendantWithdrawalFeeCents: 0, businessWithdrawalFeeCents: 0, businessProfitCents: 0, cashMovementCents: 0 });
+  const empty = () => ({ count: 0, pendingCount: 0, rejectedCount: 0, grossCents: 0, gatewayFeeCents: 0, gatewayCostCents: 0, commissionCents: 0, adsCents: 0, adjustmentsCents: 0, netCommissionCents: 0, paidPayoutCents: 0, paidPayoutNetCents: 0, withdrawalGatewayFeeCents: 0, attendantWithdrawalFeeCents: 0, businessWithdrawalFeeCents: 0, businessProfitCents: 0, cashMovementCents: 0 });
   const rows2 = new Map(input.attendants.filter((a) => !attendantId || a.id === attendantId).map((a) => [a.id, { ...empty(), attendantId: a.id, attendantName: a.name, accountKind: a.accountKind }]));
   for (const sale of input.sales) {
     const row = rows2.get(sale.attendantId);
@@ -1105,6 +1143,7 @@ function financialReport(input, start, end, attendantId = "") {
     row.count++;
     row.grossCents += sale.amountCents;
     row.gatewayFeeCents += sale.feeCents;
+    row.gatewayCostCents += row.accountKind === "partner" ? recordedPartnerGatewayCost(sale) : sale.feeCents;
     row.commissionCents += saleEarnings(sale);
   }
   for (const cost of input.costs) {
@@ -1127,9 +1166,10 @@ function financialReport(input, start, end, attendantId = "") {
   const totals = empty();
   for (const row of rows2.values()) {
     row.businessWithdrawalFeeCents = row.withdrawalGatewayFeeCents - row.attendantWithdrawalFeeCents;
-    row.netCommissionCents = row.commissionCents - row.adsCents - row.adjustmentsCents - row.attendantWithdrawalFeeCents;
-    row.businessProfitCents = row.grossCents - row.gatewayFeeCents - row.commissionCents - row.businessWithdrawalFeeCents;
-    row.cashMovementCents = row.grossCents - row.gatewayFeeCents - row.adsCents - row.adjustmentsCents - row.paidPayoutNetCents - row.withdrawalGatewayFeeCents;
+    const debitAds = row.accountKind === "partner" ? 0 : row.adsCents;
+    row.netCommissionCents = row.commissionCents - debitAds - row.adjustmentsCents - row.attendantWithdrawalFeeCents;
+    row.businessProfitCents = row.grossCents - row.gatewayCostCents - row.commissionCents - row.businessWithdrawalFeeCents;
+    row.cashMovementCents = row.grossCents - row.gatewayCostCents - debitAds - row.adjustmentsCents - row.paidPayoutNetCents - row.withdrawalGatewayFeeCents;
     if (row.accountKind === "partner") {
       row.marketing = calculateMarketingSummary(row.commissionCents, row.adsCents, ownAds.get(row.attendantId) ?? 0);
       partnerEarnings += row.commissionCents;
@@ -1142,8 +1182,8 @@ function financialReport(input, start, end, attendantId = "") {
 }
 function financialCsv(report) {
   const text = (value) => '"' + (/^[\s]*[=+\-@]/.test(value) ? "'" + value : value).replaceAll('"', '""') + '"';
-  const headings = ["Atendente", "In\xEDcio", "Fim", "Vendas aprovadas", "Faturamento", "Taxas de venda", "Comiss\xE3o ap\xF3s taxas de venda", "ADS", "Ajustes", "Parte do atendente no saque", "Comiss\xE3o ap\xF3s descontos", "Repasses brutos pagos", "PIX l\xEDquido pago", "Taxa total de saque", "Parte BRAVUS no saque", "Lucro BRAVUS", "Movimenta\xE7\xE3o de caixa", "ADS pr\xF3prios do parceiro", "ADS totais do parceiro", "Lucro do parceiro ap\xF3s ADS", "ROI do parceiro (%)"];
-  const row = (name, values, marketing) => [text(name), report.start, report.end, values.count, ...["grossCents", "gatewayFeeCents", "commissionCents", "adsCents", "adjustmentsCents", "attendantWithdrawalFeeCents", "netCommissionCents", "paidPayoutCents", "paidPayoutNetCents", "withdrawalGatewayFeeCents", "businessWithdrawalFeeCents", "businessProfitCents", "cashMovementCents"].map((key) => (values[key] / 100).toFixed(2).replace(".", ",")), ...["ownAdsCents", "totalAdsCents", "profitCents"].map((key) => marketing ? (marketing[key] / 100).toFixed(2).replace(".", ",") : ""), marketing?.roiPercent == null ? "" : marketing.roiPercent.toFixed(2).replace(".", ",")].join(";");
+  const headings = ["Atendente", "In\xEDcio", "Fim", "Vendas aprovadas", "Faturamento", "Taxas de venda", "Comiss\xE3o ap\xF3s taxas de venda", "ADS", "Ajustes", "Parte do atendente no saque", "Valor gerado para repasse", "Repasses brutos pagos", "PIX l\xEDquido pago", "Taxa total de saque", "Parte BRAVUS no saque", "Lucro BRAVUS", "Movimenta\xE7\xE3o de caixa", "ADS pr\xF3prios do parceiro (controle)", "ADS totais do parceiro (controle)", "Lucro do parceiro ap\xF3s ADS", "ROI do parceiro (%)", "Custo real do gateway"];
+  const row = (name, values, marketing) => [text(name), report.start, report.end, values.count, ...["grossCents", "gatewayFeeCents", "commissionCents", "adsCents", "adjustmentsCents", "attendantWithdrawalFeeCents", "netCommissionCents", "paidPayoutCents", "paidPayoutNetCents", "withdrawalGatewayFeeCents", "businessWithdrawalFeeCents", "businessProfitCents", "cashMovementCents"].map((key) => (values[key] / 100).toFixed(2).replace(".", ",")), ...["ownAdsCents", "totalAdsCents", "profitCents"].map((key) => marketing ? (marketing[key] / 100).toFixed(2).replace(".", ",") : ""), marketing?.roiPercent == null ? "" : marketing.roiPercent.toFixed(2).replace(".", ","), ((values.gatewayCostCents ?? values.gatewayFeeCents) / 100).toFixed(2).replace(".", ",")].join(";");
   return "\uFEFF" + [headings.map(text).join(";"), ...report.attendants.map((a) => row(a.attendantName, a, a.marketing)), row("TOTAL", report.totals, report.marketing)].join("\r\n") + "\r\n";
 }
 
@@ -1158,7 +1198,7 @@ async function readFinancialReport(store, start, end, attendantId = "") {
   return store.sql.transaction(async (db) => {
     const attendants = await db.prepare("SELECT id, name, account_kind AS accountKind FROM attendants WHERE (? = '' OR id = ?)").all(attendantId, attendantId);
     if (attendantId && !attendants.length) throw new PortalError(404, "Atendente n\xE3o encontrado.");
-    const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
+    const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
     const costs = await db.prepare("SELECT attendant_id AS attendantId, date, ads_cents AS adsCents, withdrawal_fee_cents AS withdrawalFeeCents FROM costs WHERE date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
     const payouts = await db.prepare("SELECT attendant_id AS attendantId, status, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, paid_at AS paidAt, requested_at AS requestedAt FROM payouts WHERE status = 'paid' AND (? = '' OR attendant_id = ?)").all(attendantId, attendantId);
     const partnerAds = await db.prepare("SELECT attendant_id AS attendantId, date, partner_ads_cents AS adsCents FROM costs WHERE partner_ads_cents > 0 AND date BETWEEN ? AND ? AND (? = '' OR attendant_id = ?)").all(start, end, attendantId, attendantId);
@@ -1616,7 +1656,7 @@ async function importArchive(db, archive) {
     for (const name of TABLES) {
       const table = archive.tables.find((item) => item.name === name);
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
-      const optional = name === "attendants" ? "account_kind" : name === "costs" ? "partner_ads_cents" : void 0;
+      const optional = name === "attendants" ? "account_kind" : name === "costs" ? "partner_ads_cents" : name === "sales" ? "gateway_cost_cents" : void 0;
       const required = optional && Array.isArray(table.columns) && !table.columns.includes(optional) ? expected.filter((column) => column !== optional) : expected;
       if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some((column) => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map((column) => '"' + column + '"').join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);

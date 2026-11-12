@@ -1,3 +1,4 @@
+import PartnerAdsNotice from './PartnerAdsNotice.tsx';
 import { useEffect, useRef, useState } from 'react';
 import { AlertCircle, LoaderCircle, Megaphone, RefreshCw, Save, TrendingUp } from 'lucide-react';
 import { businessToday, dateLabel, money, periodLabels } from './domain.ts';
@@ -22,15 +23,16 @@ export default function PartnerAds({ client, report, period, disabled, refresh, 
   const roi = report?.roiPercent == null ? '—' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(report.roiPercent) + '%';
   return <section className="panel partner-ads-panel" aria-labelledby="partner-ads-title">
     <div className="partner-ads-heading"><div className="section-title"><Megaphone size={18} /><h2 id="partner-ads-title">MEUS CUSTOS DE ADS E ROI</h2></div><button className="button secondary" disabled={disabled || saving || loading} onClick={() => { setReload(value => value + 1); void refresh(); }}><RefreshCw size={14} />Atualizar ADS e ROI</button></div>
+    <PartnerAdsNotice />
     <p className="section-description">Informe o total que você pagou em anúncios por dia. Esses custos entram somente no seu lucro e ROI, sem desconto no saldo de repasse.</p>
     {report && <><div className="partner-roi-heading"><TrendingUp size={16} /><h3>Resultado · {periodLabels[period]}</h3></div>
       <div className="financial-grid partner-roi-grid">
         <article className="metric" aria-label="Seu valor após taxas no ROI"><h3>SEU VALOR APÓS TAXAS</h3><strong>{money(report.earningsCents)}</strong><small>Somente vendas aprovadas</small></article>
         <article className="metric" aria-label="Investimento em ADS no ROI"><h3>INVESTIMENTO EM ADS</h3><strong>{money(report.totalAdsCents)}</strong><small>Seus anúncios e ADS da administração</small></article>
-        <article className={`metric ${report.profitCents < 0 ? 'negative' : ''}`} aria-label="Resultado após ADS"><h3>RESULTADO APÓS ADS</h3><strong>{money(report.profitCents)}</strong><small>Antes de ajustes e taxas de repasse</small></article>
+        <article className={`metric ${report.profitCents < 0 ? 'negative' : ''}`} aria-label="Resultado após ADS"><h3>RESULTADO APÓS ADS</h3><strong>{money(report.profitCents)}</strong><small>Indicador financeiro · Não altera o repasse</small></article>
         <article className={`metric partner-roi ${report.roiPercent != null && report.roiPercent < 0 ? 'negative' : ''}`} aria-label="ROI do parceiro"><h3>ROI</h3><strong>{roi}</strong><small>{report.roiPercent == null ? 'Informe um custo de ADS para calcular' : 'Retorno sobre o investimento em ADS'}</small></article>
       </div>
-      <p className="payout-help">ADS pagos por você: <strong>{money(report.ownAdsCents)}</strong> · ADS da administração já descontados do saldo: <strong>{money(report.chargedAdsCents)}</strong>.</p>
+      <p className="payout-help">ADS pagos por você: <strong>{money(report.ownAdsCents)}</strong> · ADS registrados pela administração (apenas controle): <strong>{money(report.chargedAdsCents)}</strong>.</p>
       <p className="partner-roi-rule">ROI = (seu valor nas vendas aprovadas após taxas − ADS do período) ÷ ADS do período × 100. Vendas em análise, vendas canceladas, ajustes e repasses não entram neste cálculo.</p>
     </>}
     <form className="partner-ads-form" onSubmit={async event => {

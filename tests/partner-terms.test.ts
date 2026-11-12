@@ -70,7 +70,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: migra todas
     assert.equal((await store.sql.prepare('SELECT active FROM attendants WHERE id=?').get(second.id))!.active, 0);
     assert.deepEqual(await store.portal({ id: ordinary.id }, 'all'), oldRegular);
     const earnings = partner.sales.filter(sale => sale.status === 'approved').reduce((sum, sale) => sum + saleEarnings(sale), 0);
-    assert.equal(partner.finance.commissionCents, earnings);assert.equal(partner.finance.availableCents, earnings - 1200 - 2000);
+    assert.equal(partner.finance.commissionCents, earnings);assert.equal(partner.finance.availableCents, earnings - 200 - 2000);
     assert.equal(partner.finance.paidPayoutNetCents, 1750);assert.equal(partner.marketing!.ownAdsCents, 3000);
     assert.equal(partner.marketing!.profitCents, earnings - 4000);
     assert.equal((await store.adminDashboard()).attendants.find(account => account.id === first.id)!.finance.availableCents, partner.finance.availableCents);

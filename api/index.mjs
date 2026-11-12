@@ -1054,8 +1054,8 @@ var PortalStore = class _PortalStore {
     } catch (error) {
       return invalid(error.message);
     }
-    if ((await this.profile(auth)).accountKind === "partner") return [];
-    const attendants = await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1 AND account_kind = 'attendant'").all();
+    await this.profile(auth);
+    const attendants = await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1").all();
     return (await Promise.all(attendants.map(async (attendant) => {
       const sales = (await this.sales({ id: String(attendant.id) })).filter((sale) => sale.status === "approved" && inRankingRange(sale.date, range));
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };

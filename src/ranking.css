@@ -1,3 +1,4 @@
+.ranking-shortcut { margin-top: 18px; border-color: #74602c; color: #efcf66; }
 .podium-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 15px; padding-bottom: 22px; border-bottom: 1px solid var(--border); }
 .podium-heading h2 { display: flex; align-items: flex-start; gap: 12px; font-size: clamp(18px, 2.1vw, 24px); line-height: 1.4; color: #f1f0e7; text-transform: none; }
 .podium-heading h2 > svg { width: 28px; height: 30px; flex-shrink: 0; color: #efc75e; }

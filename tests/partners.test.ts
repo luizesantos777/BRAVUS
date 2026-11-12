@@ -156,8 +156,10 @@ test('token do parceiro não administra, não muda o tipo da conta e não lê ve
   assert.equal(rankingResponse.status, 200);
   const ranking = await rankingResponse.json() as { id: string; name: string }[];
   assert.ok(ranking.some(entry => entry.id === ordinaryView.profile.id));
-  assert.equal(ranking.some(entry => entry.id === partnerView.profile.id), false);
-  assert.deepEqual(await (await call('/api/ranking?period=all')).json(), []);
+  assert.equal(ranking.some(entry => entry.id === partnerView.profile.id), true);
+  const partnerRanking = await (await call('/api/ranking?period=all')).json() as { id: string; mine: boolean }[];
+  assert.ok(partnerRanking.some(entry => entry.id === partnerView.profile.id && entry.mine));
+  assert.ok(partnerRanking.some(entry => entry.id === ordinaryView.profile.id && !entry.mine));
   for (const secret of [partnerToken, attendantToken, profile.pixKey]) assert.equal(JSON.stringify(ranking).includes(secret), false);
 });
 

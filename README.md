@@ -26,9 +26,9 @@ Portal em português baseado nas capturas fornecidas: tema escuro, lançamento m
 
 ## Pódio e períodos do ranking
 
-A aba **Ranking** apresenta os três primeiros em pódio: segundo à esquerda, campeão no centro e terceiro à direita, com foto (ou inicial), medalha, faturamento aprovado, quantidade de vendas e indicação **Você**. As posições seguintes aparecem abaixo. O tema segue o verde e dourado BRAVUS. Não cria participantes quando há menos de três contas com vendas.
+A aba **Ranking** aparece nos portais de atendentes e parceiros, com o atalho **Ver pódio e ranking** no resumo financeiro. O parâmetro `?aba=ranking` abre diretamente essa aba, preservando o token no fragmento. O HTML dos portais exige revalidação na Vercel para buscar a versão publicada ao recarregar. A aba apresenta os três primeiros em pódio: segundo à esquerda, campeão no centro e terceiro à direita, com foto (ou inicial), medalha, faturamento aprovado, quantidade de vendas e indicação **Você**. As posições seguintes aparecem abaixo. O tema segue o verde e dourado BRAVUS. Não cria participantes quando há menos de três contas com vendas.
 
-Os filtros **Diário**, **7 dias**, **30 dias** e **Personalizar** são independentes do extrato; a abertura usa 30 dias. As janelas de 7/30 dias incluem hoje e os 6/29 dias anteriores, usando a data de negócio de São Paulo. O calendário aceita início e fim inclusivos, sem datas futuras ou intervalo invertido. Só vendas aprovadas de atendentes ativos participam; pendentes, recusadas, canceladas e parceiros continuam fora do ranking. O desempate usa quantidade de vendas, nome e ID, nessa ordem. Respostas contêm somente nome, foto, faturamento, contagem, ID e indicação da própria conta, sem PIX, tokens ou comissões. Falhas mostram nova tentativa; um período vazio mostra o estado sem vendas.
+Os filtros **Diário**, **7 dias**, **30 dias** e **Personalizar** são independentes do extrato; a abertura usa 30 dias. As janelas de 7/30 dias incluem hoje e os 6/29 dias anteriores, usando a data de negócio de São Paulo. O calendário aceita início e fim inclusivos, sem datas futuras ou intervalo invertido. Atendentes e parceiros ativos participam do mesmo ranking, com acesso nos dois portais. Só vendas aprovadas entram; pendentes, recusadas e canceladas ficam fora. O desempate usa quantidade de vendas, nome e ID, nessa ordem. Respostas contêm somente nome, foto, faturamento, contagem, ID e indicação da própria conta, sem PIX, tokens ou comissões. Falhas mostram nova tentativa; um período vazio mostra o estado sem vendas.
 
 `GET /api/ranking?period=last30` consulta 30 dias; `period=today` e `period=week` consultam os atalhos. Um intervalo usa `period=custom&start=AAAA-MM-DD&end=AAAA-MM-DD`. Sem parâmetro, usa 30 dias. Os antigos períodos `yesterday`, `month` e `all` continuam aceitos pela API; os filtros financeiros mantêm suas regras anteriores.
 
@@ -89,7 +89,7 @@ O endereço do Render serve o sistema completo; não depende de recompilar o Git
 
 ## Parceiros com taxa de 12%
 
-Na administração, abra **Atendentes → Novo parceiro**, informe o nome e gere o token individual (ou defina um token próprio). A conta aparece como **Parceiro**, abre o **Portal do Parceiro** e acessa somente seus próprios dados, sem permissões administrativas. Renovação de token e revogação funcionam como nos acessos existentes; parceiros ficam fora do ranking de atendentes.
+Na administração, abra **Atendentes → Novo parceiro**, informe o nome e gere o token individual (ou defina um token próprio). A conta aparece como **Parceiro**, abre o **Portal do Parceiro** e acessa seus próprios dados financeiros e o ranking geral, sem permissões administrativas. Renovação de token e revogação funcionam como nos acessos existentes; parceiros participam do ranking geral com os atendentes.
 
 Todas as vendas do parceiro, inclusive as antigas, usam **12% sobre o bruto, sem valor fixo adicional**, e destinam o restante ao parceiro: uma venda de R$ 100 resulta em R$ 12 de taxa e R$ 88 para ele após aprovação. Essa regra substitui o rateio de 50% somente nos parceiros. O gateway é automático, com limite de R$ 3.000 por venda. ADS servem apenas para lucro e ROI, e novos repasses não cobram saque. A BRAVUS registra separadamente seu custo de 5,99% + R$ 1,99 por venda; esse custo não reduz novamente o valor do parceiro.
 
@@ -267,7 +267,7 @@ O comando `mark-payout` permanece apenas para compatibilidade com registros hist
 - Todas as vendas aprovadas geram comissão, sem meta diária ou faturamento mínimo. Novos lançamentos aguardam análise; o histórico anterior à aprovação manual permanece aprovado. Os dias seguem o fuso America/Sao_Paulo.
 - Custos ADS e ajustes adicionais de taxas são descontados do saldo e podem gerar saldo negativo. A taxa automática de saque não deve ser lançada novamente nos custos diários.
 - A taxa de **R$ 5,00 do gateway é dividida em R$ 2,50 para cada parte**, somente ao registrar um pagamento manual já realizado. Do total informado pelo administrador, R$ 2,50 são a parcela do atendente: um débito de R$ 41,50 corresponde a **R$ 39,00 enviados no PIX**. A BRAVUS assume os outros R$ 2,50. O atendente não cria pedidos nem define taxas. O registro é atômico, exige saldo e PIX cadastrados, e usa idempotência para que repetição ou reconexão não debite duas vezes. Repasses pagos mantêm suas tarifas históricas.
-- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas aprovadas de atendentes ativos, sem tokens ou PIX.
+- O extrato tem filtros de período; o saldo disponível permanece acumulado. O ranking mostra nome, foto e volume de vendas aprovadas das contas ativas de atendentes e parceiros, sem tokens ou PIX.
 - Cada venda exige um print. O seletor aceita imagens de até 20 MB e reconhece PNG, JPEG e WEBP pelo conteúdo, mesmo quando a galeria não informa o tipo. Imagens acima de 2 MB são reduzidas no aparelho para JPEG (lado maior de até 3.200 pixels, com redução adicional quando necessária); o atendente pode conferir a prévia antes do envio. HEIC é convertido quando o navegador consegue abri-lo; caso contrário, a orientação é anexar uma captura de tela em PNG/JPG. Enquanto prepara o anexo, o portal bloqueia o envio e mostra o progresso; falhas aparecem junto à venda, sem reutilizar um anexo anterior. O servidor continua validando formato e limite de 2 MB por comprovante. Cada envio aceita até 10 vendas de forma atômica, com até 12 MB de JSON no servidor local ou 4 MB na Vercel.
 - Um identificador de envio evita duplicar vendas em tentativas repetidas com o mesmo conteúdo.
 
@@ -355,7 +355,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `DELETE /api/push/subscriptions` | Token do atendente | Remover inscrição própria pelo ID |
 | `POST /api/sales` | Token do atendente | Gravar lote atômico; requer `Idempotency-Key` |
 | `GET /api/receipts/:id` | Token do proprietário | Obter comprovante privado |
-| `GET /api/ranking?period=last30` | Token do atendente | Pódio e ranking com filtros de período, sem dados privados |
+| `GET /api/ranking?period=last30` | Token individual de atendente ou parceiro | Pódio e ranking com filtros de período, sem dados privados |
 | `POST /api/payouts` | Token do atendente | Desativado (410); repasses são registrados pela administração |
 | `POST /api/admin/payouts` | Chave administrativa | Registrar pagamento manual já realizado; requer `Idempotency-Key` |
 | `GET /api/admin/sales?status=pending&attendantId=&page=1` | Chave administrativa | Fila de vendas paginada; status `pending`, `approved`, `rejected` ou `all` |

@@ -4,6 +4,13 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "headers": [
+    { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/parceiro.html", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/parceiro", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/parceiro/", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/admin", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/atendente/:token", "headers": [{ "key": "Cache-Control", "value": "no-store" }] },
     { "source": "/manifest.webmanifest", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] },
     { "source": "/admin.webmanifest", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] },
     { "source": "/notifications-worker.js", "headers": [{ "key": "Cache-Control", "value": "public, max-age=0, must-revalidate" }] }

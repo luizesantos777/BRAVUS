@@ -7,6 +7,34 @@ const entries = [
   { id: 'fixture-fourth', name: 'Raposo', photoUrl: '', grossCents: 12500, count: 1, mine: false },
 ];
 
+test('parceiro e atendente encontram Ranking e o atalho, carregam vendas reais e reabrem o link direto', async ({ page }, info) => {
+  const admin = { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' };
+  const accounts: { id: string; token: string; name: string; kind: string }[] = [];
+  for (const kind of ['partner', 'attendant']) {
+    const name = `Ranking ${kind} ${info.project.name}`, token = `fixture_rank_access_${kind}_${info.project.name}_01234567890123456789`;
+    const created = await page.request.post('/api/admin/attendants', { headers: admin, data: { name, token, accountKind: kind } });expect(created.status()).toBe(201);
+    const account = await created.json(), personal = { Authorization: `Bearer ${token}` };
+    const portal = await (await page.request.get('/api/portal', { headers: personal })).json();
+    expect((await page.request.post('/api/sales', { headers: { ...personal, 'Idempotency-Key': `fixture_rank_access_sale_${kind}_${info.project.name}` }, data: { date: portal.today, sales: [{ amount: '100', checkoutId: 'main', time: '12:00', note: '', receipt: { name: 'ranking.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' } }] } })).status()).toBe(200);
+    const sale = (await (await page.request.get('/api/portal', { headers: personal })).json()).sales[0];
+    expect((await page.request.patch(`/api/admin/sales/${sale.id}`, { headers: admin, data: { status: 'approved', note: '' } })).status()).toBe(200);
+    accounts.push({ id: account.attendantId, token, name, kind });
+  }
+  for (const account of accounts) {
+    await page.goto(`/#/atendente/${account.token}`);
+    const tab = page.getByRole('tab', { name: 'Ranking', exact: true });await expect(tab).toBeVisible();
+    const shortcut = page.getByRole('button', { name: 'Ver pódio e ranking', exact: true });await expect(shortcut).toBeEnabled();await shortcut.click();
+    await expect(tab).toHaveAttribute('aria-selected', 'true');await expect(page.getByRole('heading', { name: /Pódio e Ranking/ })).toBeVisible();
+    await expect(page.locator('.ranking-entry.mine')).toContainText(account.name);await expect(page.locator('.ranking-entry.mine')).toContainText('100,00');
+    const response = await page.request.get('/api/ranking?period=last30', { headers: { Authorization: `Bearer ${account.token}` } });expect(response.status()).toBe(200);
+    const ranking = await response.json();for (const member of accounts) expect(ranking.some((entry: { id: string }) => entry.id === member.id)).toBe(true);
+    const entry = account.kind === 'partner' ? '/parceiro.html' : '/';
+    await page.goto(`${entry}?aba=ranking#/atendente/${account.token}`);await expect(page.getByRole('heading', { name: /Pódio e Ranking/ })).toBeVisible();
+    await page.reload();await expect(page.locator('.ranking-entry.mine')).toContainText(account.name);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
 test('pódio mantém 2-1-3, marca Você e permite diário, 7 dias, 30 dias e intervalo no calendário', async ({ page }, info) => {
   const requests: URL[] = [];
   await page.route('**/api/ranking?*', route => {

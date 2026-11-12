@@ -1,5 +1,7 @@
 # BRAVUS — Portal do Atendente
 
+Os portais do atendente e do parceiro não exibem percentuais, tarifas fixas, valores de taxas de venda ou a parte BRAVUS. Extratos, cartões de checkout/PIX, prévia do lançamento e histórico apresentam os valores da conta sem detalhar essas taxas. Faturamento, ADS, lucro, ROI, saldo e limites de venda continuam disponíveis. A alteração é de apresentação: cálculos, API, banco, regras de aprovação e repasses permanecem iguais. A administração continua consultando taxas, custos reais e lucro BRAVUS. Informações de saque e ajustes financeiros continuam separadas das taxas das vendas.
+
 ## Transações e lucro dos parceiros na administração
 
 A aprovação de vendas identifica o tipo da conta e mostra, para parceiros, o valor bruto, a taxa da venda de 12%, o valor do parceiro e, somente no admin, o custo real do gateway e o lucro BRAVUS nas taxas. Não há um segundo desconto de “taxa do atendente”. Uma venda de R$ 219 tem R$ 26,28 de taxa da venda, R$ 192,72 para o parceiro, R$ 15,11 de custo do gateway e R$ 11,17 de lucro BRAVUS nas taxas.
@@ -227,7 +229,7 @@ A aba **Lançar Vendas** exibe a chave de recebimento do PIX manual fornecida pe
 
 O PIX manual aplica automaticamente **6,99% + R$ 1,69 por venda**, conforme a tabela fornecida, para vendas a partir de R$ 5,00. Todas as faixas informadas usam essa mesma tarifa. O percentual é arredondado para centavos em cada venda e a taxa fixa é adicionada a cada transação, inclusive em lotes. Exemplo: R$ 100,00 gera R$ 8,68 de taxa; dividindo a taxa em R$ 4,34 para cada parte, o atendente fica com **R$ 45,66**, antes de ADS e saque.
 
-A tela mostra a tarifa, a parte BRAVUS, a taxa calculada e o valor do atendente antes de enviar. O servidor recalcula usando a configuração do checkout e grava a taxa na venda; valores de taxa enviados pelo navegador não são usados. O extrato desconta somente a parcela da taxa atribuída ao atendente. O histórico mostra bruto, BRAVUS após taxas, taxa total do gateway, parcela do atendente e seu valor líquido.
+A prévia mostra o valor previsto para a conta antes de ADS, sem detalhar taxas. O histórico apresenta bruto, valor da conta, situação e comprovante. O servidor continua recalculando pela configuração do checkout e guardando a taxa na venda; valores de taxa enviados pelo navegador não são usados. Os detalhes das tarifas e do rateio continuam visíveis na administração.
 
 O **Checkout principal** recebe vendas de **até R$ 1.000,00**, inclusive, com a tarifa informada pelo responsável:
 
@@ -238,7 +240,7 @@ O **Checkout principal** recebe vendas de **até R$ 1.000,00**, inclusive, com a
 
 Uma venda de R$ 1.000,00 gera taxa de R$ 151,99; a metade da taxa atribuída ao atendente é R$ 76,00, então ele fica com **R$ 424,00**, antes de ADS e saque. Valores maiores são recusados tanto na interface quanto na API. A validação se aplica a cada venda e rejeita todo o lote se algum item ultrapassar o limite; o navegador não pode remover esse limite enviando dados manipulados. O percentual é arredondado em centavos e a taxa fixa é adicionada por transação. Reserva financeira informada: 0%.
 
-O cartão do checkout mostra a tarifa e o limite. O cartão do PIX manual também informa **6,99% + R$ 1,69 por venda**. Antes de enviar, cada lançamento exibe a parte BRAVUS, as taxas e o valor do atendente; o servidor recalcula usando sua configuração. O painel permite ajustar tarifas sem alterar o limite de recebimento do checkout. Faixas opcionais devem começar abaixo desse limite. As migrações preservam taxas e decisões já registradas; o limite e a retirada da antiga faixa acima de R$ 1.000 são aplicados uma única vez.
+O cartão do checkout mostra o limite e o cartão do PIX manual informa o valor mínimo, sem apresentar tarifas de venda. Antes de enviar, cada lançamento mostra o valor previsto para a conta; o servidor recalcula usando sua configuração. A administração permite ajustar tarifas sem alterar o limite de recebimento do checkout. Faixas opcionais devem começar abaixo desse limite. As migrações preservam taxas e decisões já registradas; o limite e a retirada da antiga faixa acima de R$ 1.000 são aplicados uma única vez.
 
 ```sh
 npm run manage -- set-checkout --id main --name "Checkout principal" --fee 15 --fixed-fee 1.99 --minimum 0.01 --above ""

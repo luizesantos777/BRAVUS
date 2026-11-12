@@ -514,15 +514,15 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   await expect(page.getByRole('button', { name: 'Salvar e Enviar Vendas' })).toBeEnabled();
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('47,00');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('9,04');
+  await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('9,04');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('alert')).toContainText('anexe o print');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
   await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('53,00');
   await page.getByLabel('Checkout venda 2', { exact: true }).selectOption('pix');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('5,39');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('23,80');
+  await expect(page.getByLabel('Resumo da venda 2')).not.toContainText('5,39');
+  await expect(page.getByLabel('Resumo da venda 2')).toContainText('23,80');
   await page.getByLabel('Print da venda 2', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('status')).toContainText('100,00');
@@ -532,7 +532,7 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   for (const sale of submitted.sales) expect((await page.request.patch('/api/admin/sales/' + sale.id, { headers: { Authorization: 'Bearer fixture_browser_admin_012345678901234567890123456789' }, data: { status: 'approved', note: 'Print conferido no teste' } })).status()).toBe(200);
   await page.getByRole('button', { name: 'Atualizar vendas' }).click();
   await expect(page.locator('.metric').first()).toContainText(/100,00/);
-  await expect(page.locator('.metric').nth(1)).toContainText(/7,22/);
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   await expect(page.locator('.metric.balance')).toContainText(/42,78/);
   await expect(page.getByRole('progressbar')).toHaveCount(0);
   await page.getByRole('button', { name: /Ver print da venda de.*47,00/ }).click();
@@ -575,13 +575,13 @@ test('demonstração reproduz a interface e tokens inválidos impedem envio', as
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100,00');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('pix');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('8,68');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('45,66');
+  await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('8,68');
+  await expect(page.getByLabel('Resumo da venda 1')).toContainText('45,66');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.locator('.pending-sales-notice')).toContainText('1 venda(s) em análise');
   await approveDemoSales(page);
-  await expect(page.locator('.metric').nth(1)).toContainText('4,34');
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   await expect(page.locator('.metric.balance')).toContainText('45,66');
   await page.reload();
   await expect(page.locator('.metric.balance')).toContainText('45,66');
@@ -683,7 +683,7 @@ test('Checkout Buckpay fica separado nas taxas e calcula a venda sem criar outro
   await expect(page.getByLabel('Link do checkout BRAVUS')).toHaveValue('https://pagamento.bravuspix.shop/checkout');
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption({ label: 'Checkout Buckpay' });
-  const preview = page.getByLabel('Taxas da venda 1'); await expect(preview).toContainText('8,68'); await expect(preview).toContainText('4,34'); await expect(preview).toContainText('45,66');
+  const preview = page.getByLabel('Resumo da venda 1'); await expect(preview).not.toContainText('8,68'); await expect(preview).not.toContainText('4,34'); await expect(preview).toContainText('45,66');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
   await page.goto('/#/admin'); await page.getByLabel('Chave administrativa').fill(key); await page.getByRole('button', { name: 'Entrar na administração' }).click();
@@ -695,32 +695,32 @@ test('Checkout Buckpay fica separado nas taxas e calcula a venda sem criar outro
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('checkout-buckpay.png'), fullPage: true });
 });
-test('checkout aceita até R$ 1.000 e mostra também a tarifa do PIX manual', async ({ page }) => {
+test('checkout mantém o limite de R$ 1.000 e PIX manual sem exibir tarifas de venda', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.checkout-tariff')).toContainText('15,00%');
-  await expect(page.locator('.checkout-tariff')).not.toContainText('25,00%');
-  await expect(page.locator('.manual-pix-tariff')).toContainText('6,99%');
-  await expect(page.locator('.manual-pix-tariff')).toContainText('1,69');
+  await expect(page.locator('.checkout-limit')).toContainText('1.000,00');
+  await expect(page.locator('.checkout-limit')).not.toContainText('25,00%');
+  await expect(page.locator('.manual-pix-limit')).toContainText('5,00');
+  await expect(page.locator('.manual-pix-limit')).not.toContainText('%');
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('1000');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('151,99');
-  await expect(page.getByLabel('Taxas da venda 1')).toContainText('424,00');
+  await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('151,99');
+  await expect(page.getByLabel('Resumo da venda 1')).toContainText('424,00');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
   await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('1000,01');
   await page.getByLabel('Checkout venda 2', { exact: true }).selectOption('main');
   await page.getByLabel('Print da venda 2', { exact: true }).setInputFiles(image);
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('valor máximo');
+  await expect(page.getByLabel('Resumo da venda 2')).toContainText('valor máximo');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.getByRole('alert')).toContainText('valor máximo');
   await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('999,99');
-  await expect(page.getByLabel('Taxas da venda 2')).toContainText('151,99');
+  await expect(page.getByLabel('Resumo da venda 2')).not.toContainText('151,99');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await approveDemoSales(page);
-  await expect(page.locator('.metric').nth(1)).toContainText('152,00');
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   await expect(page.locator('.metric.balance')).toContainText('847,99');
   await page.reload();
-  await expect(page.locator('.metric').nth(1)).toContainText('152,00');
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
 });
 
 test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelho', async ({ page, context }, info) => {
@@ -816,19 +816,19 @@ test('admin confere prints, aprova, recusa e lança ADS com reflexo no portal do
   await expect(page.locator('.metric.balance')).toContainText('43,66');
 });
 
-test('atendente confere taxas divididas em 50% e PIX líquido com metade da taxa de saque', async ({ page }, info) => {
+test('atendente confere seu valor e repasses sem exibir taxas de venda', async ({ page }, info) => {
   await page.goto('/');
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100,00');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
-  const preview = page.getByLabel('Taxas da venda 1');
-  await expect(preview).toContainText('41,51'); await expect(preview).toContainText('16,99'); await expect(preview).toContainText('41,50');
+  const preview = page.getByLabel('Resumo da venda 1');
+  await expect(preview).not.toContainText('41,51'); await expect(preview).not.toContainText('16,99'); await expect(preview).toContainText('41,50');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
   await expect(page.locator('.pending-sales-notice')).toContainText('1 venda(s)');
   await expect(page.locator('.metric.balance')).toContainText('0,00');
   await approveDemoSales(page);
   await expect(page.locator('.metric.balance')).toContainText('41,50');
-  await expect(page.locator('.finance-breakdown')).toContainText('41,51');
+  await expect(page.locator('.finance-breakdown')).toContainText('41,50'); await expect(page.locator('.financial-panel')).not.toContainText(/taxas das vendas|rateio de 50%|TAXAS \+ SAQUES/i); await expect(page.locator('.history-panel thead')).not.toContainText(/taxa|gateway/i);
   await expect(page.getByRole('row').filter({ has: page.getByRole('cell', { name: 'Aprovada', exact: true }) })).toContainText('41,50');
   await page.screenshot({ path: info.outputPath('atendente-comissao-50.png'), fullPage: true });
   await page.getByRole('tab', { name: 'Meus Dados e PIX' }).click();
@@ -873,9 +873,9 @@ test('taxa de saque aparece apenas quando o administrador confirma o repasse pag
   await page.getByRole('tab', { name: /^Repasses/ }).click();
   await expect(page.getByRole('cell', { name: 'Pago', exact: true })).toBeVisible();
   await expect(page.getByRole('cell', { name: /39,00/ })).toBeVisible();
-  await expect(page.locator('.metric').nth(1)).toContainText('11,00');
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   await page.reload();
-  await expect(page.locator('.metric').nth(1)).toContainText('11,00');
+  await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 

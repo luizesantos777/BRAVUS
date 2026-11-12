@@ -1,0 +1,434 @@
+--- a/BIOCAMISAS.md
++++ b/BIOCAMISAS.md
+@@ -0,0 +1,35 @@
++# Bio Camisas no mesmo sistema BRAVUS
++
++O checkout adicional é `https://biocamisas.shop/checkout`. A raiz do novo domínio abre esse checkout. `www.biocamisas.shop` também é reconhecido, com links de pagamento canônicos sem `www`.
++
++BRAVUS e Bio Camisas compartilham **o mesmo projeto, banco D1, chave do cofre, senha administrativa, credenciais de gateways, regras por ticket e fallback**. Nenhuma tabela nova, credencial de produção ou segunda conta é criada por esta atualização. O checkout não altera tarifas, limites ou condições contratadas com os provedores.
++
++## O que muda
++
++- O domínio determina o nome, a identificação BC, o título e os textos das páginas de checkout, PIX e cartão.
++- O painel de gateways apresenta os links dos dois checkouts.
++- Uma resposta de criação ou recuperação do Bio Camisas aponta para `biocamisas.shop/pagar/:id` ou `biocamisas.shop/cartao/:id`, preservando o identificador e a gateway da cobrança. O domínio de destino sai de uma lista explícita; cabeçalhos de redirecionamento arbitrários não são utilizados.
++- As respostas do checkout BRAVUS continuam usando o endereço atual. Os links existentes continuam válidos em ambos os domínios, com a apresentação correspondente ao endereço acessado.
++- As credenciais, o recebedor contratado, os callbacks do provedor e os dados jurídicos existentes são preservados. O nome visual Bio Camisas não altera a identidade do recebedor apresentada pelo banco ou pelo provedor.
++- A senha do painel é a mesma, com sessão de navegador própria por domínio. O checkout público não recebe autorização administrativa.
++
++## Publicação no domínio
++
++1. Aplique os arquivos desta atualização **ao projeto original do checkout**, identificado em `.openai/hosting.json`. Preserve os arquivos de mídia já publicados: o código exportado não contém todas as mídias da BRAVUS.
++2. Compile e publique no mesmo projeto Workers/Sites, mantendo o binding `DB`, a chave `PAYMENT_VAULT_KEY`, as demais variáveis privadas e todas as migrações existentes. **Não crie outro banco nem gere uma nova chave do cofre.**
++3. No serviço que hospeda esse projeto, adicione `biocamisas.shop` como domínio personalizado do mesmo aplicativo. Se quiser usar `www`, associe também `www.biocamisas.shop` ao aplicativo.
++4. O domínio foi comprado na **Hostinger** e ainda não está vinculado. No hPanel, abra **Domínios → biocamisas.shop → DNS / Nameservers → Gerenciar registros DNS** (o nome do menu pode variar). Configure exatamente os registros indicados pela hospedagem do checkout e conclua a verificação e o HTTPS. Não há um IP ou CNAME universal que possa ser preenchido sem essa informação. Não basta redirecionar o navegador para o endereço BRAVUS: o domínio Bio Camisas deve servir o mesmo aplicativo. Preserve registros de e-mail e de outros serviços existentes.
++5. Abra `https://biocamisas.shop/checkout` e confira o nome Bio Camisas. No painel de gateways existente, mantenha suas configurações atuais; o mesmo painel atende aos dois acessos.
++
++Esta pasta contém o código e os testes. Alterar arquivos localmente ou baixar o ZIP **não publica o projeto nem configura DNS/HTTPS**. Esses passos exigem acesso à hospedagem e ao DNS do domínio.
++
++## Validação
++
++Os testes usam banco e credenciais sintéticos. Nenhuma cobrança real é necessária para verificar a atualização.
++
++```sh
++node_modules/.bin/vinext build
++node --test tests/*.test.mjs
++```
++
++`tests/checkout-domains.test.mjs` cobre origens permitidas, recuperação de PIX e cartão entre domínios, credenciais e senha compartilhadas e recusa de origens externas. O teste de roteamento em Workers/D1 também recupera pelo domínio Bio Camisas uma cobrança criada com fallback, sem novo envio ao provedor.
+--- a/README.md
++++ b/README.md
+@@ -1,6 +1,8 @@
+ # Bravus Brasil
+ 
+ Projeto do funil, loja e checkout. O checkout gera PIX nas gateways configuradas; `/pagar/:id` mantém cada cobrança vinculada à gateway que a criou. Links de cartão são gerados pela Beehive em `/cartao/:id`.
++
++O mesmo aplicativo também atende **Bio Camisas**, em `https://biocamisas.shop/checkout`, com identificação e links próprios e o mesmo painel e gateways da BRAVUS. Veja [como publicar o domínio adicional](BIOCAMISAS.md).
+ 
+ O painel privado `/admin/gateways` permite escolher a gateway padrão, configurar o roteamento por valor de ticket e ordenar as reservas do fallback. As regras automáticas começam desativadas.
+ 
+--- a/app/admin/gateways/ui.tsx
++++ b/app/admin/gateways/ui.tsx
+@@ -3,6 +3,7 @@
+ import {Button} from '@/components/ui/button';
+ import {Input} from '@/components/ui/input';
+ import RoutingControls from './routing-controls';
++import {BRAVUS_PAYMENT_ORIGIN,BIOCAMISAS_ORIGIN} from '@/lib/checkout-brand';
+ import type {FallbackPolicy} from '@/lib/gateways';
+ const names:Record<string,string>={beehive:'Beehive Pay',eleva:'Eleva Payments',gestao:'Gestão Pay',firebot:'Firebot',poseidon:'Poseidon',buckpay:'BuckPay'};
+ const descriptions:Record<string,string>={beehive:'PIX e links de cartão de crédito',eleva:'PIX com confirmação de pagamento',gestao:'PIX com consulta de pagamento',firebot:'PIX para pedidos digitais',poseidon:'PIX para pedidos físicos',buckpay:'PIX com consulta de pagamento'};
+@@ -18,6 +19,7 @@
+  async function configureBuck(e:React.FormEvent){e.preventDefault();if(busy)return;setBusy('buckpay');setError('');setNotice('');try{const r=await fetch('/api/settings',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,agent})});const d=await r.json();if(!r.ok)throw Error(d.error);setToken('');setAgent('');await load();setNotice('BuckPay cadastrada. Clique em Usar BuckPay para selecioná-la.');}catch(e){setError((e as Error).message);}finally{setBusy('');}}
+  return <main className="pay-shell gateway-page"><header className="pay-brand"><img src="/assets/bravus-logo.jpg" alt="Bravus Brasil"/><div><strong>BRAVUS BRASIL</strong><small>Painel privado de pagamentos</small></div></header>
+  <span className="secure">Controle da loja</span><h1>Gateways e regras de pagamento</h1><p className="muted">Defina a gateway padrão, as faixas de ticket e a ordem das reservas para novos pedidos.</p>
++ <section className="pay-card checkout-domain-links" aria-label="Links dos checkouts"><h2>Links dos checkouts</h2><p className="muted">BRAVUS e Bio Camisas usam as mesmas gateways, regras por ticket e reservas configuradas neste painel.</p><a href={BRAVUS_PAYMENT_ORIGIN+'/checkout'} target="_blank" rel="noopener noreferrer">Checkout BRAVUS ↗</a><a href={BIOCAMISAS_ORIGIN+'/checkout'} target="_blank" rel="noopener noreferrer">Checkout Bio Camisas ↗</a></section>
+  {data&&<div className="gateway-current"><span>GATEWAY PADRÃO</span><strong>{data.providers.find(p=>p.id===data.active)?.configured?names[data.active]:'Nenhuma configurada'}</strong><p>Os pagamentos já gerados continuam na gateway original.</p></div>}
+  {data?.lastSwitch&&<p className="muted" role="status">Último desvio automático: {names[data.lastSwitch.from]} → {names[data.lastSwitch.to]}{data.lastSwitch.scope==='ticket'?' para pedidos da faixa de ticket':''}, em {new Date(data.lastSwitch.at).toLocaleString('pt-BR')}.</p>}
+  {data&&<RoutingControls initial={data.fallback} providers={data.providers} onSaved={load}/>}
+--- a/app/api/orders/route.ts
++++ b/app/api/orders/route.ts
+@@ -4,8 +4,10 @@
+ import {InputError as FirebotInputError} from '@/lib/firebot';
+ import {InputError} from '@/lib/poseidon';
+ import {publicGuard,json,readBody,database,validId} from '@/lib/payments';
++import {checkoutResponse} from '@/lib/checkout-brand';
+ export const dynamic='force-dynamic';
+-export async function POST(req:Request){
++export async function POST(req:Request){return checkoutResponse(req,await createOrder(req));}
++async function createOrder(req:Request){
+  const deny=await publicGuard(req);if(deny)return deny;
+  try{
+   const b=await readBody(req);
+--- a/app/cartao/[id]/page.tsx
++++ b/app/cartao/[id]/page.tsx
+@@ -1,3 +1,4 @@
+ import CardPayment from './ui';
++import {currentCheckoutBrand} from '@/lib/checkout-context';
+ export const dynamic='force-dynamic';
+-export default async function Page({params}:{params:Promise<{id:string}>}){return <CardPayment id={(await params).id}/>}
++export default async function Page({params}:{params:Promise<{id:string}>}){return <CardPayment id={(await params).id} brand={await currentCheckoutBrand()}/>}
+--- a/app/cartao/[id]/ui.tsx
++++ b/app/cartao/[id]/ui.tsx
+@@ -5,8 +5,11 @@
+ import {Input} from '@/components/ui/input';
+ import {loadBeehive,tokenizeCard} from '@/lib/beehive-browser';
+ import {cardPlanLabel} from '@/lib/card-pricing';
++import CheckoutMark from '@/components/checkout-mark';
++import {BRAVUS_BRAND} from '@/lib/checkout-brand';
++import type {CheckoutBrand} from '@/lib/checkout-brand';
+ const emptyCard={number:'',holderName:'',expiry:'',cvv:''};
+-export default function CardPayment({id}:{id:string}){
++export default function CardPayment({id,brand=BRAVUS_BRAND}:{id:string;brand?:CheckoutBrand}){
+  const [installments,setInstallments]=useState(1);
+  const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[phase,setPhase]=useState(''),[card,setCard]=useState(emptyCard),[buyer,setBuyer]=useState({name:'',email:'',cpf:''});
+  const sending=useRef(false);
+@@ -36,14 +39,14 @@
+  const chosenInstallments=data?.installments??installments;
+  const formatMoney=(cents:number)=>new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(cents/100);
+ 
+- return <div className="bravus-card-checkout">
+- <header className="bc-header"><div className="bc-header-inner"><a href="/loja" className="bc-brand" aria-label="Bravus Brasil"><img src="/assets/bravus-logo.jpg" alt=""/><span>BRAVUS <b>BRASIL</b><small>PESCA · AGRO · AVENTURA</small></span></a><span className="bc-secure"><LockKeyhole size={15}/> Pagamento protegido</span></div></header>
++ return <div className="bravus-card-checkout" data-checkout-brand={brand.id}>
++ <header className="bc-header"><div className="bc-header-inner"><a href={brand.home} className="bc-brand" aria-label={brand.name}><CheckoutMark brand={brand}/><span>{brand.wordmark}<small>{brand.tagline}</small></span></a><span className="bc-secure"><LockKeyhole size={15}/> Pagamento protegido</span></div></header>
+  <main className="bc-main"><nav className="bc-progress" aria-label="Etapas do pedido"><span><i><Check size={12}/></i> Pedido</span><em/><span className="current"><i>2</i> Pagamento</span><em/><span className={data?.paid?'current':''}><i>{data?.paid?<Check size={12}/>:3}</i> Confirmação</span></nav>
+  <div className="bc-heading"><span className="bc-eyebrow">{data?.paid?'COMPRA CONFIRMADA':'FALTA POUCO PARA FINALIZAR'}</span><h1>{data?.paid?'Seu pagamento foi confirmado.':'Finalize seu pedido com tranquilidade.'}</h1><p>{data?.paid?'Você pode acompanhar os próximos passos com seu vendedor.':'Confira o valor e preencha seus dados para concluir a compra.'}</p></div>
+  <div className="bc-layout"><section className="bc-form-panel" aria-label="Pagamento com cartão">
+  <div className="bc-panel-top"><span className="bc-icon"><CreditCard size={22}/></span><div><h2>Cartão de crédito</h2><p>Escolha pagar à vista ou parcelar em até 12 vezes.</p></div><span className="bc-selected"><Check size={16}/></span></div>
+  {!data&&!error&&<p className="bc-loading" role="status">Preparando seu pagamento…</p>}
+- {data?.paid?<div className="bc-state bc-state-success" role="status"><PackageCheck size={40}/><h2>Obrigado por comprar com a Bravus!</h2><p>Recebemos a confirmação do seu pagamento.</p><strong>{total}</strong></div>:draft?<form onSubmit={submit}>
++ {data?.paid?<div className="bc-state bc-state-success" role="status"><PackageCheck size={40}/><h2>Obrigado por comprar com a {brand.name}!</h2><p>Recebemos a confirmação do seu pagamento.</p><strong>{total}</strong></div>:draft?<form onSubmit={submit}>
+  <fieldset disabled={busy} className="bc-fields"><div className="bc-section-title"><UserRound size={18}/><h3>Seus dados</h3></div><p className="bc-section-note">Informe os dados do comprador.</p>
+  <div className="bc-input-grid bc-buyer-grid">{([['name','Nome completo','name'],['email','E-mail','email'],['cpf','CPF ou CNPJ','off']] as const).map(([key,label,auto])=><label className={'bc-field '+(key==='name'?'bc-wide':'')} key={key}><span>{label}</span><Input value={buyer[key]} onChange={e=>setBuyer({...buyer,[key]:e.target.value})} type={key==='email'?'email':'text'} inputMode={key==='cpf'?'numeric':key==='email'?'email':'text'} placeholder={key==='name'?'Nome e sobrenome':key==='email'?'voce@exemplo.com':'Somente números'} autoComplete={auto} required maxLength={key==='email'?254:150}/></label>)}</div>
+  <div className="bc-divider"/><div className="bc-section-title"><CreditCard size={18}/><h3>Dados do cartão</h3><span className="bc-private"><LockKeyhole size={12}/> Criptografados</span></div>
+@@ -56,7 +59,7 @@
+  </form>:data&&<div role="status" className={'bc-state '+(declined?'bc-state-declined':'')}><Info size={30}/><h2>{declined?'Pagamento não aprovado':reversed?'Pagamento atualizado':'Estamos consultando seu pagamento'}</h2><p>{declined?'Fale com o vendedor antes de iniciar outro pedido.':reversed?'Este pagamento foi estornado ou contestado. Fale com o vendedor.':'Aguarde a confirmação. Consulte o resultado antes de tentar outra cobrança.'}</p></div>}
+  {error&&<p className="bc-error" role="alert">{error}</p>}{!data?.paid&&(!draft||error)&&<button className="bc-refresh" type="button" disabled={busy} onClick={()=>{setError('');refresh().catch(e=>setError(e.message));}}><RefreshCw size={15}/> Consultar pagamento</button>}
+  <div className="bc-panel-bottom"><LockKeyhole size={14}/><span>Os dados do cartão são protegidos antes de serem enviados para pagamento.</span></div></section>
+- <aside className="bc-sidebar"><section className="bc-summary"><span className="bc-eyebrow">SUA COMPRA</span><h2>Resumo do pedido</h2><div className="bc-order-item"><div className="bc-order-icon"><PackageCheck size={24}/></div><div><strong>Pedido Bravus Brasil</strong><p>Valor combinado com seu vendedor</p></div></div><div className="bc-summary-row"><span>Pagamento</span><strong>Cartão de crédito</strong></div><div className="bc-summary-row"><span>Valor do pedido</span><strong>{formatMoney(data?.baseAmount??data?.amount??0)}</strong></div><div className="bc-summary-row"><span>Taxa ({((selectedPlan?.rateBps??0)/100).toLocaleString('pt-BR')}%)</span><strong>{formatMoney(selectedPlan?.feeAmount??0)}</strong></div><div className="bc-summary-row"><span>Parcelas</span><strong>{selectedPlan?cardPlanLabel(selectedPlan):chosenInstallments+'x no cartão'}</strong></div><div className="bc-summary-total"><span>Total a pagar</span><strong>{total}</strong><small>Confira o valor antes de confirmar.</small></div><div className="bc-summary-brand"><img src="/assets/bravus-logo.jpg" alt=""/><span>Você está comprando com<br/><strong>Bravus Brasil</strong></span></div></section>
+- <section className="bc-confidence" aria-label="Sobre seu pagamento"><div><ShieldCheck size={22}/><p><strong>Dados do cartão protegidos</strong><span>O número e o código de segurança não são armazenados pela Bravus.</span></p></div><div><Check size={22}/><p><strong>Confirmação na mesma página</strong><span>Acompanhe aqui o resultado do seu pagamento.</span></p></div><div><Headphones size={22}/><p><strong>Precisa de ajuda?</strong><span>Fale com o vendedor que enviou este link antes de concluir a compra.</span></p></div></section>
+- </aside></div><footer className="bc-footer"><span>BRAVUS BRASIL</span><span><LockKeyhole size={12}/> Conexão criptografada</span></footer></main></div>;
++ <aside className="bc-sidebar"><section className="bc-summary"><span className="bc-eyebrow">SUA COMPRA</span><h2>Resumo do pedido</h2><div className="bc-order-item"><div className="bc-order-icon"><PackageCheck size={24}/></div><div><strong>Pedido {brand.name}</strong><p>Valor combinado com seu vendedor</p></div></div><div className="bc-summary-row"><span>Pagamento</span><strong>Cartão de crédito</strong></div><div className="bc-summary-row"><span>Valor do pedido</span><strong>{formatMoney(data?.baseAmount??data?.amount??0)}</strong></div><div className="bc-summary-row"><span>Taxa ({((selectedPlan?.rateBps??0)/100).toLocaleString('pt-BR')}%)</span><strong>{formatMoney(selectedPlan?.feeAmount??0)}</strong></div><div className="bc-summary-row"><span>Parcelas</span><strong>{selectedPlan?cardPlanLabel(selectedPlan):chosenInstallments+'x no cartão'}</strong></div><div className="bc-summary-total"><span>Total a pagar</span><strong>{total}</strong><small>Confira o valor antes de confirmar.</small></div><div className="bc-summary-brand"><CheckoutMark brand={brand}/><span>Você está comprando com<br/><strong>{brand.name}</strong></span></div></section>
++ <section className="bc-confidence" aria-label="Sobre seu pagamento"><div><ShieldCheck size={22}/><p><strong>Dados do cartão protegidos</strong><span>O número e o código de segurança não são armazenados pela {brand.name}.</span></p></div><div><Check size={22}/><p><strong>Confirmação na mesma página</strong><span>Acompanhe aqui o resultado do seu pagamento.</span></p></div><div><Headphones size={22}/><p><strong>Precisa de ajuda?</strong><span>Fale com o vendedor que enviou este link antes de concluir a compra.</span></p></div></section>
++ </aside></div><footer className="bc-footer"><span>{brand.wordmark}</span><span><LockKeyhole size={12}/> Conexão criptografada</span></footer></main></div>;
+ }
+--- a/app/checkout/page.tsx
++++ b/app/checkout/page.tsx
+@@ -1,4 +1,5 @@
+ import Checkout from './ui';
+ import {panelUnlocked} from '@/lib/gateway-access';
++import {currentCheckoutBrand} from '@/lib/checkout-context';
+ export const dynamic='force-dynamic';
+-export default async function Page(){return <Checkout canConfigure={await panelUnlocked()}/>}
++export default async function Page(){return <Checkout canConfigure={await panelUnlocked()} brand={await currentCheckoutBrand()}/>}
+--- a/app/checkout/ui.tsx
++++ b/app/checkout/ui.tsx
+@@ -3,10 +3,13 @@
+ import {restoreAttempt,saveAttempt,clearAttempt} from '@/lib/checkout-session';
+ import {Input} from '@/components/ui/input';
+ import {Button} from '@/components/ui/button';
++import CheckoutMark from '@/components/checkout-mark';
++import {BRAVUS_BRAND} from '@/lib/checkout-brand';
++import type {CheckoutBrand} from '@/lib/checkout-brand';
+ const BEEHIVE_BUYER_NAME='BRAVUS BRASIL LTDA';
+ const ELEVA_EMAIL='Bravus.Suporte@gmail.com';
+ const fields=[['name','Nome completo','name'],['email','E-mail','email'],['cpf','CPF ou CNPJ','off'],['phone','Telefone com DDD','tel']];
+-export default function Checkout({canConfigure}:{canConfigure:boolean}){
++export default function Checkout({canConfigure,brand=BRAVUS_BRAND}:{canConfigure:boolean;brand?:CheckoutBrand}){
+  const [paymentMethod,setPaymentMethod]=useState<'pix'|'credit_card'>('pix'),[configured,setConfigured]=useState(false),[provider,setProvider]=useState(''),[loaded,setLoaded]=useState(false),[sellerName,setSellerName]=useState(''),[amount,setAmount]=useState(''),[values,setValues]=useState<Record<string,string>>({}),[busy,setBusy]=useState(false),[error,setError]=useState(''),[url,setUrl]=useState(''),[attempted,setAttempted]=useState(false),[copied,setCopied]=useState(false);const request=useRef(''),sending=useRef(false);
+  useEffect(()=>{try{const saved=restoreAttempt(sessionStorage);if(saved.attempt){const a=saved.attempt;request.current=a.requestId;setSellerName(a.sellerName);setAmount(a.amount);setProvider(a.provider);setPaymentMethod(a.paymentMethod==='credit_card'?'credit_card':'pix');setValues(a.values);setUrl(a.url||'');setAttempted(true);}else if(saved.legacy){setAttempted(true);setError('Há um pedido antigo salvo nesta guia. Confira a cobrança anterior e clique em Iniciar outro pedido para gerar um novo PIX.');}}catch{}fetch('/api/settings',{cache:'no-store'}).then(r=>r.json()).then(d=>{if(d.error)throw Error(d.error);setConfigured(!!d.configured);setProvider(current=>current||d.provider);setLoaded(true)}).catch(()=>{setLoaded(true);setError('Não foi possível carregar o pagamento. Atualize a página.')});},[]);
+  useEffect(()=>{
+@@ -46,5 +49,5 @@
+   finally{sending.current=false;setBusy(false)}
+  }
+ 
+- return <main className="pay-shell checkout-page"><header className="checkout-header"><div className="pay-brand"><img src="/assets/bravus-logo.jpg" alt="Bravus Brasil"/><div><strong>BRAVUS BRASIL</strong><small>{provider==='beehive'?'PIX ou cartão de crédito':'Pagamento via PIX'}</small></div></div><span className="checkout-status">Pagamento seguro</span></header><section className="checkout-intro"><span className="secure">Compra segura</span><h1>{paymentMethod==='credit_card'?'Pague com cartão de crédito':'Finalize seu pedido via PIX'}</h1><p className="muted">{paymentMethod==='credit_card'?'Gere o link e envie ao cliente. O cliente preenche os dados e paga na página da Bravus.':['poseidon','gestao','eleva','beehive'].includes(provider)?'Informe o valor combinado com o vendedor, e os dados do comprador.':'Informe o valor da compra para gerar seu PIX.'}</p></section><section className="pay-card checkout-card"><form onSubmit={create}><fieldset disabled={busy||attempted} className="checkout-fields">{provider==='beehive'&&<label className="field checkout-field"><span>Forma de pagamento</span><select value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value as 'pix'|'credit_card')} className="method-select"><option value="pix">PIX</option><option value="credit_card">Cartão de crédito — até 12x</option></select></label>}{provider!=='beehive'&&<label className="field checkout-field"><span>Nome do vendedor</span><Input value={sellerName} onChange={e=>setSellerName(e.target.value)} placeholder="Quem está gerando este PIX?" autoComplete="off" minLength={2} maxLength={100} required/></label>}<label className="field checkout-field"><span>Valor total da compra</span><div className="currency-input"><b>R$</b><Input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="99,89" inputMode="decimal" required/></div></label><p className="field-note">Digite o valor da sua compra, por exemplo R$ 99,89, conforme combinado com o vendedor.</p>{paymentMethod==='pix'&&['poseidon','gestao','eleva','beehive'].includes(provider)&&<><h2>Dados do comprador</h2>{provider==='beehive'&&<p className="field-note">Os demais dados serão preenchidos pelo cadastro do cliente no sistema. O cadastro precisa estar completo para gerar o PIX.</p>}{['eleva','gestao'].includes(provider)&&<p className="field-note">Nome e CPF vinculados automaticamente ao cadastro configurado.</p>}<div className="buyer-grid">{fields.filter(([key])=>provider==='beehive'?key==='name':provider==='eleva'?key==='email':provider==='gestao'?['email','phone'].includes(key):true).map(([key,label,auto])=><label className={'field '+(['name','email','street','complement','address'].includes(key)?'wide':'')} key={key}><span>{provider==='eleva'&&key==='name'?'Nome do cliente':label}</span><Input name={key} type={key==='email'?'email':'text'} autoComplete={auto} value={values[key]??(['eleva','gestao'].includes(provider)&&key==='email'?ELEVA_EMAIL:'')} onChange={e=>setValues({...values,[key]:e.target.value})} required={key!=='complement'&&!(provider==='eleva'&&key==='phone')} maxLength={key==='state'?2:key==='email'?254:key==='address'?500:150} inputMode={['cpf','phone','zipCode'].includes(key)?'numeric':'text'} placeholder={key==='phone'?'DDD + número do comprador':key==='state'?'SP':key==='number'?'Número ou S/N':undefined}/></label>)}</div></>}</fieldset><Button className="action" type="submit" disabled={!configured||busy||!!url||(provider!=='beehive'&&!sellerName.trim())||!amount}>{busy?'Gerando pagamento…':attempted?'Recuperar o mesmo pedido':paymentMethod==='credit_card'?'Gerar link de cartão':'Gerar PIX em nova guia'}</Button></form>{!configured&&<p className="muted">{loaded?'O pagamento está temporariamente indisponível.':'Preparando o pagamento…'}</p>}{error&&<p role="alert" className="error">{error}</p>}{attempted&&!url&&!busy&&<p className="muted">Uma nova tentativa recupera o mesmo pedido. Se o resultado estiver indefinido, confira com o vendedor antes de iniciar outra cobrança.</p>}{url&&<div className="success checkout-result"><strong>{paymentMethod==='credit_card'?'Link de cartão pronto':'Seu PIX está pronto'}</strong><p><a className="result-link" href={url} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a></p><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(url);setCopied(true)}catch{setError('Abra a página de pagamento e copie o endereço do navegador.')}}}>{copied?'Link copiado!':'Copiar link de pagamento'}</Button></div>}{attempted&&<Button variant="outline" className="action" disabled={busy} onClick={newOrder}>Iniciar outro pedido</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section>{canConfigure&&provider==='beehive'&&<p><a href="/admin/beehive#clientes">Cadastrar ou corrigir cliente para PIX</a></p>}{canConfigure&&<p><a href="/admin/gateways">Gerenciar gateways de pagamento</a></p>}</main>;
++ return <main className="pay-shell checkout-page" data-checkout-brand={brand.id}><header className="checkout-header"><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>{provider==='beehive'?'PIX ou cartão de crédito':'Pagamento via PIX'}</small></div></div><span className="checkout-status">Pagamento seguro</span></header><section className="checkout-intro"><span className="secure">Compra segura</span><h1>{paymentMethod==='credit_card'?'Pague com cartão de crédito':'Finalize seu pedido via PIX'}</h1><p className="muted">{paymentMethod==='credit_card'?`Gere o link e envie ao cliente. O cliente preenche os dados e paga na página da ${brand.name}.`:['poseidon','gestao','eleva','beehive'].includes(provider)?'Informe o valor combinado com o vendedor, e os dados do comprador.':'Informe o valor da compra para gerar seu PIX.'}</p></section><section className="pay-card checkout-card"><form onSubmit={create}><fieldset disabled={busy||attempted} className="checkout-fields">{provider==='beehive'&&<label className="field checkout-field"><span>Forma de pagamento</span><select value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value as 'pix'|'credit_card')} className="method-select"><option value="pix">PIX</option><option value="credit_card">Cartão de crédito — até 12x</option></select></label>}{provider!=='beehive'&&<label className="field checkout-field"><span>Nome do vendedor</span><Input value={sellerName} onChange={e=>setSellerName(e.target.value)} placeholder="Quem está gerando este PIX?" autoComplete="off" minLength={2} maxLength={100} required/></label>}<label className="field checkout-field"><span>Valor total da compra</span><div className="currency-input"><b>R$</b><Input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="99,89" inputMode="decimal" required/></div></label><p className="field-note">Digite o valor da sua compra, por exemplo R$ 99,89, conforme combinado com o vendedor.</p>{paymentMethod==='pix'&&['poseidon','gestao','eleva','beehive'].includes(provider)&&<><h2>Dados do comprador</h2>{provider==='beehive'&&<p className="field-note">Os demais dados serão preenchidos pelo cadastro do cliente no sistema. O cadastro precisa estar completo para gerar o PIX.</p>}{['eleva','gestao'].includes(provider)&&<p className="field-note">Nome e CPF vinculados automaticamente ao cadastro configurado.</p>}<div className="buyer-grid">{fields.filter(([key])=>provider==='beehive'?key==='name':provider==='eleva'?key==='email':provider==='gestao'?['email','phone'].includes(key):true).map(([key,label,auto])=><label className={'field '+(['name','email','street','complement','address'].includes(key)?'wide':'')} key={key}><span>{provider==='eleva'&&key==='name'?'Nome do cliente':label}</span><Input name={key} type={key==='email'?'email':'text'} autoComplete={auto} value={values[key]??(['eleva','gestao'].includes(provider)&&key==='email'?ELEVA_EMAIL:'')} onChange={e=>setValues({...values,[key]:e.target.value})} required={key!=='complement'&&!(provider==='eleva'&&key==='phone')} maxLength={key==='state'?2:key==='email'?254:key==='address'?500:150} inputMode={['cpf','phone','zipCode'].includes(key)?'numeric':'text'} placeholder={key==='phone'?'DDD + número do comprador':key==='state'?'SP':key==='number'?'Número ou S/N':undefined}/></label>)}</div></>}</fieldset><Button className="action" type="submit" disabled={!configured||busy||!!url||(provider!=='beehive'&&!sellerName.trim())||!amount}>{busy?'Gerando pagamento…':attempted?'Recuperar o mesmo pedido':paymentMethod==='credit_card'?'Gerar link de cartão':'Gerar PIX em nova guia'}</Button></form>{!configured&&<p className="muted">{loaded?'O pagamento está temporariamente indisponível.':'Preparando o pagamento…'}</p>}{error&&<p role="alert" className="error">{error}</p>}{attempted&&!url&&!busy&&<p className="muted">Uma nova tentativa recupera o mesmo pedido. Se o resultado estiver indefinido, confira com o vendedor antes de iniciar outra cobrança.</p>}{url&&<div className="success checkout-result"><strong>{paymentMethod==='credit_card'?'Link de cartão pronto':'Seu PIX está pronto'}</strong><p><a className="result-link" href={url} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a></p><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(url);setCopied(true)}catch{setError('Abra a página de pagamento e copie o endereço do navegador.')}}}>{copied?'Link copiado!':'Copiar link de pagamento'}</Button></div>}{attempted&&<Button variant="outline" className="action" disabled={busy} onClick={newOrder}>Iniciar outro pedido</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section>{canConfigure&&provider==='beehive'&&<p><a href="/admin/beehive#clientes">Cadastrar ou corrigir cliente para PIX</a></p>}{canConfigure&&<p><a href="/admin/gateways">Gerenciar gateways de pagamento</a></p>}</main>;
+ }
+--- a/app/globals.css
++++ b/app/globals.css
+@@ -76,3 +76,10 @@
+ @media(prefers-reduced-motion:reduce){.bc-field input{transition:none}}
+ 
+ .routing-settings{margin:24px 0}.routing-settings fieldset{border:0;padding:0;min-width:0}.routing-settings legend{font-size:23px;font-weight:700;margin-bottom:12px}.routing-section{border-top:1px solid #dce4df;margin:24px 0;padding-top:24px}.routing-section h2{margin:0 0 16px}.routing-toggle{display:flex;gap:12px;align-items:flex-start;line-height:1.6;margin:16px 0;font-weight:600}.routing-toggle input{width:20px;height:20px;flex-shrink:0;accent-color:#477c3f;margin-top:3px}.ticket-rule{display:grid;grid-template-columns:minmax(100px,1fr) minmax(130px,1.2fr) auto;gap:12px;align-items:end;margin:16px 0}.ticket-rule .field{margin:0}.ticket-rule button{margin-bottom:0;min-height:46px}.fallback-order{list-style:none;padding:0;margin:16px 0}.fallback-order li{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid #dce4df;padding:12px;border-radius:12px;margin:10px 0}.fallback-actions{display:flex;gap:8px;flex-shrink:0}.fallback-actions button{min-width:40px;min-height:40px}.routing-settings .field-note{line-height:1.7;margin-top:16px!important}@media(max-width:560px){.ticket-rule{grid-template-columns:minmax(0,1fr)}.ticket-rule button{justify-self:start}.fallback-order li{flex-wrap:wrap}.fallback-actions{width:100%}.routing-settings legend{font-size:21px}.routing-toggle input{max-width:20px}}
++
++/* The additional checkout shares the payment engine and uses its own wordmark. */
++.checkout-monogram{display:inline-grid;place-items:center;flex-shrink:0;width:58px;height:58px;border-radius:14px;background:#164c39;color:#fff;font-size:22px;font-weight:800;letter-spacing:-1px;box-shadow:inset 0 0 0 1px #ffffff20}
++.bc-brand>.checkout-monogram{width:46px;height:46px;font-size:19px;letter-spacing:-1px}
++.bc-summary-brand>.checkout-monogram{width:32px;height:32px;border-radius:8px;font-size:13px}
++.checkout-domain-links a{display:block;padding:12px 0;border-top:1px solid #e0e8e1;font-weight:700;overflow-wrap:anywhere}
++@media(max-width:600px){.checkout-header .checkout-monogram{width:48px;height:48px;font-size:19px}.bc-brand>.checkout-monogram{width:36px;height:36px;font-size:16px}}
+--- a/app/layout.tsx
++++ b/app/layout.tsx
+@@ -1,5 +1,6 @@
+ import type {Metadata,Viewport} from 'next';
+ import './globals.css';
+-export const metadata:Metadata={title:'Bravus Brasil · Pagamento seguro',description:'Pagamento do seu pedido Bravus Brasil com PIX ou cartão.',robots:{index:false,follow:false}};
++import {currentCheckoutBrand} from '@/lib/checkout-context';
++export async function generateMetadata():Promise<Metadata>{const brand=await currentCheckoutBrand();return {title:brand.name+' · Pagamento seguro',description:'Pagamento do seu pedido '+brand.name+' com PIX ou cartão.',robots:{index:false,follow:false}};}
+ export const viewport:Viewport={width:'device-width',initialScale:1};
+ export default function Layout({children}:{children:React.ReactNode}){return <html lang="pt-BR"><body>{children}</body></html>}
+--- a/app/pagar/[id]/page.tsx
++++ b/app/pagar/[id]/page.tsx
+@@ -1,3 +1,4 @@
+ import Payment from './ui';
++import {currentCheckoutBrand} from '@/lib/checkout-context';
+ export const dynamic='force-dynamic';
+-export default async function Page({params}:{params:Promise<{id:string}>}){const {id}=await params;return <Payment id={id}/>}
++export default async function Page({params}:{params:Promise<{id:string}>}){const {id}=await params;return <Payment id={id} brand={await currentCheckoutBrand()}/>}
+--- a/app/pagar/[id]/ui.tsx
++++ b/app/pagar/[id]/ui.tsx
+@@ -1,4 +1,7 @@
+ 'use client';
+ import {useEffect,useState,useCallback} from 'react';
+ import {Button} from '@/components/ui/button';
+-export default function Payment({id}:{id:string}){const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);const load=useCallback(async()=>{setBusy(true);setError('');try{const r=await fetch('/api/pay/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error);setData(d)}catch(e){setError((e as Error).message)}finally{setBusy(false)}},[id]);useEffect(()=>{load()},[load]);return <main className="pay-shell"><div className="pay-brand"><img src="/assets/bravus-logo.jpg" alt="Bravus Brasil"/><div><strong>BRAVUS BRASIL</strong><small>Pagamento do seu pedido</small></div></div><section className="pay-card"><h1>{data?.paid?'Pagamento confirmado!':'Pague com PIX'}</h1>{!data&&!error&&<p>Carregando pagamento…</p>}{error&&<p className="error" role="alert">{error}</p>}{data&&<><div className="amount">{new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(data.amount/100)}</div>{data.paid?<p className="success">Recebemos seu pagamento. Obrigado por comprar com a Bravus Brasil! ✅<br/><br/>Envie o comprovante ao vendedor para confirmar seu pedido.</p>:data.unavailable?<p className="error">Este PIX está vencido ou indisponível para pagamento. Consulte o vendedor. Se já pagou, use o botão abaixo para verificar.</p>:<><p>Escaneie o QR Code ou copie o código e cole na opção PIX do seu banco.</p><img className="qr" src={data.qrUrl||('data:image/png;base64,'+data.qr)} referrerPolicy="no-referrer" alt="QR Code para pagar este pedido via PIX"/><label className="field"><span>PIX copia e cola</span><textarea className="pix-code" readOnly value={data.code} onFocus={e=>e.target.select()}/></label><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(data.code);setCopied(true);setTimeout(()=>setCopied(false),2500)}catch{setError('Selecione e copie o código no campo acima.')}}}>{copied?'Código copiado!':'Copiar código PIX'}</Button></> }</>}{data?.canVerify&&!data.paid&&<Button className="action" disabled={busy} onClick={load}>{busy?'Consultando…':'Já paguei — verificar pagamento'}</Button>}{error&&!data&&<Button className="action" disabled={busy} onClick={load}>Tentar novamente</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section></main>}
++import CheckoutMark from '@/components/checkout-mark';
++import {BRAVUS_BRAND} from '@/lib/checkout-brand';
++import type {CheckoutBrand} from '@/lib/checkout-brand';
++export default function Payment({id,brand=BRAVUS_BRAND}:{id:string;brand?:CheckoutBrand}){const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);const load=useCallback(async()=>{setBusy(true);setError('');try{const r=await fetch('/api/pay/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error);setData(d)}catch(e){setError((e as Error).message)}finally{setBusy(false)}},[id]);useEffect(()=>{load()},[load]);return <main className="pay-shell" data-checkout-brand={brand.id}><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>Pagamento do seu pedido</small></div></div><section className="pay-card"><h1>{data?.paid?'Pagamento confirmado!':'Pague com PIX'}</h1>{!data&&!error&&<p>Carregando pagamento…</p>}{error&&<p className="error" role="alert">{error}</p>}{data&&<><div className="amount">{new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(data.amount/100)}</div>{data.paid?<p className="success">Recebemos seu pagamento. Obrigado por comprar com a {brand.name}! ✅<br/><br/>Envie o comprovante ao vendedor para confirmar seu pedido.</p>:data.unavailable?<p className="error">Este PIX está vencido ou indisponível para pagamento. Consulte o vendedor. Se já pagou, use o botão abaixo para verificar.</p>:<><p>Escaneie o QR Code ou copie o código e cole na opção PIX do seu banco.</p><img className="qr" src={data.qrUrl||('data:image/png;base64,'+data.qr)} referrerPolicy="no-referrer" alt="QR Code para pagar este pedido via PIX"/><label className="field"><span>PIX copia e cola</span><textarea className="pix-code" readOnly value={data.code} onFocus={e=>e.target.select()}/></label><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(data.code);setCopied(true);setTimeout(()=>setCopied(false),2500)}catch{setError('Selecione e copie o código no campo acima.')}}}>{copied?'Código copiado!':'Copiar código PIX'}</Button></> }</>}{data?.canVerify&&!data.paid&&<Button className="action" disabled={busy} onClick={load}>{busy?'Consultando…':'Já paguei — verificar pagamento'}</Button>}{error&&!data&&<Button className="action" disabled={busy} onClick={load}>Tentar novamente</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section></main>}
+--- a/app/route.ts
++++ b/app/route.ts
+@@ -1,4 +1,5 @@
+ import html from '../legacy/funnel.html?raw';
+ import {serveFunnel} from '@/lib/funnel-access';
++import {checkoutBrandForRequest} from '@/lib/checkout-brand';
+ export const dynamic='force-dynamic';
+-export async function GET(req:Request){return serveFunnel(req,html,false);}
++export async function GET(req:Request){const brand=checkoutBrandForRequest(req);if(brand.id==='biocamisas')return new Response(null,{status:302,headers:{Location:brand.origin+'/checkout','Cache-Control':'no-store'}});return serveFunnel(req,html,false);}
+--- a/components/checkout-mark.tsx
++++ b/components/checkout-mark.tsx
+@@ -0,0 +1,7 @@
++import type { CheckoutBrand } from '@/lib/checkout-brand';
++
++export default function CheckoutMark({ brand }: { brand: CheckoutBrand }) {
++  return brand.id === 'biocamisas'
++    ? <span className="checkout-monogram" aria-hidden="true">BC</span>
++    : <img src="/assets/bravus-logo.jpg" alt={brand.name} />;
++}
+--- a/lib/checkout-brand.ts
++++ b/lib/checkout-brand.ts
+@@ -0,0 +1,58 @@
++export const BRAVUS_PAYMENT_ORIGIN = 'https://pagamento.bravuspix.shop';
++export const BIOCAMISAS_ORIGIN = 'https://biocamisas.shop';
++export const BIOCAMISAS_ORIGINS = [BIOCAMISAS_ORIGIN, 'https://www.biocamisas.shop'] as const;
++export const CHECKOUT_ORIGIN_HEADER = 'x-checkout-origin';
++
++export type CheckoutBrand = {
++  id: 'bravus' | 'biocamisas';
++  name: string;
++  wordmark: string;
++  tagline: string;
++  origin: string;
++  home: string;
++};
++
++export const BRAVUS_BRAND: CheckoutBrand = {
++  id: 'bravus', name: 'Bravus Brasil', wordmark: 'BRAVUS BRASIL',
++  tagline: 'PESCA · AGRO · AVENTURA', origin: BRAVUS_PAYMENT_ORIGIN, home: '/loja',
++};
++export const BIOCAMISAS_BRAND: CheckoutBrand = {
++  id: 'biocamisas', name: 'Bio Camisas', wordmark: 'BIO CAMISAS',
++  tagline: 'CAMISAS PERSONALIZADAS', origin: BIOCAMISAS_ORIGIN, home: '/checkout',
++};
++
++/** Exact trusted origins only: a return URL never comes from arbitrary headers. */
++export function checkoutBrandForOrigin(origin: string | null): CheckoutBrand {
++  return BIOCAMISAS_ORIGINS.some(value => value === origin) ? BIOCAMISAS_BRAND : BRAVUS_BRAND;
++}
++
++export function checkoutBrandForHeaders(h: Pick<Headers, 'get'>): CheckoutBrand {
++  // The Worker overwrites this header from the request URL, including behind a proxy.
++  const origin = h.get(CHECKOUT_ORIGIN_HEADER);
++  if (origin !== null) return checkoutBrandForOrigin(origin);
++  // Do not accept X-Forwarded-Host: the incoming Host is set by the domain binding.
++  const host = h.get('host')?.toLowerCase();
++  return host === 'biocamisas.shop' || host === 'www.biocamisas.shop' ? BIOCAMISAS_BRAND : BRAVUS_BRAND;
++}
++
++export function checkoutBrandForRequest(req: Request): CheckoutBrand {
++  const hosted = checkoutBrandForOrigin(new URL(req.url).origin);
++  // Also support the new frontend using the existing shared API origin.
++  return hosted.id === 'biocamisas' ? hosted : checkoutBrandForOrigin(req.headers.get('origin'));
++}
++
++/** Change only the public presentation URL, never the transaction or its gateway. */
++export async function checkoutResponse(req: Request, response: Response): Promise<Response> {
++  const brand = checkoutBrandForRequest(req);
++  if (brand.id !== 'biocamisas' || !response.ok || !response.headers.get('content-type')?.includes('application/json')) return response;
++  let data: unknown;
++  try { data = await response.clone().json(); } catch { return response; }
++  if (!data || typeof data !== 'object' || !('url' in data) || typeof data.url !== 'string') return response;
++  let url: URL;
++  try { url = new URL(data.url); } catch { return response; }
++  if (url.origin !== BRAVUS_PAYMENT_ORIGIN || url.username || url.password || url.search || url.hash || !/^\/(pagar|cartao)\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(url.pathname)) return response;
++  const headers = new Headers(response.headers);
++  headers.delete('content-length');
++  headers.set('Cache-Control', 'private, no-store');
++  return new Response(JSON.stringify({ ...data, url: brand.origin + url.pathname }), { status: response.status, headers });
++}
+--- a/lib/checkout-context.ts
++++ b/lib/checkout-context.ts
+@@ -0,0 +1,6 @@
++import { headers } from 'next/headers';
++import { checkoutBrandForHeaders } from './checkout-brand';
++
++export async function currentCheckoutBrand() {
++  return checkoutBrandForHeaders(await headers());
++}
+--- a/lib/payments.ts
++++ b/lib/payments.ts
+@@ -1,9 +1,10 @@
+ import { env } from 'cloudflare:workers';
+ import { headers } from 'next/headers';
++import { BIOCAMISAS_ORIGINS, BRAVUS_PAYMENT_ORIGIN } from './checkout-brand';
+ export const BUCKPAY_USER_AGENT='Buckpay API';
+ export const SITE_ORIGIN='https://bravus-atendimento-v2.luizlucrocerto.chatgpt.site';
+-export const PAYMENT_ORIGIN='https://pagamento.bravuspix.shop';
+-const ALLOWED_ORIGINS=[SITE_ORIGIN,PAYMENT_ORIGIN];
++export const PAYMENT_ORIGIN=BRAVUS_PAYMENT_ORIGIN;
++const ALLOWED_ORIGINS=[SITE_ORIGIN,PAYMENT_ORIGIN,...BIOCAMISAS_ORIGINS];
+ const runtime=()=>env as unknown as Record<string,any>;
+ export const database=()=>{const db=runtime().DB;if(!db)throw new Error('Database unavailable');return db;};
+ export async function isOwner(){const h=await headers();return !!h.get('oai-authenticated-user-id') && h.get('oai-authenticated-user-email')?.toLowerCase()===String(runtime().ADMIN_EMAIL||'').toLowerCase() && !!runtime().ADMIN_EMAIL;}
+--- a/tests/checkout-domains.test.mjs
++++ b/tests/checkout-domains.test.mjs
+@@ -0,0 +1,85 @@
++import assert from 'node:assert/strict';
++import test from 'node:test';
++import {DatabaseSync} from 'node:sqlite';
++import {readFileSync,mkdtempSync,rmSync} from 'node:fs';
++import {tmpdir} from 'node:os';
++import {join} from 'node:path';
++import {build} from 'esbuild';
++
++const db=new DatabaseSync(':memory:');
++for(const name of ['0000_bitter_king_bedlam','0001_stale_reaper','0002_complex_roulette'])db.exec(readFileSync('drizzle/'+name+'.sql','utf8'));
++globalThis.__env={ADMIN_EMAIL:'owner@example.test',PAYMENT_VAULT_KEY:Buffer.alloc(32,33).toString('base64'),DB:{prepare(sql){const execute=(args=[])=>({async first(){return db.prepare(sql).get(...args)},async all(){return {results:db.prepare(sql).all(...args)}},async run(){return {meta:{changes:Number(db.prepare(sql).run(...args).changes)}}}});return {...execute(),bind(...args){return execute(args)}}}}};
++globalThis.__headers=new Headers();
++const directory=mkdtempSync(join(tmpdir(),'biocamisas-domains-'));
++const plugin={name:'test-runtime',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},x=>({path:x.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},x=>({contents:x.path==='cloudflare:workers'?'export const env=globalThis.__env':'export async function headers(){return globalThis.__headers}',loader:'js'}));}};
++async function load(entry,name){const outfile=join(directory,name+'.mjs');await build({entryPoints:[entry],outfile,bundle:true,platform:'node',format:'esm',plugins:[plugin]});return import(outfile);}
++const brands=await load('lib/checkout-brand.ts','brands'),payments=await load('lib/payments.ts','payments'),orders=await load('app/api/orders/route.ts','orders'),settings=await load('app/api/settings/route.ts','settings'),access=await load('lib/gateway-access.ts','access'),login=await load('app/api/admin/gateway-access/route.ts','login'),gateways=await load('lib/gateways.ts','gateways');
++const bio='https://biocamisas.shop',bravus='https://pagamento.bravuspix.shop';
++const req=(body,origin=bio,destination=origin)=>new Request(destination+'/api/orders',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify(body)});
++let posts=0;
++globalThis.fetch=async(url,init)=>{
++  assert.equal(url,'https://api.realtechdev.com.br/v1/transactions');assert.equal(init.method,'POST');posts++;
++  const payload=JSON.parse(init.body);assert.equal(payload.amount,10000);
++  return Response.json({data:{total_amount:10000,pix:{code:'000201-synthetic-only',qrcode_base64:'aGVsbG8='}}},{status:201});
++};
++
++test('a marca depende somente dos domínios conhecidos, com origem canônica e proteção de retorno',async()=>{
++  assert.equal(brands.checkoutBrandForOrigin(bio).name,'Bio Camisas');
++  assert.equal(brands.checkoutBrandForOrigin('https://www.biocamisas.shop').origin,bio);
++  for(const origin of [null,'http://biocamisas.shop','https://biocamisas.shop.attacker.test','https://biocamisas.shop@attacker.test','https://biocamisas.shop:444','https://biocamisas.shop/'])assert.equal(brands.checkoutBrandForOrigin(origin).id,'bravus');
++  assert.equal(brands.checkoutBrandForHeaders(new Headers({host:'www.biocamisas.shop'})).id,'biocamisas');
++  assert.equal(brands.checkoutBrandForHeaders(new Headers({host:'unknown.test','x-forwarded-host':'biocamisas.shop'})).id,'bravus');
++  assert.equal(brands.checkoutBrandForHeaders(new Headers({host:'localhost','x-checkout-origin':bio})).id,'biocamisas');
++  assert.equal(brands.checkoutBrandForHeaders(new Headers({host:'biocamisas.shop','x-checkout-origin':bravus})).id,'bravus');
++  const id=crypto.randomUUID();
++  const mapped=await brands.checkoutResponse(req({}),Response.json({url:bravus+'/pagar/'+id},{headers:{'Cache-Control':'no-store','X-Test':'preserved'}}));
++  assert.equal((await mapped.json()).url,bio+'/pagar/'+id);assert.equal(mapped.headers.get('X-Test'),'preserved');assert.match(mapped.headers.get('Cache-Control'),/no-store/);
++  for(const url of ['https://outside.test/pagar/'+id,bravus+'/admin/gateways',bravus+'/pagar/'+id+'?secret=1',bravus+'/pagar/not-an-id']){
++    const response=Response.json({url});assert.equal(await brands.checkoutResponse(req({}),response),response);assert.equal((await response.json()).url,url);
++  }
++});
++
++test('BIO e BRAVUS usam as mesmas credenciais e recuperam o mesmo PIX sem uma segunda cobrança',async()=>{
++  await payments.saveCredentials('fake-shared-token','fake-user-agent','buckpay');
++  await gateways.selectGateway('buckpay');
++  const body={amount:10000,sellerName:'Vendedor sintético',requestId:crypto.randomUUID()};
++  assert.equal((await orders.POST(req(body,'https://attacker.test',bio))).status,403);assert.equal(posts,0);
++  for(const origin of [bio,bravus]){
++    const response=await settings.GET(new Request(origin+'/api/settings'));assert.equal(response.status,200);
++    assert.deepEqual(await response.json(),{configured:true,provider:'buckpay'});
++  }
++  const first=await orders.POST(req(body));assert.equal(first.status,200);const result=await first.json();
++  assert.match(result.url,/^https:\/\/biocamisas\.shop\/pagar\/[a-f0-9-]+$/);
++  assert.deepEqual(await (await orders.POST(req(body))).json(),result);
++  assert.equal((await (await orders.POST(req(body,bravus))).json()).url,result.url.replace(bio,bravus));
++  assert.equal((await (await orders.POST(req(body,'https://www.biocamisas.shop'))).json()).url,result.url);
++  assert.equal((await orders.POST(req({...body,amount:20000}))).status,409);
++  assert.equal(posts,1);assert.equal(db.prepare('SELECT count(*) AS n FROM payment_orders').get().n,1);
++  assert.equal(db.prepare("SELECT count(*) AS n FROM payment_settings WHERE key='buckpay'").get().n,1);
++  assert.ok(!JSON.stringify(result).includes('fake-shared-token'));
++});
++
++test('os dois domínios compartilham a senha e as regras sem liberar administração pública',async()=>{
++  assert.equal((await access.panelGuard(req({}))).status,403);
++  await access.setPanelPassword('fixture-shared-password');
++  const response=await login.POST(req({action:'login',password:'fixture-shared-password'}));assert.equal(response.status,200);
++  const cookie=response.headers.get('set-cookie');assert.match(cookie,/__Host-bravus-gateway=.*HttpOnly; Secure; SameSite=Strict/);assert.ok(!cookie.includes('Domain='));
++  globalThis.__headers=new Headers({cookie:cookie.split(';')[0]});
++  assert.equal(await access.panelGuard(req({})),null);assert.equal(await access.panelGuard(req({},bravus)),null);
++  assert.equal((await access.panelGuard(req({},'https://attacker.test',bio))).status,403);
++  const policy={enabled:false,autoSwitch:true,order:['buckpay','beehive'],ticketRouting:{enabled:false,rules:[]}};
++  await gateways.saveFallbackPolicy(policy);assert.deepEqual(await gateways.fallbackPolicy(),policy);
++  globalThis.__headers=new Headers();
++});
++
++test('links de cartão usam Bio Camisas e preservam o pedido e a gateway ao reabrir pela BRAVUS',async()=>{
++  await payments.saveCredentials('fake-card-token','fake-public-key','beehive');await gateways.selectGateway('beehive');
++  const body={amount:10000,paymentMethod:'credit_card',sellerName:'Vendedor sintético',requestId:crypto.randomUUID()};
++  const response=await orders.POST(req(body));assert.equal(response.status,200);const result=await response.json();
++  assert.match(result.url,/^https:\/\/biocamisas\.shop\/cartao\/[a-f0-9-]+$/);
++  assert.deepEqual(await (await orders.POST(req(body))).json(),result);
++  assert.equal((await (await orders.POST(req(body,bravus))).json()).url,result.url.replace(bio,bravus));
++  assert.equal(db.prepare("SELECT count(*) AS n FROM payment_orders WHERE provider='beehive_card'").get().n,1);assert.equal(posts,1);
++});
++
++test.after(()=>{db.close();rmSync(directory,{recursive:true,force:true});});
+--- a/tests/gateway-routing-worker.test.mjs
++++ b/tests/gateway-routing-worker.test.mjs
+@@ -15,6 +15,8 @@
+  assert.equal((await (await mf.dispatchFetch('http://localhost/api/settings?amount=50000')).json()).provider,'buckpay');assert.equal((await (await mf.dispatchFetch('http://localhost/api/settings?amount=50001')).json()).provider,'firebot');
+  const sale={amount:10000,sellerName:'Vendedor Teste',requestId:crypto.randomUUID()},send=()=>mf.dispatchFetch('http://localhost/api/orders',{method:'POST',headers:{origin:'https://pagamento.bravuspix.shop','Content-Type':'application/json'},body:JSON.stringify(sale)});
+  const first=await send();assert.equal(first.status,200);const result=await first.json();assert.match(result.url,/\/pagar\//);assert.equal(calls.length,2);assert.equal((await (await mf.dispatchFetch('http://localhost/active')).json()).provider,'firebot');assert.deepEqual(await (await send()).json(),result);assert.equal(calls.length,2);
++ const bio=await mf.dispatchFetch('https://biocamisas.shop/api/orders',{method:'POST',headers:{origin:'https://biocamisas.shop','Content-Type':'application/json'},body:JSON.stringify(sale)});
++ assert.equal(bio.status,200);assert.equal((await bio.json()).url,result.url.replace('https://pagamento.bravuspix.shop','https://biocamisas.shop'));assert.equal(calls.length,2);
+  const rows=await db.prepare('SELECT provider,state FROM payment_orders').all();assert.equal(rows.results.length,2);assert.ok(rows.results.some(r=>r.provider==='firebot'&&r.state==='ready'));assert.ok(rows.results.some(r=>r.provider==='buckpay'&&r.state==='rejected'));
+  console.log('Workers/D1 gateway routing passed: encrypted credentials, exact ticket threshold, confirmed refusal, ordered fallback, atomic policy/intent updates, automatic switch and duplicate-free recovery.');
+ }finally{await mf.dispose();}
+--- a/worker/index.ts
++++ b/worker/index.ts
+@@ -1,6 +1,7 @@
+ /** Cloudflare Worker entry point for the vinext-starter template. */
+ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
+ import handler from "vinext/server/app-router-entry";
++import { CHECKOUT_ORIGIN_HEADER } from "../lib/checkout-brand";
+ 
+ interface Env {
+   ASSETS: Fetcher;
+@@ -40,7 +41,11 @@
+       }, allowedWidths);
+     }
+ 
+-    return handler.fetch(request, env, ctx);
++    // Derive the brand from the bound public URL, not a proxy's internal Host.
++    // Always replace incoming values so a client cannot choose the server context.
++    const requestHeaders = new Headers(request.headers);
++    requestHeaders.set(CHECKOUT_ORIGIN_HEADER, url.origin);
++    return handler.fetch(new Request(request, { headers: requestHeaders }), env, ctx);
+   },
+ };
+ 

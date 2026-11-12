@@ -1,0 +1,61 @@
+{
+  "site": "https://biocamisas.shop/checkout",
+  "sharedWith": "https://pagamento.bravuspix.shop",
+  "deploymentStatus": "Code prepared and locally tested; not deployed; domain/DNS not configured by this task.",
+  "changedFiles": [
+    "BIOCAMISAS.md",
+    "README.md",
+    "app/admin/gateways/ui.tsx",
+    "app/api/orders/route.ts",
+    "app/cartao/[id]/page.tsx",
+    "app/cartao/[id]/ui.tsx",
+    "app/checkout/page.tsx",
+    "app/checkout/ui.tsx",
+    "app/globals.css",
+    "app/layout.tsx",
+    "app/pagar/[id]/page.tsx",
+    "app/pagar/[id]/ui.tsx",
+    "app/route.ts",
+    "components/checkout-mark.tsx",
+    "lib/checkout-brand.ts",
+    "lib/checkout-context.ts",
+    "lib/payments.ts",
+    "tests/checkout-domains.test.mjs",
+    "tests/gateway-routing-worker.test.mjs",
+    "worker/index.ts"
+  ],
+  "files": {
+    "BIOCAMISAS.md": {
+      "bytes": 3796,
+      "sha256": "0fc74f67f932d13474ee56b620ce830eaaa510081e52734ddd71a7fa2b03fdb6"
+    },
+    "BioCamisas_Atualizacao.patch": {
+      "bytes": 55353,
+      "sha256": "e7671785e155d99abc092c9c990fa3ad66e44e8c0b51584673dca3f61d1de5d2"
+    },
+    "BioCamisas_Atualizacao.zip": {
+      "bytes": 34553,
+      "sha256": "86732b17966bb4557539cbca17a635cfd6d86545f1acb2fe246c379b58d2cfda"
+    },
+    "BioCamisas_Checkout_Completo.zip": {
+      "bytes": 388713,
+      "sha256": "7ee245af3c3aad3b01069195c5ba314c44b35b1236cb6e4b2b9535c96bd45b15"
+    },
+    "README.md": {
+      "bytes": 2846,
+      "sha256": "2874626f4efa41cfa5d670c9c696dc4da7a72829e40cfc1ae7d49a103e2a14b6"
+    },
+    "cartao-mobile.png": {
+      "bytes": 131760,
+      "sha256": "43f16bf406ba6662296da79f0e83dd6a10eb026bdadfe3640c5c1cf1a357b250"
+    },
+    "checkout-desktop.png": {
+      "bytes": 100909,
+      "sha256": "b4697595d017f7d7839ba8c0c3e0f2cfd81867a5099af08a243d1e5541259aba"
+    },
+    "checkout-mobile.png": {
+      "bytes": 70942,
+      "sha256": "996707166eb2ca17275354b449fe92912fbdf2e7ab7d84b46e3251e28995561e"
+    }
+  }
+}

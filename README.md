@@ -32,6 +32,12 @@ Os filtros **Diário**, **7 dias**, **30 dias** e **Personalizar** são independ
 
 `GET /api/ranking?period=last30` consulta 30 dias; `period=today` e `period=week` consultam os atalhos. Um intervalo usa `period=custom&start=AAAA-MM-DD&end=AAAA-MM-DD`. Sem parâmetro, usa 30 dias. Os antigos períodos `yesterday`, `month` e `all` continuam aceitos pela API; os filtros financeiros mantêm suas regras anteriores.
 
+## Colar comprovantes no computador
+
+Atendentes e parceiros podem copiar a imagem do comprovante, clicar na área **Clique aqui e cole a imagem do comprovante** da venda e pressionar **Ctrl+V** (ou **⌘V** no Mac). A colagem também funciona ao manter o foco em um campo dessa venda. Cada linha recebe somente o seu próprio print; texto comum continua sendo colado normalmente nos campos. O botão **Anexar Print** continua disponível.
+
+A imagem colada usa a mesma validação, redução de tamanho, prévia, rascunho e envio à API do seletor de arquivos. O envio aguarda a preparação da imagem. Uma colagem com várias imagens é recusada para evitar escolher um comprovante errado, e uma substituição inválida limpa o anexo anterior. Leituras antigas não sobrescrevem a seleção mais recente. Durante um envio ou sua confirmação pendente, a colagem não altera os comprovantes. O site recebe a imagem pelo gesto de colar, sem solicitar leitura automática da área de transferência.
+
 ## Simulação de rastreio em HTML
 
 A página está em `public/rastreio.html`: um único arquivo com HTML, CSS e JavaScript incorporados, sem dependências, APIs ou dados de clientes. Pode ser publicado sozinho em qualquer hospedagem estática. No projeto, acesse `/rastreio.html`, `/rastreio` ou `/#/rastreio`.

@@ -239,4 +239,12 @@ input::placeholder { color: #8a957d; }
 @media (max-width: 600px) { .draft-status { align-items: flex-start; flex-direction: column; } }
 
 .portal-shell .financial-panel .attendant-financial-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.sale-attachments { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 9px; min-width: 0; }
+.receipt-paste-target { width: 100%; display: flex; align-items: center; gap: 10px; padding: 12px; border: 1px dashed #59603b; border-radius: 10px; background: #11190e; color: #d7dfc5; text-align: left; font-size: 11px; line-height: 1.7; }
+.receipt-paste-target > svg { color: #e4c75d; flex-shrink: 0; }
+.receipt-paste-target small { display: block; color: #9ba98b; font-size: 10px; margin-top: 3px; }
+.receipt-paste-target kbd { font: inherit; color: #e5d17c; font-weight: 700; }
+.receipt-paste-target:focus { outline: 2px solid #d7b13c; outline-offset: 2px; border-color: #d7b13c; background: #202713; }
+.receipt-paste-target:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 800px) { .sale-row > .sale-attachments { grid-row: 5; } }
 @media (max-width: 600px) { .portal-shell .financial-panel .attendant-financial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

@@ -1,7 +1,7 @@
 import Ranking from './Ranking.tsx';
 import { useEffect, useRef, useState } from 'react';
-import type { FormEvent, ReactNode } from 'react';
-import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, Copy, DollarSign, ExternalLink, FileImage, History, Info, KeyRound, LoaderCircle, Megaphone, Plus, RefreshCw, Save, ShieldCheck, ShoppingCart, Trash2, Trophy, UserRound, Wallet, X } from 'lucide-react';
+import type { ClipboardEvent, FormEvent, ReactNode } from 'react';
+import { AlertCircle, ArrowRight, CalendarDays, Camera, Check, CheckCircle2, ChevronDown, ClipboardPaste, Copy, DollarSign, ExternalLink, FileImage, History, Info, KeyRound, LoaderCircle, Megaphone, Plus, RefreshCw, Save, ShieldCheck, ShoppingCart, Trash2, Trophy, UserRound, Wallet, X } from 'lucide-react';
 import { amountToCents, businessToday, checkoutFee, dateLabel, demoInitial, demoPortal, DEFAULT_SALE_ALERT, money, payoutNet, saleEarnings, allocatedSaleFee, accountCheckouts, renderSaleAlert, periodLabels, pixLabels, saleStatusLabel } from './domain.ts';
 import type { AccountKind, Checkout, Period, Portal } from './domain.ts';
 import { ApiError, currentToken, PortalClient, readReceipt } from './client.ts';
@@ -97,6 +97,25 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
       }
     }
   }
+  function pasteReceipt(id: string, event: ClipboardEvent<HTMLDivElement>) {
+    const files = Array.from(event.clipboardData.files);
+    if (!files.length) for (const item of Array.from(event.clipboardData.items)) {
+      if (item.kind === 'file') { const file = item.getAsFile(); if (file) files.push(file); }
+    }
+    // Ordinary text keeps the browser's normal paste behavior in sale inputs.
+    if (!files.length) return;
+    event.preventDefault();
+    if (busy || disabled || !draft.ready || draft.clearing || pending || submitting.current) return;
+    if (files.length > 1) {
+      // Cancel an older read and clear any previous receipt, matching invalid file uploads.
+      attachments.current.delete(id);
+      setPreparing(previous => { const next = new Set(previous); next.delete(id); return next; });
+      update(id, { receipt: null });
+      setAttachmentErrors(previous => ({ ...previous, [id]: 'Cole apenas uma imagem de comprovante por venda.' }));
+      return;
+    }
+    void attach(id, files[0]);
+  }
   function removeRow(id: string) {
     attachments.current.delete(id);
     setPreparing(previous => { const next = new Set(previous); next.delete(id); return next; });
@@ -137,7 +156,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     <form onSubmit={submit}><fieldset disabled={busy || disabled || !draft.ready || draft.clearing}><fieldset disabled={pending}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />
       <p className="field-label sales-count">Vendas a Lançar ({rows.length})</p>
-      <div className="sale-rows">{rows.map((row, index) => <div className={`sale-row${partner ? ' partner-sale-row' : ''}`} key={row.id}>
+      <div className="sale-rows">{rows.map((row, index) => <div className={`sale-row${partner ? ' partner-sale-row' : ''}`} key={row.id} onPaste={event => pasteReceipt(row.id, event)}>
         <span className="row-number">#{index + 1}</span>
         <div className="amount-input"><span>R$</span><input aria-label={`Valor bruto venda ${index + 1}`} placeholder="Valor Bruto (Ex: 197,00)" inputMode="decimal" required maxLength={16} value={row.amount} onChange={event => update(row.id, { amount: event.target.value })} /></div>
         {!partner && <div className="select-wrap"><select aria-label={`Checkout venda ${index + 1}`} required value={row.checkoutId} onChange={event => update(row.id, { checkoutId: event.target.value })}><option value="" disabled>Checkout *</option>{pending && row.checkoutId && !portal.checkouts.some(checkout => checkout.id === row.checkoutId) && <option value={row.checkoutId} disabled>Checkout anterior · confirmar envio</option>}{portal.checkouts.map(checkout => <option key={checkout.id} value={checkout.id}>{checkout.name}</option>)}</select><ChevronDown size={13} /></div>}
@@ -146,9 +165,12 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
         <input className="sr-only" tabIndex={-1} id={`receipt-${row.id}`} type="file" aria-label={`Print da venda ${index + 1}`} accept="image/png,image/jpeg,image/webp,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.heic,.heif" onChange={event => { void attach(row.id, event.target.files?.[0]); event.target.value = ''; }} />
         <button className="icon-button delete-row" type="button" aria-label={`Remover venda ${index + 1}`} disabled={rows.length === 1} onClick={() => removeRow(row.id)}><Trash2 size={16} /></button>
         <input className="observation" aria-label={`Observação venda ${index + 1}`} placeholder="Observação (Ex: Cliente pagou via PIX manual após falha no checkout)..." maxLength={500} value={row.note} onChange={event => update(row.id, { note: event.target.value })} />
-        <SaleValuePreview row={row} checkout={partner ? onlyCheckout : portal.checkouts.find(checkout => checkout.id === row.checkoutId)} index={index} commissionBps={portal.profile.commissionBps} accountKind={portal.profile.accountKind} />
-        {attachmentErrors[row.id] && <div role="alert" className="form-error attachment-error"><AlertCircle size={14} />{attachmentErrors[row.id]}</div>}
-        {row.receipt && <div className="attachment-detail"><FileImage size={12} /><button type="button" onClick={() => preview(`data:${row.receipt!.mime};base64,${row.receipt!.base64}`)}>{row.receipt.name}</button><button className="remove-attachment" type="button" aria-label={`Remover print venda ${index + 1}`} onClick={() => update(row.id, { receipt: null })}><X size={12} /></button></div>}
+        <div className="sale-attachments">
+          <button type="button" className="receipt-paste-target" aria-label={`Colar comprovante venda ${index + 1}`} aria-busy={preparing.has(row.id)} onClick={event => event.currentTarget.focus()}>{preparing.has(row.id) ? <LoaderCircle size={17} className="spin" /> : <ClipboardPaste size={17} />}<span>{preparing.has(row.id) ? 'Preparando imagem do comprovante...' : 'Clique aqui e cole a imagem do comprovante'}<small><kbd>Ctrl+V</kbd> no Windows · <kbd>⌘V</kbd> no Mac · Também funciona nos campos desta venda</small></span></button>
+          <SaleValuePreview row={row} checkout={partner ? onlyCheckout : portal.checkouts.find(checkout => checkout.id === row.checkoutId)} index={index} commissionBps={portal.profile.commissionBps} accountKind={portal.profile.accountKind} />
+          {attachmentErrors[row.id] && <div role="alert" className="form-error attachment-error"><AlertCircle size={14} />{attachmentErrors[row.id]}</div>}
+          {row.receipt && <div className="attachment-detail"><FileImage size={12} /><button type="button" onClick={() => preview(`data:${row.receipt!.mime};base64,${row.receipt!.base64}`)}>{row.receipt.name}</button><button className="remove-attachment" type="button" aria-label={`Remover print venda ${index + 1}`} onClick={() => update(row.id, { receipt: null })}><X size={12} /></button></div>}
+        </div>
       </div>)}</div></fieldset>
       {error && <div role="alert" className="form-error"><AlertCircle size={14} />{error}</div>}
       <div className="sales-actions"><button type="button" className="button secondary" disabled={pending || rows.length >= 10} onClick={() => setRows(previous => [...previous, blankRow()])}><Plus size={15} />Adicionar Outra Venda</button><button type="submit" className="button primary" disabled={preparing.size > 0}>{busy || preparing.size ? <LoaderCircle className="spin" size={15} /> : <Save size={15} />}{busy ? 'Enviando vendas...' : preparing.size ? 'Preparando imagens...' : pending ? 'Confirmar envio' : 'Salvar e Enviar Vendas'}</button></div>

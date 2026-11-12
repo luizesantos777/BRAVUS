@@ -2,7 +2,7 @@ export const pageMetadata = {
   loading: { title: 'Lucro Certo — Portal BRAVUS', description: 'Acesse seu portal BRAVUS. Acompanhe suas vendas e pagamentos.' },
   attendant: { title: 'Lucro Certo — Portal do Atendente BRAVUS', description: 'Portal individual do atendente BRAVUS. Lance suas vendas, acompanhe comissões, ranking e repasses.' },
   partner: { title: 'Lucro Certo — Portal do Parceiro BRAVUS', description: 'Portal do Parceiro BRAVUS. Acompanhe suas vendas e pagamentos.' },
-  admin: { title: 'Lucro Certo Gestão — Administração BRAVUS', description: 'Administração BRAVUS. Acompanhe vendas, pagamentos e custos.' },
+  admin: { title: 'GESTÃO', description: 'Administração BRAVUS. Acompanhe vendas, pagamentos e custos.' },
   tracking: { title: 'Rastreio — Acompanhe seu pedido', description: 'Acompanhe as etapas da entrega do seu pedido.' },
 } as const;
 export type PageKind = keyof typeof pageMetadata;

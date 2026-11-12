@@ -22,7 +22,7 @@ test('HTML público do parceiro, link antigo, recarga e navegação pela adminis
   await expect(page).toHaveURL(new RegExp(`/parceiro\\.html#/atendente/${token}$`));
   await expect(page.locator('meta[name="application-name"]')).toHaveAttribute('content', 'Lucro Certo');
   await page.reload(); await partnerMetadata(page);
-  await page.goto('/#/admin'); await expect(page).toHaveTitle('Lucro Certo Gestão — Administração BRAVUS');
+  await page.goto('/#/admin'); await expect(page).toHaveTitle('GESTÃO');
   await page.evaluate(token => { window.location.hash = '/atendente/' + token; }, token);
   await expect(page.getByRole('heading', { name: 'Portal do Parceiro.', exact: true })).toBeVisible(); await partnerMetadata(page);
   const ordinary = `fixture_${info.project.name}_primary_01234567890123456789`;

@@ -328,10 +328,10 @@ test('iPhone no navegador recebe instruções e instalação abre o painel admin
   expect(workerResponse.headers()['cache-control']).toContain('must-revalidate');
   const manifest = await response.json(); expect(new URL(manifest.start_url, manifestHref!).hash).toBe('#/admin'); expect(manifest.display).toBe('standalone');
   expect(manifest.id).toBe('./admin'); expect(manifest.scope).toBe('./');
-  expect(manifest.name).toBe('Lucro Certo Gestão'); expect(manifest.short_name).toBe('Lucro Certo Gestão');
-  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'Lucro Certo Gestão');
-  await expect(page.locator('meta[name="application-name"]')).toHaveAttribute('content', 'Lucro Certo Gestão');
-  await expect(page).toHaveTitle('Lucro Certo Gestão — Administração BRAVUS');
+  expect(manifest.name).toBe('GESTÃO'); expect(manifest.short_name).toBe('GESTÃO');
+  await expect(page.locator('meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'GESTÃO');
+  await expect(page.locator('meta[name="application-name"]')).toHaveAttribute('content', 'GESTÃO');
+  await expect(page).toHaveTitle('GESTÃO');
   expect(JSON.stringify(manifest)).not.toContain(adminKey);
   for (const icon of manifest.icons) {
     const result = await page.request.get(new URL(icon.src, manifestHref!).href), png = await result.body();

@@ -249,6 +249,16 @@ input::placeholder { color: #8a957d; }
 .receipt-paste-target:focus-within { outline: 2px solid #d7b13c; outline-offset: 2px; border-color: #d7b13c; background: #202713; }
 .receipt-paste-editor[aria-disabled=true] { opacity: .5; cursor: not-allowed; }
 .receipt-paste-button { flex-shrink: 0; }
+.pdf-upload-actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.pdf-upload-actions small { font-size: 11px; line-height: 1.7; color: #aebca0; }
+.pdf-attach-button { min-height: 40px; border-color: #83713a; color: var(--brand-gold-light); }
+.pdf-attach-button.attached { color: #7ed1aa; border-color: #35694d; background: #152a20; }
+.pdf-receipt-preview { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 28px 16px; text-align: center; color: #dce5d0; }
+.pdf-receipt-preview > svg { color: var(--brand-gold-light); }
+.pdf-receipt-preview > strong { max-width: 100%; overflow-wrap: anywhere; }
+.pdf-receipt-preview p { font-size: 13px; line-height: 1.7; color: #aebca0; }
+.pdf-receipt-preview > div { display: flex; justify-content: center; flex-wrap: wrap; gap: 12px; }
+.pdf-receipt-preview a { text-decoration: none; min-height: 42px; }
 @media (max-width: 600px) { .receipt-paste-target { flex-wrap: wrap; } .receipt-paste-copy { flex-basis: calc(100% - 30px); } .receipt-paste-button { margin-left: 27px; } }
 @media (max-width: 800px) { .sale-row > .sale-attachments { grid-row: 5; } }
 @media (max-width: 600px) { .portal-shell .financial-panel .attendant-financial-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

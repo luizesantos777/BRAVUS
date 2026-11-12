@@ -1,5 +1,11 @@
 # BRAVUS — Portal do Atendente
 
+## Comprovantes em PDF
+
+Atendentes e parceiros têm um botão **Anexar PDF** em cada venda, acima da área de colagem. Aceita um PDF de até **2 MB**, como alternativa ao print. O PDF original permanece intacto, é recuperado no rascunho e acompanha a venda até a análise administrativa. A visualização oferece **Abrir PDF** em outra guia e **Baixar PDF**, inclusive no celular. Imagens e colagem continuam disponíveis; cada venda tem um único comprovante, substituído ao selecionar outro arquivo.
+
+A API valida tipo, tamanho, assinatura e marcador de término do PDF, guarda o MIME e os bytes no banco privado e preserva o acesso somente ao dono do comprovante ou ao administrador. Os backups existentes incluem esses arquivos sem nova migração. O limite total de JSON por envio na Vercel continua em 4 MB; envie menos vendas por vez quando os PDFs forem grandes.
+
 Os portais do atendente e do parceiro não exibem percentuais, tarifas fixas, valores de taxas de venda ou a parte BRAVUS. Extratos, cartões de checkout/PIX, prévia do lançamento e histórico apresentam os valores da conta sem detalhar essas taxas. Faturamento, ADS, lucro, ROI, saldo e limites de venda continuam disponíveis. A alteração é de apresentação: cálculos, API, banco, regras de aprovação e repasses permanecem iguais. A administração continua consultando taxas, custos reais e lucro BRAVUS. Informações de saque e ajustes financeiros continuam separadas das taxas das vendas.
 
 ## Transações e lucro dos parceiros na administração
@@ -76,7 +82,7 @@ As variáveis ficam somente no servidor; nunca use prefixo `VITE_` para segredos
 
 A API conserva atendentes, hashes dos tokens, vendas, fotos, comprovantes, ADS, aprovação e repasses entre execuções e deploys. As regras de dinheiro são as mesmas do portal: 50% de participação por padrão, taxas do gateway divididas em 50%, limite de R$ 1.000 no checkout e taxa de saque dividida somente quando o administrador confirma o pagamento. Solicitar repasse não executa PIX; a administração registra um pagamento feito no banco.
 
-Na Vercel, cada envio tem limite de **4 MB de JSON**, respeitando o limite da plataforma. O portal informa esse limite e pede menos vendas ou prints menores quando necessário; cada print continua limitado a 2 MB. O servidor Node local aceita 12 MB. O Web Push é ativado automaticamente na Vercel: o servidor gera um par de chaves e o guarda no banco privado, compartilhado por todas as instâncias e preservado entre publicações. O navegador ainda precisa da permissão e da inscrição do aparelho, concluídas pelo botão de ativação no perfil. É possível fornecer um par próprio estável com `BRAVUS_PUSH_PUBLIC_KEY` / `BRAVUS_PUSH_PRIVATE_KEY`, sempre juntas, e personalizar `BRAVUS_PUSH_SUBJECT`.
+Na Vercel, cada envio tem limite de **4 MB de JSON**, respeitando o limite da plataforma. O portal informa esse limite e pede menos vendas ou arquivos menores quando necessário; cada comprovante continua limitado a 2 MB. O servidor Node local aceita 12 MB. O Web Push é ativado automaticamente na Vercel: o servidor gera um par de chaves e o guarda no banco privado, compartilhado por todas as instâncias e preservado entre publicações. O navegador ainda precisa da permissão e da inscrição do aparelho, concluídas pelo botão de ativação no perfil. É possível fornecer um par próprio estável com `BRAVUS_PUSH_PUBLIC_KEY` / `BRAVUS_PUSH_PRIVATE_KEY`, sempre juntas, e personalizar `BRAVUS_PUSH_SUBJECT`.
 
 O GitHub Pages continua sendo uma interface estática de demonstração, em `docs/`. Tokens reais dependem de uma API: não são autenticados por listas públicas nem por localStorage.
 

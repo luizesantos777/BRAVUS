@@ -93,7 +93,7 @@ test('colagem inválida ou com várias imagens limpa o anexo anterior; leitura l
     const original = FileReader.prototype.readAsDataURL;let count = 0;
     FileReader.prototype.readAsDataURL = function (blob: Blob) { setTimeout(() => original.call(this, blob), ++count === 1 ? 600 : 30); };
   });
-  await dispatchFiles(target, [{ name: 'antigo.png', mime: 'image/png', base64: png }]);await expect(page.getByRole('button', { name: 'Preparando imagens...', exact: true })).toBeDisabled();
+  await dispatchFiles(target, [{ name: 'antigo.png', mime: 'image/png', base64: png }]);await expect(page.getByRole('button', { name: 'Preparando comprovantes...', exact: true })).toBeDisabled();
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles({ name: 'novo.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
   await expect(page.locator('.attachment-detail')).toContainText('novo.png');await page.waitForTimeout(650);
   await expect(page.locator('.attachment-detail')).not.toContainText('antigo.png');await expect(page.locator('.attachment-error')).toHaveCount(0);

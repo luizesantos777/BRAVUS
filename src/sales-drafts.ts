@@ -1,5 +1,6 @@
 import { businessTime, businessToday, MAX_RECEIPT_BYTES, validDate } from './domain.ts';
 import type { ReceiptInput, SaleInput } from './domain.ts';
+import { RECEIPT_MIMES } from './receipt-types.ts';
 
 export type DraftRow = SaleInput & { id: string };
 export interface SalesDraft { version: 1; date: string; rows: DraftRow[]; requestKey: string; pending: boolean }
@@ -17,7 +18,7 @@ function validate(draft: SalesDraft): SalesDraft {
   for (const row of draft.rows) {
     if (!row || typeof row.id !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(row.id) || ids.has(row.id) || typeof row.amount !== 'string' || row.amount.length > 16 || typeof row.checkoutId !== 'string' || row.checkoutId.length > 100 || typeof row.time !== 'string' || row.time !== '' && !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time) || typeof row.note !== 'string' || row.note.length > 500) throw new Error('Não foi possível recuperar este rascunho.');
     ids.add(row.id);
-    if (row.receipt && (typeof row.receipt.name !== 'string' || row.receipt.name.length > 180 || !['image/png', 'image/jpeg', 'image/webp'].includes(row.receipt.mime) || typeof row.receipt.base64 !== 'string' || !row.receipt.base64 || row.receipt.base64.length > Math.ceil(MAX_RECEIPT_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(row.receipt.base64))) throw new Error('Não foi possível recuperar o print do rascunho.');
+    if (row.receipt && (typeof row.receipt.name !== 'string' || row.receipt.name.length > 180 || !(RECEIPT_MIMES as readonly string[]).includes(row.receipt.mime) || typeof row.receipt.base64 !== 'string' || !row.receipt.base64 || row.receipt.base64.length > Math.ceil(MAX_RECEIPT_BYTES / 3) * 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(row.receipt.base64))) throw new Error('Não foi possível recuperar o comprovante do rascunho.');
   }
   return draft;
 }

@@ -6,6 +6,8 @@ import { attendantSaleFee, dateLabel, money, saleEarnings, saleStatusLabel } fro
 import type { AdminAttendant, AdminSale, AdminSalesPage, SaleStatus } from './domain.ts';
 import type { AdminClient } from './admin-client.ts';
 import ReceiptDuplicateWarning from './ReceiptDuplicateWarning.tsx';
+import ReceiptPreview from './ReceiptPreview.tsx';
+import type { ReceiptView } from './receipts.ts';
 
 function ReviewModal({ title, close, busy = false, children }: { title: string; close: () => void; busy?: boolean; children: ReactNode }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -30,7 +32,7 @@ function SaleValues({ sale, partner }: { sale: AdminSale; partner: boolean }) {
 export default function AdminSales({ client, attendants, refreshKey, resetKey, pendingSalesCount, run, busy, error }: { client: AdminClient; attendants: AdminAttendant[]; refreshKey: unknown; resetKey: number; pendingSalesCount: number; run: (work: () => Promise<unknown>, success: string) => Promise<boolean>; busy: boolean; error: string }) {
   const [status, setStatus] = useState<SaleStatus | 'all'>('pending'), [attendantId, setAttendantId] = useState(''), [page, setPage] = useState(1);
   const [result, setResult] = useState<AdminSalesPage | null>(null), [loading, setLoading] = useState(true), [loadError, setLoadError] = useState('');
-  const [decision, setDecision] = useState<{ sale: AdminSale; status: 'approved' | 'rejected' | 'cancelled' } | null>(null), [note, setNote] = useState(''), [receipt, setReceipt] = useState('');
+  const [decision, setDecision] = useState<{ sale: AdminSale; status: 'approved' | 'rejected' | 'cancelled' } | null>(null), [note, setNote] = useState(''), [receipt, setReceipt] = useState<ReceiptView | null>(null);
   const [retry, setRetry] = useState(0), previousQuery = useRef<{ client: AdminClient; status: string; attendantId: string; page: number } | null>(null);
   useEffect(() => { setStatus('pending'); setAttendantId(''); setPage(1); }, [resetKey]);
   useEffect(() => {
@@ -41,7 +43,7 @@ export default function AdminSales({ client, attendants, refreshKey, resetKey, p
     client.sales(status, attendantId, page).then(value => { if (!cancelled) { const lastPage = Math.max(1, Math.ceil(value.total / value.pageSize)); if (page > lastPage) setPage(lastPage); else setResult(value); } }).catch(cause => { if (!cancelled) setLoadError((cause as Error).message); }).finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [client, status, attendantId, page, refreshKey, resetKey, retry]);
-  useEffect(() => () => { if (receipt.startsWith('blob:')) URL.revokeObjectURL(receipt); }, [receipt]);
+  useEffect(() => () => { if (receipt?.url.startsWith('blob:')) URL.revokeObjectURL(receipt.url); }, [receipt]);
   const partnerSale = (sale: AdminSale) => sale.accountKind === 'partner' || attendants.some(account => account.id === sale.attendantId && account.accountKind === 'partner');
   async function openReceipt(id: string) { try { setReceipt(await client.receipt(id)); } catch (cause) { setLoadError((cause as Error).message); } }
   async function submit(event: FormEvent) {
@@ -62,6 +64,6 @@ export default function AdminSales({ client, attendants, refreshKey, resetKey, p
     </article>)}</div> : <div className="empty"><Check size={28} /><h3>Nenhuma venda nesta lista</h3><p>Os lançamentos de atendentes e parceiros aparecerão aqui para você analisar.</p></div>}
     {result && result.total > result.pageSize && <div className="review-pagination"><button className="button secondary" disabled={page === 1 || loading} onClick={() => setPage(page - 1)}><ChevronLeft size={14} />Anterior</button><span>Página {page} de {Math.ceil(result.total / result.pageSize)}</span><button className="button secondary" disabled={page * result.pageSize >= result.total || loading} onClick={() => setPage(page + 1)}>Próxima<ChevronRight size={14} /></button></div>}
     {decision && <ReviewModal title={decision.status === 'cancelled' ? 'Cancelar venda aprovada' : decision.status === 'approved' ? 'Aprovar venda' : 'Recusar venda'} busy={busy} close={() => setDecision(null)}><p className="dialog-description">Venda de <strong>{money(decision.sale.amountCents)}</strong> de {decision.sale.attendantName}. {decision.status === 'cancelled' ? <>{partnerSale(decision.sale) ? 'O valor do parceiro de' : 'A comissão de'} {money(saleEarnings(decision.sale))} será {partnerSale(decision.sale) ? 'retirado' : 'retirada'} do saldo, e a venda sairá do faturamento aprovado e do ranking. Repasses já pagos permanecem no histórico; o saldo pode ficar negativo. Pedidos em análise sem cobertura precisam ser cancelados antes de confirmar pagamentos. O registro e o comprovante da venda serão preservados.</> : decision.status === 'approved' ? partnerSale(decision.sale) ? 'A aprovação libera o valor da venda, já descontada a taxa da venda de 12% + R$ 2,00, no saldo do parceiro.' : 'A aprovação libera a comissão no saldo do atendente.' : partnerSale(decision.sale) ? 'A venda não gerará saldo para o parceiro. Informe o motivo da recusa.' : 'A venda não gerará comissão. Informe o motivo para o atendente.'}</p>{decision.status === 'approved' && <ReceiptDuplicateWarning sale={result?.sales.find(sale => sale.id === decision.sale.id) ?? decision.sale} />}<form className="admin-form" onSubmit={submit}><label>{decision.status === 'cancelled' ? 'Motivo do cancelamento' : decision.status === 'rejected' ? 'Motivo da recusa' : 'Observação da aprovação (opcional)'}<textarea required={decision.status !== 'approved'} maxLength={500} value={note} onChange={event => setNote(event.target.value)} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="dialog-actions"><button type="button" className="button secondary" disabled={busy} onClick={() => setDecision(null)}>Voltar</button><button className="button primary" disabled={busy}>{busy && <LoaderCircle size={14} className="spin" />}{decision.status === 'cancelled' ? 'Confirmar cancelamento da venda' : decision.status === 'approved' ? 'Confirmar aprovação' : 'Confirmar recusa'}</button></div></form></ReviewModal>}
-    {receipt && <ReviewModal title="Comprovante da venda" close={() => setReceipt('')}><img className="receipt-preview" src={receipt} alt="Comprovante da venda" /></ReviewModal>}
+    {receipt && <ReviewModal title="Comprovante da venda" close={() => setReceipt(null)}><ReceiptPreview receipt={receipt} imageAlt="Comprovante da venda" /></ReviewModal>}
   </section>;
 }

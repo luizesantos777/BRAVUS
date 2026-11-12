@@ -1,5 +1,21 @@
 import { MAX_RECEIPT_BYTES } from './domain.ts';
 import type { ReceiptInput } from './domain.ts';
+import { isPdfReceipt, RECEIPT_MIMES, receiptExtension } from './receipt-types.ts';
+
+export interface ReceiptView { url: string; mime: string; name: string }
+
+export function receiptViewFromBlob(blob: Blob, name = ''): ReceiptView {
+  if (!(RECEIPT_MIMES as readonly string[]).includes(blob.type)) throw new Error('Formato de comprovante não reconhecido.');
+  return { url: URL.createObjectURL(blob), mime: blob.type, name: name || `comprovante.${receiptExtension(blob.type)}` };
+}
+
+export function receiptViewFromInput(receipt: ReceiptInput): ReceiptView {
+  if (receipt.mime === 'application/pdf') {
+    const bytes = Uint8Array.from(atob(receipt.base64), char => char.charCodeAt(0));
+    return receiptViewFromBlob(new Blob([bytes], { type: receipt.mime }), receipt.name);
+  }
+  return { url: `data:${receipt.mime};base64,${receipt.base64}`, mime: receipt.mime, name: receipt.name };
+}
 
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const TARGET_BYTES = 1024 * 1024;
@@ -17,7 +33,7 @@ async function imageType(file: File): Promise<string> {
       if (['heic', 'heix', 'hevc', 'hevx', 'heim', 'heis', 'hevm', 'hevs', 'mif1', 'msf1'].includes(header.slice(offset, offset + 4))) return 'image/heic';
     }
   }
-  throw new Error('Escolha um print PNG, JPG ou WEBP. PDFs e outros arquivos não podem ser anexados como imagem.');
+  throw new Error('Escolha um print PNG, JPG ou WEBP, ou use Anexar PDF para um comprovante em PDF.');
 }
 
 function openImage(blob: Blob, heic: boolean): Promise<HTMLImageElement> {
@@ -47,6 +63,14 @@ function dataUrl(blob: Blob): Promise<string> {
 }
 
 export async function readReceipt(file: File): Promise<ReceiptInput> {
+  const header = new Uint8Array(await file.slice(0, 9).arrayBuffer());
+  if (file.type === 'application/pdf' || /\.pdf$/i.test(file.name) || String.fromCharCode(...header).startsWith('%PDF-')) {
+    if (!file.size) throw new Error('O PDF está vazio. Selecione outro comprovante.');
+    if (file.size > MAX_RECEIPT_BYTES) throw new Error('Escolha um PDF de até 2 MB.');
+    if (!isPdfReceipt(new Uint8Array(await file.arrayBuffer()))) throw new Error('O PDF está inválido ou incompleto. Selecione o comprovante original.');
+    const source = file.slice(0, file.size, 'application/pdf');
+    return { name: (file.name || 'comprovante.pdf').slice(0, 180), mime: 'application/pdf', base64: (await dataUrl(source)).split(',')[1] };
+  }
   if (!file.size) throw new Error('A imagem está vazia. Selecione outro print.');
   if (file.size > MAX_SOURCE_BYTES) throw new Error('Escolha uma imagem de até 20 MB ou faça uma captura de tela do comprovante.');
   const mime = await imageType(file), heic = mime === 'image/heic';

@@ -35,7 +35,7 @@ test('administrador cancela venda aprovada com motivo e atendente vê o cancelam
   const history = page.locator('.audit-entry').filter({ hasText: name }); await expect(history).toHaveCount(1); await history.locator('summary').click(); await expect(history).toContainText('Aprovada sem querer');
   await page.goto(`/#/atendente/${token}`); await expect(page.locator('.financial-grid .metric').first()).toContainText('0,00');
   await expect(page.locator('.history-panel .sale-status')).toHaveText('Cancelada'); await expect(page.locator('.history-panel')).toContainText('Comprovante não corresponde à venda');
-  await page.getByRole('button', { name: /Ver print da venda de/ }).click(); await expect(page.getByRole('img', { name: 'Print do comprovante da venda' })).toBeVisible();
+  await page.getByRole('button', { name: /Ver comprovante da venda de/ }).click(); await expect(page.getByRole('img', { name: 'Print do comprovante da venda' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('venda-aprovada-cancelada.png'), fullPage: true });
 });
@@ -167,8 +167,8 @@ test('venda aguarda o processamento do print e a última seleção prevalece', a
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100'); await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
   const input = page.getByLabel('Print da venda 1', { exact: true });
   await input.setInputFiles({ ...image, name: 'antigo.png' });
-  await expect(page.getByRole('button', { name: 'Preparando imagens...' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Anexar print venda 1', exact: true })).toHaveText('Preparando print...');
+  await expect(page.getByRole('button', { name: 'Preparando comprovantes...' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Anexar print venda 1', exact: true })).toHaveText('Preparando arquivo...');
   await input.setInputFiles({ ...image, name: 'atual.png' });
   await expect(page.locator('.attachment-detail')).toContainText('atual.png'); await expect(page.locator('.attachment-detail')).not.toContainText('antigo.png');
   await page.waitForTimeout(800); // Let the slower, older selection finish after the replacement.
@@ -516,7 +516,7 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption('main');
   await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('9,04');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click();
-  await expect(page.getByRole('alert')).toContainText('anexe o print');
+  await expect(page.getByRole('alert')).toContainText('anexe o comprovante obrigatório (imagem ou PDF)');
   await page.getByLabel('Print da venda 1', { exact: true }).setInputFiles(image);
   await page.getByRole('button', { name: 'Adicionar Outra Venda' }).click();
   await page.getByLabel('Valor bruto venda 2', { exact: true }).fill('53,00');
@@ -535,7 +535,7 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   await expect(page.locator('.financial-panel')).not.toContainText('TAXAS + SAQUES');
   await expect(page.locator('.metric.balance')).toContainText(/42,78/);
   await expect(page.getByRole('progressbar')).toHaveCount(0);
-  await page.getByRole('button', { name: /Ver print da venda de.*47,00/ }).click();
+  await page.getByRole('button', { name: /Ver comprovante da venda de.*47,00/ }).click();
   await expect(page.getByRole('img', { name: 'Print do comprovante da venda' })).toBeVisible();
   expect(await page.getByRole('img', { name: 'Print do comprovante da venda' }).evaluate((image: HTMLImageElement) => image.naturalWidth > 0)).toBe(true);
   await page.getByRole('button', { name: 'Fechar janela' }).click();

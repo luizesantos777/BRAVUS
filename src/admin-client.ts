@@ -5,6 +5,8 @@ import { publicAssetUrl } from './pwa.ts';
 import type { AccountKind, AdminDashboard, AdminSalesPage, CheckoutTierInput, DailyCost, Invitation, SaleStatus } from './domain.ts';
 import { financialCsv } from './admin-domain.ts';
 import type { AuditPage, BackupRecord, BackupStatus, FinancialReport } from './admin-domain.ts';
+import { receiptViewFromBlob, receiptViewFromInput } from './receipts.ts';
+import type { ReceiptView } from './receipts.ts';
 
 export const adminUnavailable = !import.meta.env.VITE_API_URL && window.location.hostname.endsWith('.github.io');
 
@@ -58,14 +60,14 @@ export class AdminClient {
   sales(status: SaleStatus | 'all', attendantId = '', page = 1) { return this.request<AdminSalesPage>(`/sales?${new URLSearchParams({ status, attendantId, page: String(page) })}`); }
   reviewSale(id: string, status: 'approved' | 'rejected', note: string) { return this.request(`/sales/${id}`, 'PATCH', { status, note }); }
   cancelSale(id: string, note: string) { return this.request(`/sales/${id}/cancel`, 'POST', { note }); }
-  async receipt(id: string): Promise<string> {
+  async receipt(id: string): Promise<ReceiptView> {
     if (this.isDemo) {
       const receipt = readDemoData().receipts[id]; if (!receipt) throw new Error('Comprovante não encontrado.');
-      return `data:${receipt.mime};base64,${receipt.base64}`;
+      return receiptViewFromInput(receipt);
     }
     const response = await fetch(`${this.base}/admin/receipts/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${this.key}` } });
     if (!response.ok) throw new ApiError('Não foi possível abrir o comprovante.', response.status);
-    return URL.createObjectURL(await response.blob());
+    return receiptViewFromBlob(await response.blob());
   }
   createAttendant(name: string, commission: string, token = '', accountKind: AccountKind = 'attendant') { return this.request<Invitation>('/attendants', 'POST', { name, commission, accountKind, ...(token.trim() ? { token: token.trim() } : {}) }); }
   rotateToken(id: string) { return this.request<Invitation>(`/attendants/${id}/token`, 'POST'); }

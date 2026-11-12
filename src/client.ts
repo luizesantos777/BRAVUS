@@ -3,6 +3,9 @@ import { inRankingRange, rankingRange } from './ranking-domain.ts';
 import type { RankingPeriod } from './ranking-domain.ts';
 import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
 import type { DemoData, PartnerAdsCost, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
+import { receiptViewFromBlob, receiptViewFromInput } from './receipts.ts';
+import type { ReceiptView } from './receipts.ts';
+import { isPdfReceipt, RECEIPT_MIMES } from './receipt-types.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
 export function currentToken() {
@@ -41,7 +44,7 @@ export class PortalClient {
     const abort = new AbortController(), timeout = window.setTimeout(() => abort.abort(), 20_000);
     try {
       const response = await fetch(`${this.base}${path}`, { ...init, signal: abort.signal, headers: { Authorization: `Bearer ${this.token}`, ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers } });
-      if (response.status === 413) throw new ApiError('O envio excede o limite da hospedagem. Envie menos vendas ou prints menores por vez.', 413);
+      if (response.status === 413) throw new ApiError('O envio excede o limite da hospedagem. Envie menos vendas ou arquivos menores por vez.', 413);
       if (!response.headers.get('content-type')?.includes('application/json')) throw new ApiError('O serviço de atendentes está indisponível. Tente novamente em instantes.', 503);
       const body = await response.json();
       if (!response.ok) throw new ApiError(body.error ?? 'Não foi possível concluir a solicitação.', response.status);
@@ -72,7 +75,9 @@ export class PortalClient {
     const sales: Sale[] = batch.sales.map(row => {
       const checkout = current.checkouts.find(item => item.id === row.checkoutId);
       if (!checkout) throw new ApiError('Selecione o checkout de cada venda.');
-      if (!row.receipt || !['image/png', 'image/jpeg', 'image/webp'].includes(row.receipt.mime) || row.receipt.base64.length * .75 > MAX_RECEIPT_BYTES) throw new ApiError('Anexe um print PNG, JPG ou WEBP de até 2 MB para cada venda.');
+      if (!row.receipt || !(RECEIPT_MIMES as readonly string[]).includes(row.receipt.mime) || typeof row.receipt.base64 !== 'string') throw new ApiError('Anexe uma imagem ou PDF de até 2 MB para cada venda.');
+      const receiptBytes = Uint8Array.from(atob(row.receipt.base64), char => char.charCodeAt(0));
+      if (!receiptBytes.length || receiptBytes.length > MAX_RECEIPT_BYTES || row.receipt.mime === 'application/pdf' && !isPdfReceipt(receiptBytes)) throw new ApiError('Anexe uma imagem ou PDF válido de até 2 MB para cada venda.');
       if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) throw new ApiError('Informe o horário de cada venda.');
       const amountCents = amountToCents(row.amount), receiptId = crypto.randomUUID();
       receipts[receiptId] = row.receipt;
@@ -101,17 +106,17 @@ export class PortalClient {
   pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }
   subscribePush(subscription: PushSubscriptionJSON) { return this.request('/push/subscriptions', { method: 'POST', body: JSON.stringify(subscription) }); }
   unsubscribePush(id: string) { return this.request('/push/subscriptions', { method: 'DELETE', body: JSON.stringify({ id }) }); }
-  async receipt(id: string): Promise<string> {
+  async receipt(id: string): Promise<ReceiptView> {
     this.reloadDemo();
     if (this.isDemo) {
       const receipt = this.demo.receipts[id];
       if (!receipt) throw new ApiError('Comprovante não encontrado.');
-      return `data:${receipt.mime};base64,${receipt.base64}`;
+      return receiptViewFromInput(receipt);
     }
     try {
       const response = await fetch(`${this.base}/receipts/${encodeURIComponent(id)}`, { headers: { Authorization: `Bearer ${this.token}` } });
       if (!response.ok) throw new Error();
-      return URL.createObjectURL(await response.blob());
+      return receiptViewFromBlob(await response.blob());
     } catch { throw new ApiError('Não foi possível abrir este comprovante.'); }
   }
 }

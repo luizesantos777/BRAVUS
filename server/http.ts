@@ -14,6 +14,7 @@ import type { PushService } from './push.ts';
 import type { BackupService } from './backups.ts';
 import { readAudit, readFinancialReport } from './admin-controls.ts';
 import { financialCsv } from '../src/admin-domain.ts';
+import { receiptExtension } from '../src/receipt-types.ts';
 
 const BODY_LIMIT = 12 * 1024 * 1024;
 const json = (response: ServerResponse, status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
@@ -22,7 +23,7 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
   if (prepared !== undefined) {
     try {
       const text = Buffer.isBuffer(prepared) ? prepared.toString('utf8') : typeof prepared === 'string' ? prepared : JSON.stringify(prepared);
-      if (Buffer.byteLength(text) > limit) return Promise.reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou prints menores por vez.'));
+      if (Buffer.byteLength(text) > limit) return Promise.reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou arquivos menores por vez.'));
       return Promise.resolve(JSON.parse(text));
     } catch { return Promise.reject(new PortalError(400, 'O corpo da solicitação deve ser um JSON válido.')); }
   }
@@ -30,7 +31,7 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
     const parts: Buffer[] = []; let size = 0, rejected = false;
     request.on('data', (part: Buffer) => {
       size += part.length;
-      if (size > limit) { if (!rejected) reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou prints menores por vez.')); rejected = true; parts.length = 0; return; }
+      if (size > limit) { if (!rejected) reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou arquivos menores por vez.')); rejected = true; parts.length = 0; return; }
       if (!rejected) parts.push(part);
     });
     request.on('end', () => { if (rejected) return; try { accept(JSON.parse(Buffer.concat(parts).toString('utf8'))); } catch { reject(new PortalError(400, 'O corpo da solicitação deve ser um JSON válido.')); } });
@@ -118,7 +119,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           else if (url.pathname === '/api/admin/payouts' && request.method === 'POST') json(response, 201, await store.recordManualPayout(await readJson(request, options.bodyLimit), String(request.headers['idempotency-key'] ?? ''), actor));
           else if (/^\/api\/admin\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
             const receipt = (await store.adminReceipt(url.pathname.split('/').at(-1)!));
-            response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline' }); response.end(receipt.bytes);
+            response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': `inline; filename="comprovante.${receiptExtension(receipt.mime)}"` }); response.end(receipt.bytes);
           }
           else if (url.pathname === '/api/admin/attendants' && request.method === 'POST') json(response, 201, (await store.adminCreateAttendant(await readJson(request, options.bodyLimit), actor)));
           else if (route?.[1] === 'attendants' && route[3] === 'token' && request.method === 'POST') json(response, 200, (await store.rotateToken(route[2], actor)));
@@ -171,7 +172,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         else if (url.pathname === '/api/payouts' && request.method === 'POST') throw new PortalError(410, 'As solicitações de repasse foram desativadas. Os pagamentos são registrados manualmente pela administração.');
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
           const receipt = (await store.receipt(auth, url.pathname.split('/').at(-1)!));
-          response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': 'inline; filename="comprovante.' + (receipt.mime === 'image/jpeg' ? 'jpg' : receipt.mime === 'image/webp' ? 'webp' : 'png') + '"' });
+          response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': `inline; filename="comprovante.${receiptExtension(receipt.mime)}"` });
           response.end(receipt.bytes);
         } else throw new PortalError(404, 'Recurso não encontrado.');
         return;

@@ -10,6 +10,7 @@ import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale,
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
 import { exclusiveCheckoutId, isExclusiveCheckout, PARTNER_GATEWAY_SEED } from './partner-checkouts.ts';
+import { isPdfReceipt } from '../src/receipt-types.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
@@ -509,14 +510,14 @@ export class PortalStore {
     return (await this.profile(auth));
   }
   receiptInput(value: unknown): { name: string; mime: string; bytes: Buffer } {
-    if (!value || typeof value !== 'object') return invalid('Anexe o print de cada venda.');
+    if (!value || typeof value !== 'object') return invalid('Anexe uma imagem ou PDF como comprovante de cada venda.');
     const receipt = value as ReceiptInput;
-    if (typeof receipt.name !== 'string' || !receipt.name || receipt.name.length > 180 || typeof receipt.base64 !== 'string' || receipt.base64.length > Math.ceil(MAX_RECEIPT_BYTES / 3) * 4 + 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(receipt.base64)) return invalid('O comprovante deve ser uma imagem válida de até 2 MB.');
+    if (typeof receipt.name !== 'string' || !receipt.name || receipt.name.length > 180 || typeof receipt.base64 !== 'string' || receipt.base64.length > Math.ceil(MAX_RECEIPT_BYTES / 3) * 4 + 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(receipt.base64)) return invalid('O comprovante deve ser uma imagem ou PDF válido de até 2 MB.');
     const bytes = Buffer.from(receipt.base64, 'base64');
     const png = bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
     const jpeg = bytes.length > 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255;
     const webp = bytes.length > 12 && bytes.subarray(0, 4).toString() === 'RIFF' && bytes.subarray(8, 12).toString() === 'WEBP';
-    if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES || !(receipt.mime === 'image/png' && png || receipt.mime === 'image/jpeg' && jpeg || receipt.mime === 'image/webp' && webp)) return invalid('Use um print PNG, JPG ou WEBP válido, de até 2 MB.');
+    if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES || !(receipt.mime === 'image/png' && png || receipt.mime === 'image/jpeg' && jpeg || receipt.mime === 'image/webp' && webp || receipt.mime === 'application/pdf' && isPdfReceipt(bytes))) return invalid('Use um print PNG, JPG ou WEBP, ou um PDF válido, de até 2 MB.');
     return { name: receipt.name, mime: receipt.mime, bytes };
   }
   async recordSales(auth: Authenticated, input: unknown, requestKey: string): Promise<{ duplicate: boolean; count: number }> {

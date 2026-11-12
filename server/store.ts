@@ -1,4 +1,6 @@
 import { calculatePartnerBusiness, partnerGatewayCost, PARTNER_PROVIDER_FEE_BPS, PARTNER_PROVIDER_FIXED_FEE_CENTS } from '../src/partner-business.ts';
+import { inRankingRange, rankingRange } from '../src/ranking-domain.ts';
+import type { RankingPeriod } from '../src/ranking-domain.ts';
 import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
@@ -540,13 +542,15 @@ export class PortalStore {
     if (!row) throw new PortalError(404, 'Comprovante não encontrado.');
     return { mime: String(row.mime), bytes: row.bytes as Uint8Array };
   }
-  async ranking(auth: Authenticated, period: Period): Promise<RankingEntry[]> {
+  async ranking(auth: Authenticated, period: RankingPeriod = 'last30', start = '', end = ''): Promise<RankingEntry[]> {
+    let range: ReturnType<typeof rankingRange>;
+    try { range = rankingRange(period, businessToday(), start, end); } catch (error) { return invalid((error as Error).message); }
     if ((await this.profile(auth)).accountKind === 'partner') return [];
     const attendants = (await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1 AND account_kind = 'attendant'").all());
     return (await Promise.all(attendants.map(async attendant => {
-      const sales = (await this.sales({ id: String(attendant.id) })).filter(sale => sale.status === 'approved').filter(sale => inPeriod(sale.date, period, businessToday()));
+      const sales = (await this.sales({ id: String(attendant.id) })).filter(sale => sale.status === 'approved' && inRankingRange(sale.date, range));
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
-    }))).filter(item => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name));
+    }))).filter(item => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name, 'pt-BR') || a.id.localeCompare(b.id));
   }
   /** Historical ledger support; attendants cannot create requests through the API. */
   async requestPayout(auth: Authenticated, input: unknown): Promise<Payout> {

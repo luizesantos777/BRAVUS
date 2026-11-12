@@ -1,5 +1,7 @@
 import { readDemoData, writeDemoData } from './demo-store.ts';
-import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, inPeriod, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
+import { inRankingRange, rankingRange } from './ranking-domain.ts';
+import type { RankingPeriod } from './ranking-domain.ts';
+import { amountToCents, businessToday, checkoutFee, splitGatewayFee, demoInitial, demoPortal, MAX_RECEIPT_BYTES, validateAvatar, validateProfile, validDate } from './domain.ts';
 import type { DemoData, PartnerAdsCost, Period, Portal, Profile, RankingEntry, Sale, SaleBatch } from './domain.ts';
 
 export class ApiError extends Error { status: number; constructor(message: string, status = 0) { super(message); this.status = status; } }
@@ -88,10 +90,12 @@ export class PortalClient {
   }
   partnerAds(date: string) { return this.request<PartnerAdsCost>(`/partner/ads?date=${encodeURIComponent(date)}`); }
   savePartnerAds(date: string, ads: string) { return this.request<PartnerAdsCost>('/partner/ads', { method: 'POST', body: JSON.stringify({ date, ads }) }); }
-  async ranking(period: Period): Promise<RankingEntry[]> {
+  async ranking(period: RankingPeriod = 'last30', start = '', end = ''): Promise<RankingEntry[]> {
     this.reloadDemo();
-    if (!this.isDemo) return this.request(`/ranking?period=${period}`);
-    const sales = this.demo.sales.filter(sale => sale.status === 'approved').filter(sale => inPeriod(sale.date, period, businessToday()));
+    const range = rankingRange(period, businessToday(), start, end), query = new URLSearchParams({ period });
+    if (period === 'custom') { query.set('start', start); query.set('end', end); }
+    if (!this.isDemo) return this.request(`/ranking?${query}`);
+    const sales = this.demo.sales.filter(sale => sale.status === 'approved' && inRankingRange(sale.date, range));
     return sales.length ? [{ id: this.demo.profile.id, name: this.demo.profile.name, photoUrl: this.demo.profile.photoUrl, grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: true }] : [];
   }
   pushConfig() { return this.request<{ publicKey: string; subscriptionIds: string[] }>('/push/config'); }

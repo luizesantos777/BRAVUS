@@ -393,6 +393,25 @@ function calculatePartnerBusiness(sales, period, today) {
   return result;
 }
 
+// src/ranking-domain.ts
+function rankingRange(period, today, start = "", end = "") {
+  if (period === "custom") {
+    if (!validDate(start) || !validDate(end) || start > end || end > today) throw new Error("Informe datas v\xE1lidas, com in\xEDcio at\xE9 o fim e sem datas futuras.");
+    return { start, end };
+  }
+  if (period === "all") return null;
+  if (period === "today") return { start: today, end: today };
+  if (period === "month") return { start: today.slice(0, 8) + "01", end: today };
+  if (!["yesterday", "week", "last30"].includes(period)) throw new Error("Per\xEDodo do ranking inv\xE1lido.");
+  const date = /* @__PURE__ */ new Date(today + "T12:00:00Z");
+  date.setUTCDate(date.getUTCDate() - (period === "yesterday" ? 1 : period === "week" ? 6 : 29));
+  const lower = date.toISOString().slice(0, 10);
+  return { start: lower, end: period === "yesterday" ? lower : today };
+}
+function inRankingRange(date, range) {
+  return !range || date >= range.start && date <= range.end;
+}
+
 // server/database.ts
 async function openDatabase(source) {
   if (typeof source === "string") {
@@ -1028,13 +1047,19 @@ var PortalStore = class _PortalStore {
     if (!row) throw new PortalError(404, "Comprovante n\xE3o encontrado.");
     return { mime: String(row.mime), bytes: row.bytes };
   }
-  async ranking(auth, period) {
+  async ranking(auth, period = "last30", start = "", end = "") {
+    let range;
+    try {
+      range = rankingRange(period, businessToday(), start, end);
+    } catch (error) {
+      return invalid(error.message);
+    }
     if ((await this.profile(auth)).accountKind === "partner") return [];
     const attendants = await this.sql.prepare("SELECT id, name, photo_url FROM attendants WHERE active = 1 AND account_kind = 'attendant'").all();
     return (await Promise.all(attendants.map(async (attendant) => {
-      const sales = (await this.sales({ id: String(attendant.id) })).filter((sale) => sale.status === "approved").filter((sale) => inPeriod(sale.date, period, businessToday()));
+      const sales = (await this.sales({ id: String(attendant.id) })).filter((sale) => sale.status === "approved" && inRankingRange(sale.date, range));
       return { id: String(attendant.id), name: String(attendant.name), photoUrl: String(attendant.photo_url), grossCents: sales.reduce((sum, sale) => sum + sale.amountCents, 0), count: sales.length, mine: attendant.id === auth.id };
-    }))).filter((item) => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name));
+    }))).filter((item) => item.count > 0).sort((a, b) => b.grossCents - a.grossCents || b.count - a.count || a.name.localeCompare(b.name, "pt-BR") || a.id.localeCompare(b.id));
   }
   /** Historical ledger support; attendants cannot create requests through the API. */
   async requestPayout(auth, input) {
@@ -1414,6 +1439,12 @@ function createPortalHandler(store, options = {}) {
           failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
           throw error;
         }
+        if (url.pathname === "/api/ranking" && request.method === "GET") {
+          const period2 = url.searchParams.get("period") ?? "last30";
+          if (!Object.hasOwn(periodLabels, period2) && period2 !== "last30" && period2 !== "custom") throw new PortalError(400, "Per\xEDodo do ranking inv\xE1lido.");
+          json(response, 200, await store.ranking(auth, period2, url.searchParams.get("start") ?? "", url.searchParams.get("end") ?? ""));
+          return;
+        }
         const requestedPeriod = url.searchParams.get("period") ?? "today";
         if (!Object.hasOwn(periodLabels, requestedPeriod)) throw new PortalError(400, "Per\xEDodo inv\xE1lido.");
         const period = requestedPeriod;
@@ -1434,8 +1465,7 @@ function createPortalHandler(store, options = {}) {
             ...adminHash ? [options.push.notifyAdminSale(adminHash.toString("hex"), auth, batch)] : []
           ]);
           json(response, 200, result);
-        } else if (url.pathname === "/api/ranking" && request.method === "GET") json(response, 200, await store.ranking(auth, period));
-        else if (url.pathname === "/api/payouts" && request.method === "POST") throw new PortalError(410, "As solicita\xE7\xF5es de repasse foram desativadas. Os pagamentos s\xE3o registrados manualmente pela administra\xE7\xE3o.");
+        } else if (url.pathname === "/api/payouts" && request.method === "POST") throw new PortalError(410, "As solicita\xE7\xF5es de repasse foram desativadas. Os pagamentos s\xE3o registrados manualmente pela administra\xE7\xE3o.");
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === "GET") {
           const receipt = await store.receipt(auth, url.pathname.split("/").at(-1));
           response.writeHead(200, { "Content-Type": receipt.mime, "Content-Length": receipt.bytes.byteLength, "Cache-Control": "private, no-store", "Content-Disposition": 'inline; filename="comprovante.' + (receipt.mime === "image/jpeg" ? "jpg" : receipt.mime === "image/webp" ? "webp" : "png") + '"' });

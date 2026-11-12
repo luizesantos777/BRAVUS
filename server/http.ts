@@ -8,6 +8,7 @@ import { pipeline } from 'node:stream/promises';
 import { PortalError, PortalStore } from './store.ts';
 import { periodLabels } from '../src/domain.ts';
 import type { Period } from '../src/domain.ts';
+import type { RankingPeriod } from '../src/ranking-domain.ts';
 import type { SaleBatch } from '../src/domain.ts';
 import type { PushService } from './push.ts';
 import type { BackupService } from './backups.ts';
@@ -139,6 +140,12 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         let auth;
         try { auth = (await store.authenticate(authorization.startsWith('Bearer ') ? authorization.slice(7) : '')); }
         catch (error) { const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now }); throw error; }
+        if (url.pathname === '/api/ranking' && request.method === 'GET') {
+          const period = url.searchParams.get('period') ?? 'last30';
+          if (!Object.hasOwn(periodLabels, period) && period !== 'last30' && period !== 'custom') throw new PortalError(400, 'Período do ranking inválido.');
+          json(response, 200, await store.ranking(auth, period as RankingPeriod, url.searchParams.get('start') ?? '', url.searchParams.get('end') ?? ''));
+          return;
+        }
         const requestedPeriod = url.searchParams.get('period') ?? 'today';
         if (!Object.hasOwn(periodLabels, requestedPeriod)) throw new PortalError(400, 'Período inválido.');
         const period = requestedPeriod as Period;
@@ -161,7 +168,6 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           ]);
           json(response, 200, result);
         }
-        else if (url.pathname === '/api/ranking' && request.method === 'GET') json(response, 200, (await store.ranking(auth, period)));
         else if (url.pathname === '/api/payouts' && request.method === 'POST') throw new PortalError(410, 'As solicitações de repasse foram desativadas. Os pagamentos são registrados manualmente pela administração.');
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
           const receipt = (await store.receipt(auth, url.pathname.split('/').at(-1)!));

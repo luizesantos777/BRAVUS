@@ -24,6 +24,14 @@ Os totais usam todos os registros, sem truncamento pelos limites das listas. O c
 
 Portal em português baseado nas capturas fornecidas: tema escuro, lançamento manual de vendas com comprovante, extrato de comissões, ranking, repasses e dados de PIX. Cada atendente tem um token próprio, validado no servidor.
 
+## Pódio e períodos do ranking
+
+A aba **Ranking** apresenta os três primeiros em pódio: segundo à esquerda, campeão no centro e terceiro à direita, com foto (ou inicial), medalha, faturamento aprovado, quantidade de vendas e indicação **Você**. As posições seguintes aparecem abaixo. O tema segue o verde e dourado BRAVUS. Não cria participantes quando há menos de três contas com vendas.
+
+Os filtros **Diário**, **7 dias**, **30 dias** e **Personalizar** são independentes do extrato; a abertura usa 30 dias. As janelas de 7/30 dias incluem hoje e os 6/29 dias anteriores, usando a data de negócio de São Paulo. O calendário aceita início e fim inclusivos, sem datas futuras ou intervalo invertido. Só vendas aprovadas de atendentes ativos participam; pendentes, recusadas, canceladas e parceiros continuam fora do ranking. O desempate usa quantidade de vendas, nome e ID, nessa ordem. Respostas contêm somente nome, foto, faturamento, contagem, ID e indicação da própria conta, sem PIX, tokens ou comissões. Falhas mostram nova tentativa; um período vazio mostra o estado sem vendas.
+
+`GET /api/ranking?period=last30` consulta 30 dias; `period=today` e `period=week` consultam os atalhos. Um intervalo usa `period=custom&start=AAAA-MM-DD&end=AAAA-MM-DD`. Sem parâmetro, usa 30 dias. Os antigos períodos `yesterday`, `month` e `all` continuam aceitos pela API; os filtros financeiros mantêm suas regras anteriores.
+
 ## Simulação de rastreio em HTML
 
 A página está em `public/rastreio.html`: um único arquivo com HTML, CSS e JavaScript incorporados, sem dependências, APIs ou dados de clientes. Pode ser publicado sozinho em qualquer hospedagem estática. No projeto, acesse `/rastreio.html`, `/rastreio` ou `/#/rastreio`.
@@ -347,7 +355,7 @@ As respostas privadas usam `Cache-Control: no-store`. A autenticação usa o cab
 | `DELETE /api/push/subscriptions` | Token do atendente | Remover inscrição própria pelo ID |
 | `POST /api/sales` | Token do atendente | Gravar lote atômico; requer `Idempotency-Key` |
 | `GET /api/receipts/:id` | Token do proprietário | Obter comprovante privado |
-| `GET /api/ranking?period=today` | Token do atendente | Ranking sem dados privados |
+| `GET /api/ranking?period=last30` | Token do atendente | Pódio e ranking com filtros de período, sem dados privados |
 | `POST /api/payouts` | Token do atendente | Desativado (410); repasses são registrados pela administração |
 | `POST /api/admin/payouts` | Chave administrativa | Registrar pagamento manual já realizado; requer `Idempotency-Key` |
 | `GET /api/admin/sales?status=pending&attendantId=&page=1` | Chave administrativa | Fila de vendas paginada; status `pending`, `approved`, `rejected` ou `all` |

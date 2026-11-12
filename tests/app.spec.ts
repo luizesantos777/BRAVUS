@@ -548,7 +548,7 @@ test('token individual: vendas, comprovante, PIX, ranking e repasses', async ({ 
   await page.getByRole('button', { name: 'Salvar Alterações' }).click();
   await expect(page.getByRole('status')).toContainText('Alterações salvas');
   await page.getByRole('tab', { name: 'Ranking', exact: true }).click();
-  await expect(page.locator('.ranking-row.mine')).toContainText(/100,00/);
+  await expect(page.locator('.ranking-entry.mine')).toContainText(/100,00/);
   await page.getByRole('tab', { name: /^Repasses/ }).click();
   await expect(page.getByRole('button', { name: 'Solicitar Repasse', exact: true })).toHaveCount(0);
   const accountId = (await (await page.request.get('/api/portal', { headers: { Authorization: `Bearer ${token}` } })).json()).profile.id;
@@ -762,7 +762,7 @@ test('perfil BRAVUS: foto, PIX, alerta personalizado e notificações no aparelh
   await expect.poll(() => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map(notification => notification.title))).toContain('Lucro Certo · Nova venda aprovada · Demonstração');
   await approveDemoSales(page);
   await page.getByRole('tab', { name: 'Ranking', exact: true }).click();
-  await expect(page.locator('.ranking-row.mine img')).toBeVisible();
+  await expect(page.locator('.ranking-entry.mine img')).toBeVisible();
   await page.getByRole('tab', { name: 'Meus Dados e PIX' }).click();
   await page.getByRole('button', { name: 'Desativar neste aparelho' }).click();
   await expect(page.locator('.notification-badge')).toHaveText('Desativado');

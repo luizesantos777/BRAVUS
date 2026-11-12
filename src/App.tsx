@@ -15,6 +15,7 @@ import PartnerAds from './PartnerAds.tsx';
 import PartnerFinancialSummary from './PartnerFinancialSummary.tsx';
 import { applyPageMetadata } from './page-metadata.ts';
 import { publicAssetUrl } from './pwa.ts';
+import { clipboardFiles, readClipboardImage } from './clipboard-receipts.ts';
 
 type Tab = 'sales' | 'marketing' | 'ranking' | 'payouts' | 'profile';
 type Notice = { text: string; error?: boolean };
@@ -75,17 +76,21 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const [error, setError] = useState('');
   const [preparing, setPreparing] = useState<Set<string>>(new Set());
   const [attachmentErrors, setAttachmentErrors] = useState<Record<string, string>>({});
+  const salesSection = useRef<HTMLElement>(null), pasteFallback = useRef<(event: globalThis.ClipboardEvent) => void>(() => undefined);
   const attachments = useRef(new Map<string, symbol>());
   useEffect(() => () => { attachments.current.clear(); }, []);
   const submitting = useRef(false);
+  const pasteLocked = busy || disabled || !draft.ready || draft.clearing || pending;
   const update = (id: string, patch: Partial<SaleRow>) => setRows(previous => previous.map(row => row.id === id ? { ...row, ...patch } : row));
-  async function attach(id: string, file?: File) {
-    if (!file) return;
+  async function attach(id: string, source?: File | (() => Promise<File>)) {
+    if (!source || pasteLocked || submitting.current) return;
     const operation = Symbol(); attachments.current.set(id, operation);
     setPreparing(previous => new Set(previous).add(id));
     update(id, { receipt: null }); setError('');
     setAttachmentErrors(previous => ({ ...previous, [id]: '' }));
     try {
+      const file = typeof source === 'function' ? await source() : source;
+      if (attachments.current.get(id) !== operation) return;
       const receipt = await readReceipt(file);
       if (attachments.current.get(id) === operation) update(id, { receipt });
     } catch (cause) {
@@ -97,15 +102,8 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
       }
     }
   }
-  function pasteReceipt(id: string, event: ClipboardEvent<HTMLDivElement>) {
-    const files = Array.from(event.clipboardData.files);
-    if (!files.length) for (const item of Array.from(event.clipboardData.items)) {
-      if (item.kind === 'file') { const file = item.getAsFile(); if (file) files.push(file); }
-    }
-    // Ordinary text keeps the browser's normal paste behavior in sale inputs.
-    if (!files.length) return;
-    event.preventDefault();
-    if (busy || disabled || !draft.ready || draft.clearing || pending || submitting.current) return;
+  function attachPastedFiles(id: string, files: File[]) {
+    if (pasteLocked || submitting.current) return;
     if (files.length > 1) {
       // Cancel an older read and clear any previous receipt, matching invalid file uploads.
       attachments.current.delete(id);
@@ -116,6 +114,38 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     }
     void attach(id, files[0]);
   }
+  function pasteReceipt(id: string, event: ClipboardEvent<HTMLDivElement>) {
+    const files = clipboardFiles(event.clipboardData);
+    if (!files.length) {
+      // The paste-only editor must never insert HTML or fetch an image URL from copied markup.
+      if (event.target instanceof Element && event.target.closest('[data-receipt-paste-zone]')) {
+        event.preventDefault();
+        void attach(id, async () => { throw new Error('Copie a imagem do comprovante, não apenas o link ou o texto. Ou escolha Anexar Print.'); });
+      }
+      return;
+    }
+    event.preventDefault();attachPastedFiles(id, files);
+  }
+  pasteFallback.current = event => {
+    if (event.defaultPrevented) return;
+    const files = clipboardFiles(event.clipboardData), section = salesSection.current;
+    if (!files.length || !section) return;
+    const target = event.target instanceof Element ? event.target : null, active = document.activeElement;
+    const inside = !!target && section.contains(target) || !!active && section.contains(active);
+    const neutral = (!target || target === document.body || target === document.documentElement) && (!active || active === document.body || active === document.documentElement);
+    if (!inside && !neutral) return;
+    event.preventDefault();
+    if (pasteLocked || submitting.current) return;
+    const row = (target && section.contains(target) ? target.closest<HTMLElement>('[data-receipt-row]') : null) ?? (active && section.contains(active) ? active.closest<HTMLElement>('[data-receipt-row]') : null);
+    const id = row?.dataset.receiptRow ?? (rows.length === 1 ? rows[0].id : null);
+    if (!id || !rows.some(row => row.id === id)) { setError('Há várias vendas. Clique na área de colagem da venda que deve receber o comprovante.'); return; }
+    attachPastedFiles(id, files);
+  };
+  useEffect(() => {
+    const paste = (event: globalThis.ClipboardEvent) => pasteFallback.current(event);
+    document.addEventListener('paste', paste);
+    return () => document.removeEventListener('paste', paste);
+  }, []);
   function removeRow(id: string) {
     attachments.current.delete(id);
     setPreparing(previous => { const next = new Set(previous); next.delete(id); return next; });
@@ -147,7 +177,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     } catch (cause) { if (cause instanceof ApiError && (client.isDemo || [400, 401, 403, 404, 413, 422].includes(cause.status))) draft.releaseSubmission(); setError((cause as Error).message); }
     finally { setBusy(false); submitting.current = false; }
   }
-  return <section className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
+  return <section ref={salesSection} className="panel sales-panel"><div className="section-title"><Plus size={17} /><h2>LANÇAMENTO DE VENDAS MANUAIS</h2></div>
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
     <div className={`draft-status ${draft.failed ? 'draft-error' : ''}`}><p aria-live="polite">{draft.message}</p><button type="button" className="button secondary" disabled={!draft.ready || !draft.dirty || draft.clearing || busy || pending || preparing.size > 0} onClick={() => void draft.clear().then(cleared => { if (cleared) setError(''); })}><Trash2 size={14} />Descartar rascunho</button></div>
     {pending && <p className="draft-pending" aria-live="polite">Envio aguardando confirmação. Toque em Confirmar envio para concluir sem duplicar as vendas.</p>}
@@ -156,7 +186,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     <form onSubmit={submit}><fieldset disabled={busy || disabled || !draft.ready || draft.clearing}><fieldset disabled={pending}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />
       <p className="field-label sales-count">Vendas a Lançar ({rows.length})</p>
-      <div className="sale-rows">{rows.map((row, index) => <div className={`sale-row${partner ? ' partner-sale-row' : ''}`} key={row.id} onPaste={event => pasteReceipt(row.id, event)}>
+      <div className="sale-rows">{rows.map((row, index) => <div className={`sale-row${partner ? ' partner-sale-row' : ''}`} key={row.id} data-receipt-row={row.id} onPaste={event => pasteReceipt(row.id, event)}>
         <span className="row-number">#{index + 1}</span>
         <div className="amount-input"><span>R$</span><input aria-label={`Valor bruto venda ${index + 1}`} placeholder="Valor Bruto (Ex: 197,00)" inputMode="decimal" required maxLength={16} value={row.amount} onChange={event => update(row.id, { amount: event.target.value })} /></div>
         {!partner && <div className="select-wrap"><select aria-label={`Checkout venda ${index + 1}`} required value={row.checkoutId} onChange={event => update(row.id, { checkoutId: event.target.value })}><option value="" disabled>Checkout *</option>{pending && row.checkoutId && !portal.checkouts.some(checkout => checkout.id === row.checkoutId) && <option value={row.checkoutId} disabled>Checkout anterior · confirmar envio</option>}{portal.checkouts.map(checkout => <option key={checkout.id} value={checkout.id}>{checkout.name}</option>)}</select><ChevronDown size={13} /></div>}
@@ -166,7 +196,11 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
         <button className="icon-button delete-row" type="button" aria-label={`Remover venda ${index + 1}`} disabled={rows.length === 1} onClick={() => removeRow(row.id)}><Trash2 size={16} /></button>
         <input className="observation" aria-label={`Observação venda ${index + 1}`} placeholder="Observação (Ex: Cliente pagou via PIX manual após falha no checkout)..." maxLength={500} value={row.note} onChange={event => update(row.id, { note: event.target.value })} />
         <div className="sale-attachments">
-          <button type="button" className="receipt-paste-target" aria-label={`Colar comprovante venda ${index + 1}`} aria-busy={preparing.has(row.id)} onClick={event => event.currentTarget.focus()}>{preparing.has(row.id) ? <LoaderCircle size={17} className="spin" /> : <ClipboardPaste size={17} />}<span>{preparing.has(row.id) ? 'Preparando imagem do comprovante...' : 'Clique aqui e cole a imagem do comprovante'}<small><kbd>Ctrl+V</kbd> no Windows · <kbd>⌘V</kbd> no Mac · Também funciona nos campos desta venda</small></span></button>
+          <div className="receipt-paste-target" aria-busy={preparing.has(row.id)}>
+            {preparing.has(row.id) ? <LoaderCircle size={17} className="spin" /> : <ClipboardPaste size={17} />}
+            <div className="receipt-paste-copy"><span>{preparing.has(row.id) ? 'Preparando imagem do comprovante...' : 'Cole a imagem do comprovante'}</span><div className="receipt-paste-editor" role="textbox" aria-label={`Área para colar comprovante venda ${index + 1}`} aria-disabled={pasteLocked} contentEditable={!pasteLocked} suppressContentEditableWarning tabIndex={pasteLocked ? -1 : 0} inputMode="none" data-receipt-paste-zone="true" data-placeholder="Clique aqui e use Ctrl+V ou ⌘V" onInput={event => { event.currentTarget.textContent = ''; }} /><small>Ou use o botão Colar imagem. Também funciona nos campos desta venda.</small></div>
+            <button className="button secondary receipt-paste-button" type="button" aria-label={`Colar comprovante venda ${index + 1}`} disabled={preparing.has(row.id)} onClick={() => void attach(row.id, readClipboardImage)}>Colar imagem</button>
+          </div>
           <SaleValuePreview row={row} checkout={partner ? onlyCheckout : portal.checkouts.find(checkout => checkout.id === row.checkoutId)} index={index} commissionBps={portal.profile.commissionBps} accountKind={portal.profile.accountKind} />
           {attachmentErrors[row.id] && <div role="alert" className="form-error attachment-error"><AlertCircle size={14} />{attachmentErrors[row.id]}</div>}
           {row.receipt && <div className="attachment-detail"><FileImage size={12} /><button type="button" onClick={() => preview(`data:${row.receipt!.mime};base64,${row.receipt!.base64}`)}>{row.receipt.name}</button><button className="remove-attachment" type="button" aria-label={`Remover print venda ${index + 1}`} onClick={() => update(row.id, { receipt: null })}><X size={12} /></button></div>}

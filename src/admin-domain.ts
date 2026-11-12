@@ -12,6 +12,7 @@ export const auditActions = {
   'attendant.deleted': 'Cadastro revogado excluído',
   'attendant.rule_updated': 'Regra financeira da conta alterada',
   'partner.sale_repriced': 'Taxa da venda do parceiro recalculada',
+  'partner.sale_tariff_updated': 'Venda do parceiro atualizada para 12% + R$ 2,00',
   'partner.gateway_cost_recorded': 'Custo do gateway do parceiro registrado',
 } as const;
 export type AuditAction = keyof typeof auditActions;

@@ -45,16 +45,16 @@ test('ADS próprio altera lucro e ROI; saldo, custos administrativos e taxas de 
   assert.equal(data.finance.availableCents, balanceBefore); assert.equal(data.marketing.roiPercent, -100); assert.equal(data.marketing.totalAdsCents, 3500); assert.equal(data.marketing.earningsCents, 0);
   await store.reviewSale(data.sales[0].id, { status: 'approved', note: '' });
   data = await portal();
-  assert.equal(data.finance.availableCents, 8600); assert.equal(data.finance.adsCents, 1000);
-  assert.equal(data.marketing.earningsCents, 8800); assert.equal(data.marketing.profitCents, 5300); assert.equal(data.marketing.roiPercent, 5300 / 3500 * 100);
+  assert.equal(data.finance.availableCents, 8400); assert.equal(data.finance.adsCents, 1000);
+  assert.equal(data.marketing.earningsCents, 8600); assert.equal(data.marketing.profitCents, 5100); assert.equal(data.marketing.roiPercent, 5100 / 3500 * 100);
   assert.deepEqual(await (await call('/api/partner/ads?date=' + businessToday())).json(), { date: businessToday(), adsCents: 2500 });
   assert.equal((await save('15')).status, 200); data = await portal();
-  assert.equal(data.finance.availableCents, 8600); assert.equal(data.marketing.roiPercent, 252); assert.equal(data.marketing.history.length, 1);
+  assert.equal(data.finance.availableCents, 8400); assert.equal(data.marketing.roiPercent, 244); assert.equal(data.marketing.history.length, 1);
   await Promise.all([store.setCosts(account.id, businessToday(), 2000, 300), store.savePartnerAds({ id: account.id }, { date: businessToday(), ads: '20' })]);
   assert.deepEqual({ ...await store.adminCosts(account.id, businessToday()) }, { date: businessToday(), adsCents: 2000, withdrawalFeeCents: 300 });
-  data = await portal(); assert.equal(data.marketing.ownAdsCents, 2000); assert.equal(data.finance.availableCents, 8500);
+  data = await portal(); assert.equal(data.marketing.ownAdsCents, 2000); assert.equal(data.finance.availableCents, 8300);
   assert.equal((await save('0')).status, 200); data = await portal();
-  assert.equal(data.marketing.ownAdsCents, 0); assert.equal(data.marketing.roiPercent, 340); assert.equal(data.finance.availableCents, 8500);
+  assert.equal(data.marketing.ownAdsCents, 0); assert.equal(data.marketing.roiPercent, 330); assert.equal(data.finance.availableCents, 8300);
 });
 
 test('somente parceiros editam seu próprio ADS, sem alterar outras contas, taxas ou permissões administrativas', async t => {

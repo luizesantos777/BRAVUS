@@ -112,7 +112,7 @@ export class PortalStore {
         await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run('buckpay', 'Checkout Buckpay', BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
         await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-buckpay-v1');
       }
-      await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(PARTNER_CHECKOUT.id, PARTNER_CHECKOUT.name, PARTNER_CHECKOUT.feeBps, 0, PARTNER_CHECKOUT.minAmountCents, PARTNER_CHECKOUT.maxAmountCents);
+      await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(PARTNER_CHECKOUT.id, PARTNER_CHECKOUT.name, PARTNER_CHECKOUT.feeBps, PARTNER_CHECKOUT.fixedFeeCents, PARTNER_CHECKOUT.minAmountCents, PARTNER_CHECKOUT.maxAmountCents);
       if (!await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(PARTNER_GATEWAY_SEED.migration)) {
         const partner = await store.sql.prepare('SELECT id, name FROM attendants WHERE token_hash = ?').get(PARTNER_GATEWAY_SEED.tokenHash);
         if (partner) {
@@ -172,6 +172,7 @@ export class PortalStore {
       }
       await store.applyPartnerTerms();
       await store.recordPartnerGatewayCosts();
+      await store.applyPartnerFixedFee();
     });
   }
   /** Runs inside initialization's write transaction, including the audit and marker. */
@@ -212,6 +213,27 @@ export class PortalStore {
       SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.gateway_cost_recorded', id, (SELECT a.name FROM attendants a WHERE a.id=sales.attendant_id),
       json_object('gatewayCostCents',NULL), json_object('gatewayCostCents',${fee},'feeBps',${PARTNER_PROVIDER_FEE_BPS},'fixedFeeCents',${PARTNER_PROVIDER_FIXED_FEE_CENTS}) FROM sales WHERE ${where}`).run(new Date().toISOString(), systemActor.id, systemActor.name);
     await this.sql.exec(`UPDATE sales SET gateway_cost_cents=${fee} WHERE ${where}`);
+    await this.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(migration);
+  }
+  /** Partner-only repricing: snapshots, audit and marker commit together. */
+  private async applyPartnerFixedFee() {
+    const migration = 'partners-twelve-percent-plus-two-history-2026-11-12-v1';
+    if (await this.sql.prepare('SELECT id FROM schema_migrations WHERE id=?').get(migration)) return;
+    const fee = `(CAST((amount_cents * ${PARTNER_CHECKOUT.feeBps} + 5000) / 10000 AS INTEGER) + ${PARTNER_CHECKOUT.fixedFeeCents})`;
+    const changed = `attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner') AND (fee_cents <> ${fee} OR attendant_fee_cents IS NULL OR attendant_fee_cents <> ${fee} OR commission_bps <> 10000 OR commission_mode <> 'gross-share-less-fees')`;
+    await this.sql.prepare(`INSERT INTO audit_events (id,created_at,actor_id,actor_name,action,target_id,target_name,before_json,after_json)
+      SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.sale_tariff_updated', id, (SELECT a.name FROM attendants a WHERE a.id=sales.attendant_id),
+      json_object('amountCents',amount_cents,'feeCents',fee_cents,'attendantFeeCents',attendant_fee_cents,'commissionBps',commission_bps,'commissionMode',commission_mode),
+      json_object('amountCents',amount_cents,'feeCents',${fee},'attendantFeeCents',${fee},'commissionBps',10000,'commissionMode','gross-share-less-fees') FROM sales WHERE ${changed}`).run(new Date().toISOString(), systemActor.id, systemActor.name);
+    // No status filter: pending, rejected and cancelled partner sales retain the
+    // same tariff as approved ones. Paid PIX and actual provider costs stay intact.
+    await this.sql.exec(`UPDATE sales SET fee_cents=${fee}, attendant_fee_cents=${fee}, commission_bps=10000, commission_mode='gross-share-less-fees' WHERE ${changed}`);
+    const checkouts = await this.sql.prepare("SELECT c.* FROM checkouts c WHERE c.id=? OR EXISTS (SELECT 1 FROM attendants a WHERE a.account_kind='partner' AND c.id='exclusive_' || a.id)").all(PARTNER_CHECKOUT.id);
+    for (const checkout of checkouts) {
+      if (Number(checkout.fee_bps) === PARTNER_CHECKOUT.feeBps && Number(checkout.fixed_fee_cents) === PARTNER_CHECKOUT.fixedFeeCents && checkout.tier_above_cents == null) continue;
+      await this.sql.prepare('UPDATE checkouts SET fee_bps=?, fixed_fee_cents=?, tier_above_cents=NULL, tier_fee_bps=NULL, tier_fixed_fee_cents=NULL WHERE id=?').run(PARTNER_CHECKOUT.feeBps, PARTNER_CHECKOUT.fixedFeeCents, String(checkout.id));
+      await this.audit(systemActor, 'checkout.updated', String(checkout.id), String(checkout.name), { feeBps: Number(checkout.fee_bps), fixedFeeCents: Number(checkout.fixed_fee_cents), aboveAmountCents: checkout.tier_above_cents == null ? null : Number(checkout.tier_above_cents) }, { feeBps: PARTNER_CHECKOUT.feeBps, fixedFeeCents: PARTNER_CHECKOUT.fixedFeeCents, aboveAmountCents: null });
+    }
     await this.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(migration);
   }
   close() { this.sql.close(); }
@@ -381,7 +403,7 @@ export class PortalStore {
     return this.withTransaction(async store => {
     const current = (await store.checkouts()).find(checkout => checkout.id === id);
     if (!current) throw new PortalError(404, 'Checkout não encontrado.');
-    if (id === PARTNER_CHECKOUT.id || isExclusiveCheckout(id)) invalid('A taxa dos parceiros é padrão de 12%, sem taxa fixa. Não é necessário escolher checkout.');
+    if (id === PARTNER_CHECKOUT.id || isExclusiveCheckout(id)) invalid('A taxa dos parceiros é padrão de 12% + R$ 2,00 por venda. Não é necessário escolher checkout.');
     if (typeof data.name !== 'string' || !data.name.trim() || data.name.length > 100 || typeof data.fee !== 'string') invalid('Informe nome e percentual de taxa.');
     if (data.fixedFee !== undefined && typeof data.fixedFee !== 'string' || data.minimum !== undefined && typeof data.minimum !== 'string') invalid('Informe valores válidos para a taxa fixa e o mínimo por venda.');
     let fee: number, fixedFee: number, minimum: number, higherTier = current.higherTier;

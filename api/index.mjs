@@ -188,7 +188,8 @@ var MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 var MAX_SALE_CENTS = 1e8;
 var DEFAULT_COMMISSION_BPS = 5e3;
 var PARTNER_GATEWAY_FEE_BPS = 1200;
-var PARTNER_CHECKOUT = { id: "partner", name: "Gateway do parceiro", feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, minAmountCents: 1, maxAmountCents: 3e5, higherTier: null };
+var PARTNER_FIXED_FEE_CENTS = 200;
+var PARTNER_CHECKOUT = { id: "partner", name: "Gateway do parceiro", feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, minAmountCents: 1, maxAmountCents: 3e5, higherTier: null };
 var GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 var ATTENDANT_GATEWAY_FEE_BPS = 5e3;
 var ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -222,7 +223,7 @@ function allocatedSaleFee(feeCents, accountKind) {
 function accountCheckouts(checkouts, accountKind) {
   if (accountKind !== "partner") return checkouts.filter((checkout2) => checkout2.id !== PARTNER_CHECKOUT.id);
   const checkout = checkouts.find((item) => item.id.startsWith("exclusive_")) ?? checkouts.find((item) => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
-  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null }];
+  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, higherTier: null }];
 }
 function withdrawalFees(accountKind) {
   return accountKind === "partner" ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS };
@@ -580,7 +581,7 @@ var PortalStore = class _PortalStore {
         await store.sql.prepare("INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)").run("buckpay", "Checkout Buckpay", BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-buckpay-v1");
       }
-      await store.sql.prepare("INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)").run(PARTNER_CHECKOUT.id, PARTNER_CHECKOUT.name, PARTNER_CHECKOUT.feeBps, 0, PARTNER_CHECKOUT.minAmountCents, PARTNER_CHECKOUT.maxAmountCents);
+      await store.sql.prepare("INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)").run(PARTNER_CHECKOUT.id, PARTNER_CHECKOUT.name, PARTNER_CHECKOUT.feeBps, PARTNER_CHECKOUT.fixedFeeCents, PARTNER_CHECKOUT.minAmountCents, PARTNER_CHECKOUT.maxAmountCents);
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(PARTNER_GATEWAY_SEED.migration)) {
         const partner = await store.sql.prepare("SELECT id, name FROM attendants WHERE token_hash = ?").get(PARTNER_GATEWAY_SEED.tokenHash);
         if (partner) {
@@ -640,6 +641,7 @@ var PortalStore = class _PortalStore {
       }
       await store.applyPartnerTerms();
       await store.recordPartnerGatewayCosts();
+      await store.applyPartnerFixedFee();
     });
   }
   /** Runs inside initialization's write transaction, including the audit and marker. */
@@ -678,6 +680,25 @@ var PortalStore = class _PortalStore {
       SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.gateway_cost_recorded', id, (SELECT a.name FROM attendants a WHERE a.id=sales.attendant_id),
       json_object('gatewayCostCents',NULL), json_object('gatewayCostCents',${fee},'feeBps',${PARTNER_PROVIDER_FEE_BPS},'fixedFeeCents',${PARTNER_PROVIDER_FIXED_FEE_CENTS}) FROM sales WHERE ${where}`).run((/* @__PURE__ */ new Date()).toISOString(), systemActor.id, systemActor.name);
     await this.sql.exec(`UPDATE sales SET gateway_cost_cents=${fee} WHERE ${where}`);
+    await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
+  }
+  /** Partner-only repricing: snapshots, audit and marker commit together. */
+  async applyPartnerFixedFee() {
+    const migration = "partners-twelve-percent-plus-two-history-2026-11-12-v1";
+    if (await this.sql.prepare("SELECT id FROM schema_migrations WHERE id=?").get(migration)) return;
+    const fee = `(CAST((amount_cents * ${PARTNER_CHECKOUT.feeBps} + 5000) / 10000 AS INTEGER) + ${PARTNER_CHECKOUT.fixedFeeCents})`;
+    const changed = `attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner') AND (fee_cents <> ${fee} OR attendant_fee_cents IS NULL OR attendant_fee_cents <> ${fee} OR commission_bps <> 10000 OR commission_mode <> 'gross-share-less-fees')`;
+    await this.sql.prepare(`INSERT INTO audit_events (id,created_at,actor_id,actor_name,action,target_id,target_name,before_json,after_json)
+      SELECT lower(hex(randomblob(16))), ?, ?, ?, 'partner.sale_tariff_updated', id, (SELECT a.name FROM attendants a WHERE a.id=sales.attendant_id),
+      json_object('amountCents',amount_cents,'feeCents',fee_cents,'attendantFeeCents',attendant_fee_cents,'commissionBps',commission_bps,'commissionMode',commission_mode),
+      json_object('amountCents',amount_cents,'feeCents',${fee},'attendantFeeCents',${fee},'commissionBps',10000,'commissionMode','gross-share-less-fees') FROM sales WHERE ${changed}`).run((/* @__PURE__ */ new Date()).toISOString(), systemActor.id, systemActor.name);
+    await this.sql.exec(`UPDATE sales SET fee_cents=${fee}, attendant_fee_cents=${fee}, commission_bps=10000, commission_mode='gross-share-less-fees' WHERE ${changed}`);
+    const checkouts = await this.sql.prepare("SELECT c.* FROM checkouts c WHERE c.id=? OR EXISTS (SELECT 1 FROM attendants a WHERE a.account_kind='partner' AND c.id='exclusive_' || a.id)").all(PARTNER_CHECKOUT.id);
+    for (const checkout of checkouts) {
+      if (Number(checkout.fee_bps) === PARTNER_CHECKOUT.feeBps && Number(checkout.fixed_fee_cents) === PARTNER_CHECKOUT.fixedFeeCents && checkout.tier_above_cents == null) continue;
+      await this.sql.prepare("UPDATE checkouts SET fee_bps=?, fixed_fee_cents=?, tier_above_cents=NULL, tier_fee_bps=NULL, tier_fixed_fee_cents=NULL WHERE id=?").run(PARTNER_CHECKOUT.feeBps, PARTNER_CHECKOUT.fixedFeeCents, String(checkout.id));
+      await this.audit(systemActor, "checkout.updated", String(checkout.id), String(checkout.name), { feeBps: Number(checkout.fee_bps), fixedFeeCents: Number(checkout.fixed_fee_cents), aboveAmountCents: checkout.tier_above_cents == null ? null : Number(checkout.tier_above_cents) }, { feeBps: PARTNER_CHECKOUT.feeBps, fixedFeeCents: PARTNER_CHECKOUT.fixedFeeCents, aboveAmountCents: null });
+    }
     await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
   }
   close() {
@@ -864,7 +885,7 @@ var PortalStore = class _PortalStore {
     return this.withTransaction(async (store) => {
       const current = (await store.checkouts()).find((checkout) => checkout.id === id);
       if (!current) throw new PortalError(404, "Checkout n\xE3o encontrado.");
-      if (id === PARTNER_CHECKOUT.id || isExclusiveCheckout(id)) invalid("A taxa dos parceiros \xE9 padr\xE3o de 12%, sem taxa fixa. N\xE3o \xE9 necess\xE1rio escolher checkout.");
+      if (id === PARTNER_CHECKOUT.id || isExclusiveCheckout(id)) invalid("A taxa dos parceiros \xE9 padr\xE3o de 12% + R$ 2,00 por venda. N\xE3o \xE9 necess\xE1rio escolher checkout.");
       if (typeof data.name !== "string" || !data.name.trim() || data.name.length > 100 || typeof data.fee !== "string") invalid("Informe nome e percentual de taxa.");
       if (data.fixedFee !== void 0 && typeof data.fixedFee !== "string" || data.minimum !== void 0 && typeof data.minimum !== "string") invalid("Informe valores v\xE1lidos para a taxa fixa e o m\xEDnimo por venda.");
       let fee, fixedFee, minimum, higherTier = current.higherTier;
@@ -1159,6 +1180,7 @@ var auditActions = {
   "attendant.deleted": "Cadastro revogado exclu\xEDdo",
   "attendant.rule_updated": "Regra financeira da conta alterada",
   "partner.sale_repriced": "Taxa da venda do parceiro recalculada",
+  "partner.sale_tariff_updated": "Venda do parceiro atualizada para 12% + R$ 2,00",
   "partner.gateway_cost_recorded": "Custo do gateway do parceiro registrado"
 };
 function validateDateRange(start, end) {

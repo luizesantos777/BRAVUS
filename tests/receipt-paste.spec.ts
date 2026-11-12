@@ -30,6 +30,9 @@ for (const kind of ['attendant', 'partner']) test(`${kind}: Ctrl+V anexa na vend
   const requests: { body: string | null; key: string | undefined }[] = [];
   page.on('request', request => { if (new URL(request.url()).pathname === '/api/sales' && request.method() === 'POST') requests.push({ body: request.postData(), key: request.headers()['idempotency-key'] }); });
   await page.goto(`/#/atendente/${token}`);
+  await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toBeEnabled();
+  await copyImage(page, '#145525');await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());await page.keyboard.press('Control+V');
+  await expect(page.locator('.attachment-detail')).toBeVisible();await page.getByRole('button', { name: 'Remover print venda 1', exact: true }).click();
   for (const number of [1, 2]) {
     if (number === 2) await page.getByRole('button', { name: 'Adicionar Outra Venda', exact: true }).click();
     await page.getByLabel(`Valor bruto venda ${number}`, { exact: true }).fill(String(number * 100));
@@ -38,13 +41,15 @@ for (const kind of ['attendant', 'partner']) test(`${kind}: Ctrl+V anexa na vend
   await page.evaluate(() => navigator.clipboard.writeText('Texto colado normalmente'));
   const observation = page.getByLabel('Observação venda 2', { exact: true });await observation.focus();await page.keyboard.press('Control+V');await expect(observation).toHaveValue('Texto colado normalmente');
   await expect(page.locator('.attachment-detail')).toHaveCount(0);
-  await copyImage(page, '#164b2a');await page.getByRole('button', { name: 'Colar comprovante venda 2', exact: true }).click();await page.keyboard.press('Control+V');
+  await copyImage(page, '#164b2a');await page.evaluate(() => (document.activeElement as HTMLElement)?.blur());await page.keyboard.press('Control+V');
+  await expect(page.locator('.sales-panel .form-error')).toContainText('Há várias vendas');await expect(page.locator('.attachment-detail')).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Área para colar comprovante venda 2', exact: true }).click();await page.keyboard.press('Control+V');
   await expect(page.locator('.sale-row').nth(1).locator('.attachment-detail')).toBeVisible();await expect(page.locator('.sale-row').nth(0).locator('.attachment-detail')).toHaveCount(0);
   await expect(observation).toHaveValue('Texto colado normalmente');
   await page.locator('.sale-row').nth(1).locator('.attachment-detail button').first().click();
   await expect(page.getByRole('img', { name: 'Print do comprovante da venda', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Fechar janela', exact: true }).click();
-  await copyImage(page, '#28416b');await page.getByLabel('Valor bruto venda 1', { exact: true }).focus();await page.keyboard.press('Control+V');
+  await copyImage(page, '#28416b');await page.getByRole('button', { name: 'Colar comprovante venda 1', exact: true }).click();
   await expect(page.locator('.attachment-detail')).toHaveCount(2);await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toHaveValue('100');
   await expect(page.locator('.draft-status')).toContainText('Rascunho salvo');expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);await page.screenshot({ path: info.outputPath(`colar-comprovante-${kind}.png`), fullPage: true });
   await page.reload();await expect(page.locator('.attachment-detail')).toHaveCount(2);await expect(observation).toHaveValue('Texto colado normalmente');
@@ -73,8 +78,13 @@ for (const kind of ['attendant', 'partner']) test(`${kind}: Ctrl+V anexa na vend
 
 test('colagem inválida ou com várias imagens limpa o anexo anterior; leitura lenta não sobrescreve a escolha mais recente', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-  await page.goto('/');const target = page.getByRole('button', { name: 'Colar comprovante venda 1', exact: true });
+  await page.goto('/');const target = page.getByRole('textbox', { name: 'Área para colar comprovante venda 1', exact: true });
   await copyImage(page, '#164b2a');await target.click();await page.keyboard.press('Control+V');await expect(page.locator('.attachment-detail')).toBeVisible();
+  await page.evaluate(() => navigator.clipboard.writeText('https://example.invalid/comprovante.png'));await target.focus();await page.keyboard.press('Control+V');
+  await expect(page.locator('.attachment-error')).toContainText('não apenas o link ou o texto');await expect(target).toBeEmpty();
+  await page.evaluate(() => { Object.defineProperty(navigator.clipboard, 'read', { configurable: true, value: async () => { throw new DOMException('fixture denied', 'NotAllowedError'); } }); });
+  await page.getByRole('button', { name: 'Colar comprovante venda 1', exact: true }).click();await expect(page.locator('.attachment-error')).toContainText('navegador não permitiu');
+  await copyImage(page, '#164b2a');await target.focus();await page.keyboard.press('Control+V');await expect(page.locator('.attachment-detail')).toBeVisible();
   await dispatchFiles(target, [{ name: 'falso.jpg', mime: 'image/jpeg', base64: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64') }]);
   await expect(page.locator('.attachment-error')).toContainText('Escolha um print PNG, JPG ou WEBP');await expect(page.locator('.attachment-detail')).toHaveCount(0);
   await dispatchFiles(target, [{ name: 'um.png', mime: 'image/png', base64: png }, { name: 'dois.png', mime: 'image/png', base64: png }]);

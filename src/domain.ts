@@ -37,7 +37,8 @@ export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
 export const DEFAULT_COMMISSION_BPS = 5000;
 export const PARTNER_GATEWAY_FEE_BPS = 1200;
-export const PARTNER_CHECKOUT: Checkout = { id: 'partner', name: 'Gateway do parceiro', feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, minAmountCents: 1, maxAmountCents: 300000, higherTier: null };
+export const PARTNER_FIXED_FEE_CENTS = 200;
+export const PARTNER_CHECKOUT: Checkout = { id: 'partner', name: 'Gateway do parceiro', feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, minAmountCents: 1, maxAmountCents: 300000, higherTier: null };
 export const GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 export const ATTENDANT_GATEWAY_FEE_BPS = 5000;
 export const ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -79,7 +80,7 @@ export function allocatedSaleFee(feeCents: number, accountKind?: AccountKind): n
 export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind): Checkout[] {
   if (accountKind !== 'partner') return checkouts.filter(checkout => checkout.id !== PARTNER_CHECKOUT.id);
   const checkout = checkouts.find(item => item.id.startsWith('exclusive_')) ?? checkouts.find(item => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
-  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: 0, higherTier: null }];
+  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, higherTier: null }];
 }
 export function withdrawalFees(accountKind?: AccountKind) { return accountKind === 'partner' ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS }; }
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }

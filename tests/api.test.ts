@@ -179,13 +179,13 @@ test('tarifa de 12% atualiza o gateway de 3 mil já existente sem recalcular ven
     assert.equal((await store.recordSales(auth, input, 'fixture_private_before_fee_change')).duplicate, true);
     await store.recordSales(auth, input, 'fixture_private_after_fee_change');
     const sales = await store.sales(auth), current = sales.find(sale => sale.id !== oldSales[0].id)!;
-    assert.equal(sales.length, 2); assert.equal(oldSales[0].feeCents, 1000); assert.equal(current.feeCents, 1200); assert.equal(current.attendantFeeCents, 1200);
+    assert.equal(sales.length, 2); assert.equal(oldSales[0].feeCents, 1000); assert.equal(current.feeCents, 1400); assert.equal(current.attendantFeeCents, 1400);
     store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1200);
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
   } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
-test('cadastro exclusivo já existente passa a receber R$ 88 em R$ 100, preservando snapshots, token e demais atendentes', async () => {
+test('cadastro exclusivo já existente passa a receber R$ 86 em R$ 100, preservando snapshots, token e demais atendentes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-settlement-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
@@ -206,11 +206,11 @@ test('cadastro exclusivo já existente passa a receber R$ 88 em R$ 100, preserva
     assert.equal((await store.recordSales(auth, payload, 'fixture_before_settlement_change')).duplicate, true);
     await store.recordSales(auth, payload, 'fixture_after_settlement_change');
     const current = (await store.sales(auth)).find(sale => sale.id !== old.id)!;
-    assert.equal(current.feeCents, 1200); assert.equal(current.attendantFeeCents, 1200); assert.equal(current.commissionBps, 10000);
+    assert.equal(current.feeCents, 1400); assert.equal(current.attendantFeeCents, 1400); assert.equal(current.commissionBps, 10000);
     await store.reviewSale(current.id, { status: 'approved', note: '' });
-    assert.equal((await store.portal(auth)).finance.commissionCents, 13200);
+    assert.equal((await store.portal(auth)).finance.commissionCents, 13000);
     await store.savePartnerAds(auth, { date: businessToday(), ads: '50' });
-    assert.equal((await store.portal(auth)).finance.availableCents, 13200);
+    assert.equal((await store.portal(auth)).finance.availableCents, 13000);
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.profile(auth)).accountKind, 'partner');
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'attendant.rule_updated' AND target_id = ?").get(partner.id))!.count), 1);
@@ -231,9 +231,9 @@ test('parceiro com gateway exclusivo mantém sua regra de recebimento e não exp
   assert.equal((await submit(input, 'fixture_partner_kind_exclusive', otherToken)).status, 200);
   assert.equal((await submit(input, 'fixture_partner_kind_exclusive', token)).status, 200);
   const sale = (await (await call('/api/portal', token)).json()).sales[0];
-  assert.equal(sale.feeCents, 1200); assert.equal(sale.attendantFeeCents, 1200); assert.equal(sale.commissionBps, 10000);
+  assert.equal(sale.feeCents, 1400); assert.equal(sale.attendantFeeCents, 1400); assert.equal(sale.commissionBps, 10000);
   await store.reviewSale(sale.id, { status: 'approved', note: 'Conferida' });
-  assert.equal((await (await call('/api/portal', token)).json()).finance.availableCents, 8800);
+  assert.equal((await (await call('/api/portal', token)).json()).finance.availableCents, 8600);
 });
 test('comprovante repetido alerta só o administrador, inclusive entre vendedores e situações diferentes', async t => {
   const { call, submit } = await fixture(t, { approveSales: false });

@@ -15,7 +15,7 @@ async function changeStoredCheckout(page: Page, pending: boolean) {
     };
   }), pending);
 }
-test('parceiro vê um único gateway de 12%, recupera rascunho e os outros vendedores conservam suas opções', async ({ page }, info) => {
+test('parceiro vê um único gateway de 12% + R$ 2, recupera rascunho e os outros vendedores conservam suas opções', async ({ page }, info) => {
   const token = `fixture_${info.project.name}_exclusive_01234567890123456789`, headers = { Authorization: `Bearer ${token}` };
   const portal = await (await page.request.get('/api/portal', { headers })).json(), id = portal.checkouts[0].id;
   await page.goto(`/#/atendente/${token}`);
@@ -41,11 +41,11 @@ test('parceiro vê um único gateway de 12%, recupera rascunho e os outros vende
   await changeStoredCheckout(page, false); await page.reload();
   await expect(select).toHaveCount(0); await expect(page.getByLabel('Valor bruto venda 1', { exact: true })).toHaveValue('3000');
   await expect(page.getByRole('button', { name: 'parceiro.png', exact: true })).toBeVisible();
-  await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('360,00'); await expect(page.getByLabel('Resumo da venda 1')).toContainText('2.640,00');
+  await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('360,00'); await expect(page.getByLabel('Resumo da venda 1')).toContainText('2.638,00');
   await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('Taxa da venda'); await expect(page.getByLabel('Resumo da venda 1')).not.toContainText('50%');
   await page.getByRole('button', { name: 'Salvar e Enviar Vendas' }).click(); await expect(page.getByRole('status')).toContainText('Enviada à administração');
   const result = await (await page.request.get('/api/portal?period=all', { headers })).json();
-  expect(result.sales).toHaveLength(1); expect(result.sales[0].checkoutId).toBe(id); expect(result.sales[0].feeCents).toBe(36000); expect(result.sales[0].attendantFeeCents).toBe(36000);
+  expect(result.sales).toHaveLength(1); expect(result.sales[0].checkoutId).toBe(id); expect(result.sales[0].feeCents).toBe(36200); expect(result.sales[0].attendantFeeCents).toBe(36200);
   await expect(page.locator('.history-panel thead')).not.toContainText(/taxa|gateway/i);
   expect(result.profile.accountKind).toBe('partner'); expect(result.profile.commissionBps).toBe(10000);
   const normal = `fixture_${info.project.name}_primary_01234567890123456789`;
@@ -59,7 +59,7 @@ test('parceiro vê um único gateway de 12%, recupera rascunho e os outros vende
   await page.getByRole('button', { name: 'Entrar na administração', exact: true }).click();
   await page.getByRole('button', { name: 'Atendentes', exact: true }).click();
   const adminRow = page.locator('.admin-attendants tbody tr').filter({ hasText: portal.profile.name });
-  await expect(adminRow).toContainText('88% após gateway'); await expect(adminRow).toContainText('12,00%');
+  await expect(adminRow).toContainText('Valor bruto menos as taxas'); await expect(adminRow).toContainText('12,00%'); await expect(adminRow).toContainText('2,00');
   await page.goto(`/#/atendente/${token}`); await expect(select).toHaveCount(0);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
@@ -77,5 +77,5 @@ test('confirmação de rascunho antigo conserva o envio e usa o gateway automát
   await page.getByRole('button', { name: 'Confirmar envio', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Enviada à administração');
   expect(requests.map(request => request.checkout)).toEqual(['main']);
-  const result = await (await page.request.get('/api/portal', { headers })).json(); expect(result.sales).toHaveLength(1); expect(result.sales[0].feeCents).toBe(1200);
+  const result = await (await page.request.get('/api/portal', { headers })).json(); expect(result.sales).toHaveLength(1); expect(result.sales[0].feeCents).toBe(1400);
 });

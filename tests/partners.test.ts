@@ -64,7 +64,7 @@ async function fixture(t: TestContext) {
   return { store, call, portal, submit, approve, invitation, attendant };
 }
 
-test('parceiro recebe R$ 88 por venda de R$ 100; tarifas e divisão dos atendentes continuam separadas', async t => {
+test('parceiro recebe R$ 86 por venda de R$ 100; tarifas e divisão dos atendentes continuam separadas', async t => {
   const { store, portal, submit, approve } = await fixture(t);
   await store.adminSetCheckout('main', { name: 'Checkout personalizado', fee: '20', fixedFee: '2', higherTier: { aboveAmount: '50', fee: '30', fixedFee: '3' } });
   const ordinary = await portal(attendantToken), partner = await portal();
@@ -82,16 +82,16 @@ test('parceiro recebe R$ 88 por venda de R$ 100; tarifas e divisão dos atendent
   let own = await portal();
   assert.equal(own.finance.availableCents, 0);
   assert.equal(own.finance.pendingSalesCount, 1);
-  assert.equal(own.sales[0].feeCents, 1200);
-  assert.equal(own.sales[0].attendantFeeCents, 1200);
+  assert.equal(own.sales[0].feeCents, 1400);
+  assert.equal(own.sales[0].attendantFeeCents, 1400);
   assert.equal(own.sales[0].commissionBps, 10000);
   assert.equal(own.sales[0].commissionMode, 'gross-share-less-fees');
   await approve(own.sales);
   await approve((await portal(attendantToken)).sales);
   own = await portal();
-  assert.equal(own.finance.availableCents, 8800);
-  assert.equal(own.finance.commissionCents, 8800);
-  assert.equal(own.finance.transactionFeeCents, 1200);
+  assert.equal(own.finance.availableCents, 8600);
+  assert.equal(own.finance.commissionCents, 8600);
+  assert.equal(own.finance.transactionFeeCents, 1400);
   assert.equal(own.finance.businessGatewayFeeCents, 0);
   const common = await portal(attendantToken);
   assert.equal(common.sales[0].feeCents, 3300);
@@ -99,7 +99,7 @@ test('parceiro recebe R$ 88 por venda de R$ 100; tarifas e divisão dos atendent
   assert.equal(common.finance.availableCents, 3350);
 });
 
-test('API arredonda os 12% por venda, ignora taxas adulteradas e mantém idempotência e limites', async t => {
+test('API arredonda 12% + R$ 2 por venda, ignora taxas adulteradas e mantém idempotência e limites', async t => {
   const { portal, submit, approve } = await fixture(t);
   const payload = batch(['0.05', '0.15', '100']);
   const tampered = {
@@ -108,7 +108,7 @@ test('API arredonda os 12% por venda, ignora taxas adulteradas e mantém idempot
   };
   assert.equal((await submit(tampered)).status, 200);
   let view = await portal();
-  assert.deepEqual(view.sales.map(sale => [sale.amountCents, sale.feeCents, sale.attendantFeeCents]).sort((a, b) => Number(a[0]) - Number(b[0])), [[5, 1, 1], [15, 2, 2], [10000, 1200, 1200]]);
+  assert.deepEqual(view.sales.map(sale => [sale.amountCents, sale.feeCents, sale.attendantFeeCents]).sort((a, b) => Number(a[0]) - Number(b[0])), [[5, 201, 201], [15, 202, 202], [10000, 1400, 1400]]);
   assert.ok(view.sales.every(sale => sale.commissionBps === 10000 && sale.commissionMode === 'gross-share-less-fees'));
   await approve(view.sales);
   assert.equal((await (await submit(tampered)).json()).duplicate, true);
@@ -116,8 +116,8 @@ test('API arredonda os 12% por venda, ignora taxas adulteradas e mantém idempot
   assert.equal((await submit(changed)).status, 409);
   view = await portal();
   assert.equal(view.sales.length, 3);
-  assert.equal(view.finance.availableCents, 8817);
-  assert.equal(view.finance.gatewayFeeCents, 1203);
+  assert.equal(view.finance.availableCents, 8217);
+  assert.equal(view.finance.gatewayFeeCents, 1803);
 
   assert.equal((await submit(batch(['3000', '3000.01']), 'fixture_partner_over_limit')).status, 400);
   assert.equal((await submit(batch(['0'], 'pix'), 'fixture_partner_under_min')).status, 400);
@@ -200,7 +200,7 @@ test('backup preserva o parceiro, os comprovantes e snapshots de taxas sem recal
   await store.adminSetCheckout('main', { name: 'Tarifa posterior', fee: '40', fixedFee: '9', higherTier: null });
   assert.equal((await submit(batch(['100']), 'fixture_partner_history_next')).status, 200);
   const next = await portal();
-  assert.ok(next.sales.every(sale => sale.feeCents === 1200 && sale.attendantFeeCents === 1200));
+  assert.ok(next.sales.every(sale => sale.feeCents === 1400 && sale.attendantFeeCents === 1400));
   assert.deepEqual(next.sales.find(sale => sale.id === oldPartner.sales[0].id), oldPartner.sales[0]);
   assert.deepEqual((await portal(attendantToken)).sales, oldNormal.sales);
   assert.deepEqual((await portal(attendantToken)).finance, oldNormal.finance);
@@ -216,7 +216,7 @@ test('backup preserva o parceiro, os comprovantes e snapshots de taxas sem recal
     assert.deepEqual(recovered.finance, next.finance);
     assert.deepEqual(await restored.receipt(auth, next.sales[0].receiptId), await store.receipt(auth, next.sales[0].receiptId));
     assert.deepEqual((await restored.portal(await restored.authenticate(attendantToken), 'all')).sales.map(sale => ({ ...sale })), oldNormal.sales);
-    assert.ok(recovered.checkouts.every(checkout => checkout.feeBps === 1200 && checkout.fixedFeeCents === 0 && checkout.higherTier === null));
+    assert.ok(recovered.checkouts.every(checkout => checkout.feeBps === 1200 && checkout.fixedFeeCents === 200 && checkout.higherTier === null));
   } finally { restored.close(); }
 });
 

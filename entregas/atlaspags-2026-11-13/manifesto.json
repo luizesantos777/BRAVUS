@@ -1,0 +1,120 @@
+{
+  "date": "2026-11-13",
+  "project": "Checkout/funil BRAVUS e Bio Camisas",
+  "deployed": false,
+  "files_removed": [],
+  "archives": {
+    "AtlasPags_Atualizacao.zip": {
+      "bytes": 54886,
+      "files": 20,
+      "sha256": "0607714d8f36722d7c485f6253c8bc40eef02378f88c5b7b0c0a6ca811f9a891"
+    },
+    "Bravus_Checkout_Completo_AtlasPags.zip": {
+      "bytes": 408461,
+      "files": 209,
+      "sha256": "de6e206480f60772f0e894111c3b654ad0de5c3dd8d10efc9f27a363183520d1"
+    }
+  },
+  "changes": [
+    {
+      "path": "ATLASPAGS.md",
+      "sha256": "c8968ee918e682dc792e137c1169336fb9b40f5269cb6fed4e685bf2d4a2ba8c",
+      "base_sha256": null
+    },
+    {
+      "path": "GATEWAYS-AUTOMATICOS.md",
+      "sha256": "04a4c5fcce8e81d080aeaeae28fa972112f4f841116d5c2f0c7faad6fea54d81",
+      "base_sha256": "1a6ef786d7070401a928faac0e73c71c9a5284e5672f4a8914823912d1a6c089"
+    },
+    {
+      "path": "README.md",
+      "sha256": "2453355feee9a62317d70048677868620ce90d7c955b68d9be15392378dad407",
+      "base_sha256": "80250ef7648f516cdc9e8882dbe389eb57667a473676623e9187d2a0f9f34408"
+    },
+    {
+      "path": "app/admin/atlas/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/atlas/ui.tsx",
+      "sha256": "0aef7a9e6e84140ead95b3a6422914dcac7cd3a08ea103f893436e8854b5d077",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/gateways/routing-controls.tsx",
+      "sha256": "130e9e1f9dbff2799c2e57ffc2da7ca1ff8c3a3107c812282902d77ad8623409",
+      "base_sha256": "84c433ecda23b469bf9518d50a7102f51ec558a4801bde96bd15d952a36232b6"
+    },
+    {
+      "path": "app/admin/gateways/ui.tsx",
+      "sha256": "d9202fb504209f58b77c4592c074da41a1f2d84823ab45aae841b51f99a93fe3",
+      "base_sha256": "1175d44000b0927034001d544f07ec7883dd95cc65ed533d8c2201bcbc1eca4f"
+    },
+    {
+      "path": "app/api/admin/atlas/route.ts",
+      "sha256": "65cd64a851a7fbcf4d997304234f330a08e6e66e100131d406206d03b25d3bf3",
+      "base_sha256": null
+    },
+    {
+      "path": "app/api/orders/route.ts",
+      "sha256": "9ab0ab66fb7a91aaa11208cfc229bbe2a6657926e1035270d289ffac4969e4b0",
+      "base_sha256": "72d3b0ef10f3a33080643a25c9f65e802649d464494067678d7bec20a9ff2565"
+    },
+    {
+      "path": "app/api/pay/[id]/route.ts",
+      "sha256": "50d64e4b3f82c502dea5109f55ced7dcb1e072e514301f6c255ca964c5f79d9b",
+      "base_sha256": "113f1913307b767960da3e9cc470d8d21d6ac420c58edf0b1102241bab444ec3"
+    },
+    {
+      "path": "app/api/webhooks/atlas/route.ts",
+      "sha256": "57b906308a732383db2f97300b2e130c160e3ca1c5971a565a2c6e4b7c6af15e",
+      "base_sha256": null
+    },
+    {
+      "path": "app/checkout/ui.tsx",
+      "sha256": "2ee23b6aa7665f1ff77400214b73592cc867fb8a6b58828ae65b6986a55c50c1",
+      "base_sha256": "cee2a8d90e7d6a6676b37cf70086fed023ed3cd519aab18a45545d31c3ceacc4"
+    },
+    {
+      "path": "app/pagar/[id]/ui.tsx",
+      "sha256": "c4a0673a602b2232b3fd8cad401dbc026b51e21cb30e565131548d7b9a8ff5e1",
+      "base_sha256": "e0d612de941f40ea7af306dc713bf09675696de19051825089ed9ed70facb8ad"
+    },
+    {
+      "path": "lib/atlas-webhook.ts",
+      "sha256": "e6e0d9c6b1350ec03e5f161bbcd12376555374c4f22c9c0212cd34b6b19963aa",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/atlas.ts",
+      "sha256": "56a55aadcabc18ee6d6ebb4603996e7a7e206cc53487de6757cd28ce4fd71514",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/create-payment.ts",
+      "sha256": "31f0c4b6e10c876c07ac5867cd41ecd4c9f821ef0a445ead9c4b6347475c2775",
+      "base_sha256": "c958914f54db1be64c78d1c1079d2a214f5db1aa56b079d4d4d6840fa7a95149"
+    },
+    {
+      "path": "lib/gateways.ts",
+      "sha256": "b75fd00d7dc09080fcda93e0688dc0567e0af47b866ef0bc77daad72501742be",
+      "base_sha256": "3001f099e21a612c801f702d39e0755801cba2a25339bdcc1ff11299f8b05bf6"
+    },
+    {
+      "path": "lib/payment-fallback.ts",
+      "sha256": "9591dd2b6ecd24e8b7b28545eba770670bb0ad600a6631082e131c27d0c0fbf6",
+      "base_sha256": "97a753a4ad795b00d34fdcaf30f7f502e6ad5d3a454c30acb3085087d5d746b9"
+    },
+    {
+      "path": "tests/atlas-worker.test.mjs",
+      "sha256": "1f01f84aafbf2b3210f0df8c722b2d573519643bc35456ed6f4a4210c0836c2a",
+      "base_sha256": null
+    },
+    {
+      "path": "tests/payments.test.mjs",
+      "sha256": "0908b7b77f10d026169fb3be1ab7e304cbee7970ed29e10e675e3c40ee10e389",
+      "base_sha256": "a53b0878a642c0f964e8eaee709449cfba6de9970dc7b709d219d0fe9cdad8b5"
+    }
+  ]
+}

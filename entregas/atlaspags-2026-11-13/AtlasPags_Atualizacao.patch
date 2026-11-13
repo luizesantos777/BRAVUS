@@ -1,0 +1,715 @@
+--- /dev/null
++++ b/ATLASPAGS.md
+@@ -0,0 +1,65 @@
++# Atlas Pags no checkout BRAVUS / Bio Camisas
++
++Integração PIX baseada na documentação pública enviada pelo proprietário em 13/11/2026 (`https://atlaspags.com/docs/`). Esta entrega altera o projeto do checkout/funil, não o portal dos atendentes da Vercel. É necessário aplicar os arquivos no projeto do checkout e publicar uma nova versão antes de aparecer no site.
++
++## Ativar após publicar
++
++1. Acesse `https://pagamento.bravuspix.shop/admin/gateways` com sua senha atual.
++2. No cartão **Atlas Pags**, abra **Cadastrar credenciais** (`/admin/atlas`).
++3. No painel Atlas, vá a **Integrações → API e Webhooks** e gere/copie a chave secreta `atlas_sk_live_…` para produção, ou `atlas_sk_test_…` para simulação. Cole-a somente no formulário privado do checkout. A chave pública `atlas_pk_…` não serve para criar cobranças.
++4. Clique em **Validar e salvar credenciais**. A validação faz apenas `GET /api/v1/charges?limit=1`; não cria cobrança. Se a validação falhar, a chave anterior é preservada.
++5. Volte ao painel e escolha **Usar Atlas Pags**, ou inclua a Atlas em uma faixa de ticket e/ou na ordem das reservas. Cadastrar a chave não sobrescreve uma seleção manual existente. As regras já salvas continuam valendo; a Atlas não é inserida automaticamente em um fallback antigo.
++
++A configuração é compartilhada pelos checkouts BRAVUS e Bio Camisas. Quando a Atlas estiver selecionada, o checkout pede **nome completo, e-mail e CPF/CNPJ do comprador**; telefone é opcional. Não usa documento fictício nem o cadastro automático de outra gateway. Uma reserva Atlas sem esses dados válidos é pulada pelo fallback, como as demais reservas que exigem cadastro.
++
++A API Atlas é exclusivamente PIX. Cartão permanece na Beehive. O intervalo atual do checkout continua em **R$ 6,00 a R$ 3.000,00**, embora o mínimo da API Atlas seja R$ 5,00.
++
++## Webhook de confirmação
++
++O pagamento também pode ser consultado pelo botão **Já paguei — verificar pagamento**, sem webhook. Para atualização automática:
++
++1. Em **Integrações → API e Webhooks** na Atlas, cadastre um endpoint HTTPS:
++   `https://pagamento.bravuspix.shop/api/webhooks/atlas`
++2. Selecione `transaction.pending`, `transaction.paid`, `transaction.failed`, `transaction.expired`, `transaction.refunded` e `transaction.chargeback`.
++3. Copie o segredo **desse endpoint**, `whsec_…`, para o campo **Segredo do webhook** em `/admin/atlas`. Digite novamente a chave da API para validar e salvar. Deixar o segredo vazio preserva o existente.
++4. Use **Enviar teste** no endpoint Atlas. Um evento `webhook.test` com assinatura válida recebe HTTP 200; isso testa a entrega, sem simular uma venda real.
++
++Não é necessário preencher `postback_url`: o endpoint da conta já recebe os eventos das cobranças. Se usar um endpoint próprio, use o segredo dele; não misture com o segredo do webhook principal da conta.
++
++A assinatura HMAC-SHA256 é verificada sobre os bytes UTF-8 originais e o timestamp, com tolerância de 5 minutos. Eventos repetidos são deduplicados por ID. Um aviso nunca libera pedido por conta própria: o servidor consulta a cobrança autenticada na Atlas, confere seu ID, valor, `external_id` e ambiente, e usa o status atual da API. Eventos atrasados, estornos e chargebacks não mantêm um pagamento falsamente confirmado. Falha de consulta responde 503 para a Atlas reenviar; o evento não é marcado como concluído nesse caso. Webhooks de outras lojas da mesma conta são ignorados.
++
++## Segurança e recuperação
++
++- A chave da API e o segredo do webhook usam o cofre AES-GCM existente e ficam no D1. Não aparecem nos endpoints públicos, HTML, logs ou respostas do admin. Após salvar, os campos são limpos.
++- As requisições usam exclusivamente `https://atlaspags.com/api/v1`, autenticação Bearer no servidor e redirecionamentos desativados.
++- O valor interno em centavos é convertido para número em reais, com no máximo duas casas decimais.
++- Cada pedido mantém o mesmo `Idempotency-Key` e `external_id`. O corpo original, incluindo IP/origem, é preservado **criptografado** para uma recuperação idêntica em outro dispositivo ou domínio.
++- Após timeout ou resposta incerta, **Recuperar o mesmo pedido** consulta primeiro a cobrança por ID ou `external_id`. Uma nova chamada de criação só ocorre se a consulta confirmar lista vazia e a credencial original não tiver mudado, sempre com a mesma chave de idempotência e corpo. Trocar de conta/chave não autoriza um POST potencialmente duplicado.
++- Falhas ambíguas, HTTP 5xx ou PIX inválido não autorizam enviar aquele pedido a outra gateway. O fallback só avança em uma recusa de autenticação/permissão 401/403 confirmada, sem identificador de cobrança.
++- O código PIX precisa corresponder ao pedido; seu QR Code é gerado localmente. Nenhuma imagem/HTML remoto de resposta da API é inserido na página.
++- O status público não expõe nome do vendedor, e-mail, documento ou tarifas do provedor. PIX vencido, falho, estornado ou contestado fica indisponível para pagamento.
++- O modo de teste fica explícito no admin e na página PIX. Pagamento simulado tem estado interno `test_paid`, e **não** vira `paid` para liberar um pedido real na loja.
++
++As tarifas dos vendedores/parceiros e os cálculos do portal não foram alterados. O custo `fee` efetivamente retornado pela Atlas é guardado como metadado privado da cobrança; não se presume a tarifa de outro gateway nem um perfil de conta Atlas.
++
++## Aplicar / publicar
++
++Aplique esta atualização sobre o código atual do checkout, preservando:
++
++- banco D1 e seus bindings;
++- `PAYMENT_VAULT_KEY` e demais segredos existentes;
++- imagens, vídeos, catálogo e demais arquivos de `public/` e armazenamentos externos;
++- credenciais, regras e histórico de cobranças já existentes.
++
++Não há nova migração SQL nem nova variável obrigatória. Os dados da Atlas usam as tabelas já existentes. O ZIP completo contém somente o código disponível neste ambiente; as mídias omitidas no arquivo original continuam listadas em `ARQUIVOS-DE-MIDIA-OMITIDOS.txt`. Não substitua seu projeto por uma pasta vazia de mídias.
++
++Este código não está ligado ao deploy automático do portal `bravus-omega.vercel.app`. A publicação deve ocorrer no projeto original ChatGPT/Sites do checkout, ou na hospedagem própria para a qual ele for migrado. As chaves de produção e a entrega real dos webhooks precisam ser validadas privadamente nessa hospedagem.
++
++## Verificar localmente
++
++```sh
++node_modules/.bin/vinext build
++node --test tests/*.test.mjs
++```
++
++Os testes Atlas executam os handlers reais de API, cofre e transações no runtime Workers com D1 local. Somente o HTTP da Atlas/outros gateways é simulado. Incluem validação, origem/admin, proteção das chaves, cobrança PIX, recuperação/idempotência/concorrência, rotação de credenciais, ticket, fallback seguro, valor/identidade/ambiente, expiração, estorno, teste e assinatura/deduplicação dos webhooks. Nenhum teste movimenta dinheiro real.
+--- a/GATEWAYS-AUTOMATICOS.md
++++ b/GATEWAYS-AUTOMATICOS.md
+@@ -49,8 +49,12 @@
+ node --test tests/*.test.mjs
+ ```
+ 
+-A suíte verifica acesso ao admin, origem das requisições, regras e limites, ordem das reservas, todas as seis gateways, falhas ambíguas, recuperação, concorrência, mudanças manuais, pausa e reativação, cartão e confirmação dos pedidos da loja. Há testes no runtime Workers com D1 local. Todos os provedores externos são simulados; nenhuma cobrança real foi criada.
++A suíte verifica acesso ao admin, origem das requisições, regras e limites, ordem das reservas, todas as sete gateways, falhas ambíguas, recuperação, concorrência, mudanças manuais, pausa e reativação, cartão e confirmação dos pedidos da loja. Há testes no runtime Workers com D1 local. Todos os provedores externos são simulados; nenhuma cobrança real foi criada.
+ 
+ Também foi conferido o painel compilado no Chromium, com Workers/D1 local: login, gravação e persistência das regras, ordenação, limite exato, preservação de edição ao atualizar, tela de 390 px sem rolagem horizontal e envio do checkout para a gateway correta. O envio da cobrança foi simulado.
+ 
+ `tsc --noEmit` isolado encontra os mesmos 7 erros de tipos dos bindings Cloudflare que já existem no ZIP original; a comparação com o original não mostrou novos erros. O build Vinext e os testes são as verificações executáveis deste pacote.
++
++## Atlas Pags
++
++A Atlas Pags pode ser cadastrada em `/admin/atlas` e selecionada como padrão, faixa de ticket ou reserva. A integração é exclusivamente PIX, com recuperação idempotente e webhook assinado. Veja [ATLASPAGS.md](ATLASPAGS.md) para configuração e publicação.
+--- a/README.md
++++ b/README.md
+@@ -26,3 +26,7 @@
+ ```
+ 
+ Os testes simulam os provedores de pagamento e não criam cobranças reais. Há cobertura das gateways, autenticação, validação de valores, regras por ticket, fallback, recuperação, concorrência, cartão e loja, inclusive no runtime Workers com D1 local.
++
++## Atlas Pags
++
++Gateway PIX disponível em `/admin/gateways`, com cadastro privado da chave em `/admin/atlas`, regras por ticket e fallback. Exige os dados reais do comprador. Consulte [ATLASPAGS.md](ATLASPAGS.md) para publicar, ativar e configurar os webhooks.
+--- /dev/null
++++ b/app/admin/atlas/page.tsx
+@@ -0,0 +1,5 @@
++import Access from '@/app/admin/gateways/access';
++import {panelUnlocked} from '@/lib/gateway-access';
++import Settings from './ui';
++export const dynamic='force-dynamic';
++export default async function Page(){if(!await panelUnlocked())return <Access/>;return <Settings/>;}
+--- /dev/null
++++ b/app/admin/atlas/ui.tsx
+@@ -0,0 +1,24 @@
++'use client';
++import {useCallback,useEffect,useState} from 'react';
++import {Button} from '@/components/ui/button';
++import {Input} from '@/components/ui/input';
++import {BRAVUS_PAYMENT_ORIGIN} from '@/lib/checkout-brand';
++type Configuration={configured:boolean;webhookConfigured:boolean;testMode:boolean|null};
++export default function Settings(){
++ const [config,setConfig]=useState<Configuration|null>(null),[token,setToken]=useState(''),[secret,setSecret]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false),[copied,setCopied]=useState(false);
++ const webhookUrl=BRAVUS_PAYMENT_ORIGIN+'/api/webhooks/atlas';
++ const load=useCallback(async()=>{const r=await fetch('/api/admin/atlas',{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error);setConfig(d);},[]);
++ useEffect(()=>{load().catch(()=>setError('Não foi possível carregar a configuração.'));},[load]);
++ return <main className="pay-shell"><div className="pay-brand"><img src="/assets/bravus-logo.jpg" alt="Bravus Brasil"/><strong>BRAVUS BRASIL</strong></div><section className="pay-card"><h1>Atlas Pags</h1><p>{config?.configured?'Chave cadastrada com segurança.':'Cadastre a chave secreta gerada em Integrações → API e Webhooks na Atlas Pags.'}</p>
++ {config?.configured&&<p className={config.testMode?'error':'success'} role="status">{config.testMode?'Ambiente de teste: as cobranças são simuladas e não movimentam dinheiro.':'Chave de produção cadastrada.'}</p>}
++ <form onSubmit={async e=>{e.preventDefault();if(busy)return;setBusy(true);setError('');setSaved(false);try{const r=await fetch('/api/admin/atlas',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({token,...(secret.trim()?{webhookSecret:secret}:{})})}),d=await r.json();if(!r.ok)throw Error(d.error);setToken('');setSecret('');await load();setSaved(true);}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>
++ <label className="field"><span>Chave secreta da API Atlas</span><Input type="password" autoComplete="new-password" value={token} onChange={e=>setToken(e.target.value)} placeholder="atlas_sk_live_…" required maxLength={1024} disabled={busy}/></label>
++ <label className="field"><span>Segredo do webhook (opcional)</span><Input type="password" autoComplete="new-password" value={secret} onChange={e=>setSecret(e.target.value)} placeholder="whsec_…" maxLength={1024} disabled={busy}/></label>
++ <p className="muted">A validação consulta a lista de cobranças sem gerar pagamento. Deixe o segredo do webhook vazio para manter o já cadastrado.</p>
++ <Button className="action" disabled={busy||config===null}>{busy?'Validando…':'Validar e salvar credenciais'}</Button></form>
++ {error&&<p className="error" role="alert">{error}</p>}{saved&&<p className="success" role="status">Credenciais salvas. Selecione Usar Atlas Pags no painel de gateways ou inclua a Atlas nas regras automáticas.</p>}
++ <h2>Confirmação automática dos pagamentos</h2><p>Na Atlas, cadastre um endpoint com este endereço e os eventos transaction.pending, transaction.paid, transaction.failed, transaction.expired, transaction.refunded e transaction.chargeback. Copie o segredo desse endpoint para o campo acima.</p>
++ <label className="field"><span>URL do webhook Atlas</span><Input value={webhookUrl} readOnly onFocus={e=>e.target.select()}/></label><Button type="button" variant="outline" onClick={async()=>{try{await navigator.clipboard.writeText(webhookUrl);setCopied(true);}catch{setError('Selecione e copie o endereço do webhook.');}}}>{copied?'Endereço copiado!':'Copiar URL do webhook'}</Button>
++ <p className="muted">{config?.webhookConfigured?'Segredo do webhook cadastrado.':'Sem webhook, o pagamento continua disponível para consulta na página do PIX.'}</p>
++ <p className="muted">A Atlas opera apenas com PIX e exige nome, e-mail e CPF/CNPJ do comprador. BRAVUS e Bio Camisas compartilham esta configuração.</p><a href="/admin/gateways">Voltar ao painel de gateways</a></section></main>;
++}
+--- a/app/admin/gateways/routing-controls.tsx
++++ b/app/admin/gateways/routing-controls.tsx
+@@ -3,7 +3,7 @@
+ import {Button} from '@/components/ui/button';
+ import {Input} from '@/components/ui/input';
+ import type {FallbackPolicy} from '@/lib/gateways';
+-export const gatewayNames:Record<string,string>={beehive:'Beehive Pay',eleva:'Eleva Payments',gestao:'Gestão Pay',firebot:'Firebot',poseidon:'Poseidon',buckpay:'BuckPay'};
++export const gatewayNames:Record<string,string>={atlas:'Atlas Pags',beehive:'Beehive Pay',eleva:'Eleva Payments',gestao:'Gestão Pay',firebot:'Firebot',poseidon:'Poseidon',buckpay:'BuckPay'};
+ type Provider={id:string;configured:boolean;pausedUntil?:number|null};
+ const money=(cents:number)=>(cents/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});
+ function cents(value:string){const clean=value.trim().replace(',','.');if(!/^\d{1,4}(\.\d{1,2})?$/.test(clean))throw Error('Digite os limites em reais, por exemplo 500,00.');const [whole,part='']=clean.split('.');return Number(whole)*100+Number(part.padEnd(2,'0'));}
+--- a/app/admin/gateways/ui.tsx
++++ b/app/admin/gateways/ui.tsx
+@@ -5,8 +5,8 @@
+ import RoutingControls from './routing-controls';
+ import {BRAVUS_PAYMENT_ORIGIN,BIOCAMISAS_ORIGIN} from '@/lib/checkout-brand';
+ import type {FallbackPolicy} from '@/lib/gateways';
+-const names:Record<string,string>={beehive:'Beehive Pay',eleva:'Eleva Payments',gestao:'Gestão Pay',firebot:'Firebot',poseidon:'Poseidon',buckpay:'BuckPay'};
+-const descriptions:Record<string,string>={beehive:'PIX e links de cartão de crédito',eleva:'PIX com confirmação de pagamento',gestao:'PIX com consulta de pagamento',firebot:'PIX para pedidos digitais',poseidon:'PIX para pedidos físicos',buckpay:'PIX com consulta de pagamento'};
++const names:Record<string,string>={atlas:'Atlas Pags',beehive:'Beehive Pay',eleva:'Eleva Payments',gestao:'Gestão Pay',firebot:'Firebot',poseidon:'Poseidon',buckpay:'BuckPay'};
++const descriptions:Record<string,string>={atlas:'PIX com confirmação e webhooks assinados',beehive:'PIX e links de cartão de crédito',eleva:'PIX com confirmação de pagamento',gestao:'PIX com consulta de pagamento',firebot:'PIX para pedidos digitais',poseidon:'PIX para pedidos físicos',buckpay:'PIX com consulta de pagamento'};
+ type Panel={active:string;providers:{id:string;configured:boolean;pausedUntil?:number|null}[];fallback:FallbackPolicy;lastSwitch?:{from:string;to:string;scope?:string;at:number}|null};
+ export default function Settings(){
+  const [data,setData]=useState<Panel|null>(null),[busy,setBusy]=useState(''),[error,setError]=useState(''),[notice,setNotice]=useState(''),[token,setToken]=useState(''),[agent,setAgent]=useState('');
+--- /dev/null
++++ b/app/api/admin/atlas/route.ts
+@@ -0,0 +1,20 @@
++import {panelGuard} from '@/lib/gateway-access';
++import {credentials,json,readBody} from '@/lib/payments';
++import {activateAtlas,atlasKeyValid,atlasWebhookKeyValid,AtlasSetupError} from '@/lib/atlas';
++export const dynamic='force-dynamic';
++export async function GET(req:Request){
++ const deny=await panelGuard(req);if(deny)return deny;
++ try{const c=await credentials('atlas');return json({configured:!!c,webhookConfigured:!!c?.agent,testMode:c?c.token.startsWith('atlas_sk_test_'):null});}
++ catch{return json({error:'Não foi possível consultar a configuração.'},503);}
++}
++export async function POST(req:Request){
++ const deny=await panelGuard(req);if(deny)return deny;
++ try{
++  const b=await readBody(req),token=typeof b.token==='string'?b.token.trim().replace(/^Bearer\s+/i,''):'';
++  const webhookSecret=typeof b.webhookSecret==='string'?b.webhookSecret.trim():undefined;
++  if(!atlasKeyValid(token))return json({error:'Informe a chave secreta da Atlas Pags (atlas_sk_live_… ou atlas_sk_test_…).'},400);
++  if(webhookSecret&&!atlasWebhookKeyValid(webhookSecret))return json({error:'Confira o segredo do webhook Atlas (whsec_…).'},400);
++  if(!await activateAtlas(token,webhookSecret||undefined))return json({error:'Chave recusada pela Atlas. A configuração anterior foi preservada.'},422);
++  return json({configured:true});
++ }catch(e){return json({error:(e instanceof AtlasSetupError?e.message:'Não foi possível salvar a configuração da Atlas.')+' A configuração anterior foi preservada.'},503);}
++}
+--- a/app/api/orders/route.ts
++++ b/app/api/orders/route.ts
+@@ -4,13 +4,14 @@
+ import {InputError as FirebotInputError} from '@/lib/firebot';
+ import {InputError} from '@/lib/poseidon';
+ import {publicGuard,json,readBody,database,validId} from '@/lib/payments';
+-import {checkoutResponse} from '@/lib/checkout-brand';
++import {checkoutBrandForRequest,checkoutResponse} from '@/lib/checkout-brand';
+ export const dynamic='force-dynamic';
+ export async function POST(req:Request){return checkoutResponse(req,await createOrder(req));}
+ async function createOrder(req:Request){
+  const deny=await publicGuard(req);if(deny)return deny;
+  try{
+   const b=await readBody(req);
++  b.checkoutOrigin=checkoutBrandForRequest(req).origin;
+   if(!Number.isSafeInteger(b.amount)||b.amount<600||b.amount>300000||typeof b.requestId!=='string'||!validId(b.requestId))return json({error:'Informe um valor entre R$ 6,00 e R$ 3.000,00.'},400);
+   if(b.sellerName!==undefined&&(typeof b.sellerName!=='string'||b.sellerName.trim().length<2||b.sellerName.trim().length>100||/[\x00-\x1f<>]/.test(b.sellerName)))return json({error:'Informe o nome do vendedor (2 a 100 caracteres).'},400);
+   if(b.paymentMethod&&b.paymentMethod!=='pix'&&b.paymentMethod!=='credit_card')return json({error:'Forma de pagamento indisponível.'},400);
+--- a/app/api/pay/[id]/route.ts
++++ b/app/api/pay/[id]/route.ts
+@@ -1,10 +1,12 @@
+ import {readBeehive} from '@/lib/beehive';
++import {readAtlasPayment} from '@/lib/atlas';
+ import {readElevaPayment} from '@/lib/eleva';
+ import {gestaoStatus} from '@/lib/gestao';
+ import {json,database,buck,validId} from '@/lib/payments';
+ export const dynamic='force-dynamic';
+-export async function GET(_req:Request,ctx:{params:Promise<{id:string}>}){const {id}=await ctx.params;if(!validId(id))return json({error:'Pagamento não encontrado.'},404);try{const db=database();const row=await db.prepare('SELECT id,request_id,amount,state,pix_code,qr,checked_at,provider,transaction_id,seller_name FROM payment_orders WHERE id=?').bind(id).first();if(!row||!row.pix_code&&row.state!=='paid')return json({error:'Pagamento não encontrado ou indisponível.'},404);
++export async function GET(_req:Request,ctx:{params:Promise<{id:string}>}){const {id}=await ctx.params;if(!validId(id))return json({error:'Pagamento não encontrado.'},404);try{const db=database();const row=await db.prepare('SELECT id,request_id,amount,state,pix_code,qr,checked_at,provider,transaction_id,seller_name FROM payment_orders WHERE id=?').bind(id).first();if(!row||!row.pix_code&&!['paid','test_paid'].includes(row.state)&&!(row.provider==='atlas'&&row.transaction_id))return json({error:'Pagamento não encontrado ou indisponível.'},404);
+ if(row.provider==='beehive')return await readBeehive(row);
++if(row.provider==='atlas')return await readAtlasPayment(row);
+ if(row.provider==='eleva')return await readElevaPayment(row);
+ if(row.provider==='gestao'){
+  if(row.state!=='paid'&&row.checked_at<Date.now()-30000){const claim=await db.prepare('UPDATE payment_orders SET checked_at=? WHERE id=? AND checked_at=?').bind(Date.now(),id,row.checked_at).run();if(claim.meta?.changes){try{if(await gestaoStatus(row)){row.state='paid';await db.prepare('UPDATE payment_orders SET state=? WHERE id=?').bind('paid',id).run();}}catch{}}}
+--- /dev/null
++++ b/app/api/webhooks/atlas/route.ts
+@@ -0,0 +1,3 @@
++import {atlasWebhook} from '@/lib/atlas-webhook';
++export const dynamic='force-dynamic';
++export const POST=atlasWebhook;
+--- a/app/checkout/ui.tsx
++++ b/app/checkout/ui.tsx
+@@ -34,7 +34,7 @@
+   if(!fresh.configured)throw Error('Pagamento temporariamente indisponível. Contate o vendedor.');
+  }
+  request.current ||= crypto.randomUUID();try{saveAttempt(sessionStorage,{requestId:request.current,sellerName:effectiveSeller,amount,provider,paymentMethod,values})}catch{}
+- const {name,email=['eleva','gestao'].includes(provider)?ELEVA_EMAIL:undefined,cpf,phone,address,...shipping}=values;setAttempted(true);const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sellerName:effectiveSeller||undefined,provider,paymentMethod,amount:cents,requestId:request.current,customer:provider==='beehive'?(attempted?{name,email,cpf,phone}:{name}):provider==='eleva'?(attempted&&name&&cpf?{name,email,cpf}:{email}):provider==='gestao'?(attempted&&name&&cpf?{name,email,cpf,phone,address}:{email,phone}):provider==='poseidon'?{name,email,cpf,phone,address}:{},shipping})});const d=await r.json();if(!r.ok){if(d.code==='GATEWAY_CHANGED'){request.current='';try{clearAttempt(sessionStorage)}catch{}const fresh=await fetch('/api/settings'+(paymentMethod==='pix'?'?amount='+cents:'?method=credit_card'),{cache:'no-store'}).then(r=>r.json());setProvider(fresh.provider);setPaymentMethod('pix');setConfigured(!!fresh.configured);setAttempted(false);}if(r.status===400)setAttempted(false);throw Error(d.error||'Não foi possível concluir a solicitação. Confira a cobrança antes de gerar outra.');}try{saveAttempt(sessionStorage,{requestId:request.current,sellerName:effectiveSeller,amount,provider,paymentMethod,values,url:d.url});}catch{}setUrl(d.url);if(tab&&!tab.closed)tab.location.href=d.url;else window.location.assign(d.url);
++ const {name,email=['eleva','gestao'].includes(provider)?ELEVA_EMAIL:undefined,cpf,phone,address,...shipping}=values;setAttempted(true);const r=await fetch('/api/orders',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sellerName:effectiveSeller||undefined,provider,paymentMethod,amount:cents,requestId:request.current,customer:provider==='beehive'?(attempted?{name,email,cpf,phone}:{name}):provider==='eleva'?(attempted&&name&&cpf?{name,email,cpf}:{email}):provider==='gestao'?(attempted&&name&&cpf?{name,email,cpf,phone,address}:{email,phone}):provider==='atlas'?{name,email,cpf,phone}:provider==='poseidon'?{name,email,cpf,phone,address}:{},shipping})});const d=await r.json();if(!r.ok){if(d.code==='GATEWAY_CHANGED'){request.current='';try{clearAttempt(sessionStorage)}catch{}const fresh=await fetch('/api/settings'+(paymentMethod==='pix'?'?amount='+cents:'?method=credit_card'),{cache:'no-store'}).then(r=>r.json());setProvider(fresh.provider);setPaymentMethod('pix');setConfigured(!!fresh.configured);setAttempted(false);}if(r.status===400)setAttempted(false);throw Error(d.error||'Não foi possível concluir a solicitação. Confira a cobrança antes de gerar outra.');}try{saveAttempt(sessionStorage,{requestId:request.current,sellerName:effectiveSeller,amount,provider,paymentMethod,values,url:d.url});}catch{}setUrl(d.url);if(tab&&!tab.closed)tab.location.href=d.url;else window.location.assign(d.url);
+  }catch(e){tab?.close();setError(e instanceof Error?e.message:'Não foi possível concluir. Confira com o vendedor antes de gerar outro PIX.');}finally{sending.current=false;setBusy(false)}}
+  async function newOrder(){
+   if(sending.current||!window.confirm('Confira com o vendedor se já existe uma cobrança para este pedido. Deseja iniciar outro pagamento?'))return;
+@@ -49,5 +49,5 @@
+   finally{sending.current=false;setBusy(false)}
+  }
+ 
+- return <main className="pay-shell checkout-page" data-checkout-brand={brand.id}><header className="checkout-header"><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>{provider==='beehive'?'PIX ou cartão de crédito':'Pagamento via PIX'}</small></div></div><span className="checkout-status">Pagamento seguro</span></header><section className="checkout-intro"><span className="secure">Compra segura</span><h1>{paymentMethod==='credit_card'?'Pague com cartão de crédito':'Finalize seu pedido via PIX'}</h1><p className="muted">{paymentMethod==='credit_card'?`Gere o link e envie ao cliente. O cliente preenche os dados e paga na página da ${brand.name}.`:['poseidon','gestao','eleva','beehive'].includes(provider)?'Informe o valor combinado com o vendedor, e os dados do comprador.':'Informe o valor da compra para gerar seu PIX.'}</p></section><section className="pay-card checkout-card"><form onSubmit={create}><fieldset disabled={busy||attempted} className="checkout-fields">{provider==='beehive'&&<label className="field checkout-field"><span>Forma de pagamento</span><select value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value as 'pix'|'credit_card')} className="method-select"><option value="pix">PIX</option><option value="credit_card">Cartão de crédito — até 12x</option></select></label>}{provider!=='beehive'&&<label className="field checkout-field"><span>Nome do vendedor</span><Input value={sellerName} onChange={e=>setSellerName(e.target.value)} placeholder="Quem está gerando este PIX?" autoComplete="off" minLength={2} maxLength={100} required/></label>}<label className="field checkout-field"><span>Valor total da compra</span><div className="currency-input"><b>R$</b><Input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="99,89" inputMode="decimal" required/></div></label><p className="field-note">Digite o valor da sua compra, por exemplo R$ 99,89, conforme combinado com o vendedor.</p>{paymentMethod==='pix'&&['poseidon','gestao','eleva','beehive'].includes(provider)&&<><h2>Dados do comprador</h2>{provider==='beehive'&&<p className="field-note">Os demais dados serão preenchidos pelo cadastro do cliente no sistema. O cadastro precisa estar completo para gerar o PIX.</p>}{['eleva','gestao'].includes(provider)&&<p className="field-note">Nome e CPF vinculados automaticamente ao cadastro configurado.</p>}<div className="buyer-grid">{fields.filter(([key])=>provider==='beehive'?key==='name':provider==='eleva'?key==='email':provider==='gestao'?['email','phone'].includes(key):true).map(([key,label,auto])=><label className={'field '+(['name','email','street','complement','address'].includes(key)?'wide':'')} key={key}><span>{provider==='eleva'&&key==='name'?'Nome do cliente':label}</span><Input name={key} type={key==='email'?'email':'text'} autoComplete={auto} value={values[key]??(['eleva','gestao'].includes(provider)&&key==='email'?ELEVA_EMAIL:'')} onChange={e=>setValues({...values,[key]:e.target.value})} required={key!=='complement'&&!(provider==='eleva'&&key==='phone')} maxLength={key==='state'?2:key==='email'?254:key==='address'?500:150} inputMode={['cpf','phone','zipCode'].includes(key)?'numeric':'text'} placeholder={key==='phone'?'DDD + número do comprador':key==='state'?'SP':key==='number'?'Número ou S/N':undefined}/></label>)}</div></>}</fieldset><Button className="action" type="submit" disabled={!configured||busy||!!url||(provider!=='beehive'&&!sellerName.trim())||!amount}>{busy?'Gerando pagamento…':attempted?'Recuperar o mesmo pedido':paymentMethod==='credit_card'?'Gerar link de cartão':'Gerar PIX em nova guia'}</Button></form>{!configured&&<p className="muted">{loaded?'O pagamento está temporariamente indisponível.':'Preparando o pagamento…'}</p>}{error&&<p role="alert" className="error">{error}</p>}{attempted&&!url&&!busy&&<p className="muted">Uma nova tentativa recupera o mesmo pedido. Se o resultado estiver indefinido, confira com o vendedor antes de iniciar outra cobrança.</p>}{url&&<div className="success checkout-result"><strong>{paymentMethod==='credit_card'?'Link de cartão pronto':'Seu PIX está pronto'}</strong><p><a className="result-link" href={url} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a></p><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(url);setCopied(true)}catch{setError('Abra a página de pagamento e copie o endereço do navegador.')}}}>{copied?'Link copiado!':'Copiar link de pagamento'}</Button></div>}{attempted&&<Button variant="outline" className="action" disabled={busy} onClick={newOrder}>Iniciar outro pedido</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section>{canConfigure&&provider==='beehive'&&<p><a href="/admin/beehive#clientes">Cadastrar ou corrigir cliente para PIX</a></p>}{canConfigure&&<p><a href="/admin/gateways">Gerenciar gateways de pagamento</a></p>}</main>;
++ return <main className="pay-shell checkout-page" data-checkout-brand={brand.id}><header className="checkout-header"><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>{provider==='beehive'?'PIX ou cartão de crédito':'Pagamento via PIX'}</small></div></div><span className="checkout-status">Pagamento seguro</span></header><section className="checkout-intro"><span className="secure">Compra segura</span><h1>{paymentMethod==='credit_card'?'Pague com cartão de crédito':'Finalize seu pedido via PIX'}</h1><p className="muted">{paymentMethod==='credit_card'?`Gere o link e envie ao cliente. O cliente preenche os dados e paga na página da ${brand.name}.`:['poseidon','gestao','eleva','beehive','atlas'].includes(provider)?'Informe o valor combinado com o vendedor, e os dados do comprador.':'Informe o valor da compra para gerar seu PIX.'}</p></section><section className="pay-card checkout-card"><form onSubmit={create}><fieldset disabled={busy||attempted} className="checkout-fields">{provider==='beehive'&&<label className="field checkout-field"><span>Forma de pagamento</span><select value={paymentMethod} onChange={e=>setPaymentMethod(e.target.value as 'pix'|'credit_card')} className="method-select"><option value="pix">PIX</option><option value="credit_card">Cartão de crédito — até 12x</option></select></label>}{provider!=='beehive'&&<label className="field checkout-field"><span>Nome do vendedor</span><Input value={sellerName} onChange={e=>setSellerName(e.target.value)} placeholder="Quem está gerando este PIX?" autoComplete="off" minLength={2} maxLength={100} required/></label>}<label className="field checkout-field"><span>Valor total da compra</span><div className="currency-input"><b>R$</b><Input value={amount} onChange={e=>setAmount(e.target.value)} placeholder="99,89" inputMode="decimal" required/></div></label><p className="field-note">Digite o valor da sua compra, por exemplo R$ 99,89, conforme combinado com o vendedor.</p>{paymentMethod==='pix'&&['poseidon','gestao','eleva','beehive','atlas'].includes(provider)&&<><h2>Dados do comprador</h2>{provider==='beehive'&&<p className="field-note">Os demais dados serão preenchidos pelo cadastro do cliente no sistema. O cadastro precisa estar completo para gerar o PIX.</p>}{['eleva','gestao'].includes(provider)&&<p className="field-note">Nome e CPF vinculados automaticamente ao cadastro configurado.</p>}<div className="buyer-grid">{fields.filter(([key])=>provider==='beehive'?key==='name':provider==='eleva'?key==='email':provider==='gestao'?['email','phone'].includes(key):true).map(([key,label,auto])=><label className={'field '+(['name','email','street','complement','address'].includes(key)?'wide':'')} key={key}><span>{provider==='eleva'&&key==='name'?'Nome do cliente':label}</span><Input name={key} type={key==='email'?'email':'text'} autoComplete={auto} value={values[key]??(['eleva','gestao'].includes(provider)&&key==='email'?ELEVA_EMAIL:'')} onChange={e=>setValues({...values,[key]:e.target.value})} required={key!=='complement'&&!(['eleva','atlas'].includes(provider)&&key==='phone')} maxLength={key==='state'?2:key==='email'?254:key==='address'?500:provider==='atlas'&&key==='name'?120:provider==='atlas'&&key==='phone'?30:150} inputMode={['cpf','phone','zipCode'].includes(key)?'numeric':'text'} placeholder={key==='phone'?'DDD + número do comprador':key==='state'?'SP':key==='number'?'Número ou S/N':undefined}/></label>)}</div></>}</fieldset><Button className="action" type="submit" disabled={!configured||busy||!!url||(provider!=='beehive'&&!sellerName.trim())||!amount}>{busy?'Gerando pagamento…':attempted?'Recuperar o mesmo pedido':paymentMethod==='credit_card'?'Gerar link de cartão':'Gerar PIX em nova guia'}</Button></form>{!configured&&<p className="muted">{loaded?'O pagamento está temporariamente indisponível.':'Preparando o pagamento…'}</p>}{error&&<p role="alert" className="error">{error}</p>}{attempted&&!url&&!busy&&<p className="muted">Uma nova tentativa recupera o mesmo pedido. Se o resultado estiver indefinido, confira com o vendedor antes de iniciar outra cobrança.</p>}{url&&<div className="success checkout-result"><strong>{paymentMethod==='credit_card'?'Link de cartão pronto':'Seu PIX está pronto'}</strong><p><a className="result-link" href={url} target="_blank" rel="noopener noreferrer">Abrir página de pagamento</a></p><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(url);setCopied(true)}catch{setError('Abra a página de pagamento e copie o endereço do navegador.')}}}>{copied?'Link copiado!':'Copiar link de pagamento'}</Button></div>}{attempted&&<Button variant="outline" className="action" disabled={busy} onClick={newOrder}>Iniciar outro pedido</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section>{canConfigure&&provider==='beehive'&&<p><a href="/admin/beehive#clientes">Cadastrar ou corrigir cliente para PIX</a></p>}{canConfigure&&<p><a href="/admin/gateways">Gerenciar gateways de pagamento</a></p>}</main>;
+ }
+--- a/app/pagar/[id]/ui.tsx
++++ b/app/pagar/[id]/ui.tsx
+@@ -4,4 +4,4 @@
+ import CheckoutMark from '@/components/checkout-mark';
+ import {BRAVUS_BRAND} from '@/lib/checkout-brand';
+ import type {CheckoutBrand} from '@/lib/checkout-brand';
+-export default function Payment({id,brand=BRAVUS_BRAND}:{id:string;brand?:CheckoutBrand}){const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);const load=useCallback(async()=>{setBusy(true);setError('');try{const r=await fetch('/api/pay/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error);setData(d)}catch(e){setError((e as Error).message)}finally{setBusy(false)}},[id]);useEffect(()=>{load()},[load]);return <main className="pay-shell" data-checkout-brand={brand.id}><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>Pagamento do seu pedido</small></div></div><section className="pay-card"><h1>{data?.paid?'Pagamento confirmado!':'Pague com PIX'}</h1>{!data&&!error&&<p>Carregando pagamento…</p>}{error&&<p className="error" role="alert">{error}</p>}{data&&<><div className="amount">{new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(data.amount/100)}</div>{data.paid?<p className="success">Recebemos seu pagamento. Obrigado por comprar com a {brand.name}! ✅<br/><br/>Envie o comprovante ao vendedor para confirmar seu pedido.</p>:data.unavailable?<p className="error">Este PIX está vencido ou indisponível para pagamento. Consulte o vendedor. Se já pagou, use o botão abaixo para verificar.</p>:<><p>Escaneie o QR Code ou copie o código e cole na opção PIX do seu banco.</p><img className="qr" src={data.qrUrl||('data:image/png;base64,'+data.qr)} referrerPolicy="no-referrer" alt="QR Code para pagar este pedido via PIX"/><label className="field"><span>PIX copia e cola</span><textarea className="pix-code" readOnly value={data.code} onFocus={e=>e.target.select()}/></label><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(data.code);setCopied(true);setTimeout(()=>setCopied(false),2500)}catch{setError('Selecione e copie o código no campo acima.')}}}>{copied?'Código copiado!':'Copiar código PIX'}</Button></> }</>}{data?.canVerify&&!data.paid&&<Button className="action" disabled={busy} onClick={load}>{busy?'Consultando…':'Já paguei — verificar pagamento'}</Button>}{error&&!data&&<Button className="action" disabled={busy} onClick={load}>Tentar novamente</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section></main>}
++export default function Payment({id,brand=BRAVUS_BRAND}:{id:string;brand?:CheckoutBrand}){const [data,setData]=useState<any>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[copied,setCopied]=useState(false);const load=useCallback(async()=>{setBusy(true);setError('');try{const r=await fetch('/api/pay/'+encodeURIComponent(id));const d=await r.json();if(!r.ok)throw Error(d.error);setData(d)}catch(e){setError((e as Error).message)}finally{setBusy(false)}},[id]);useEffect(()=>{load()},[load]);return <main className="pay-shell" data-checkout-brand={brand.id}><div className="pay-brand"><CheckoutMark brand={brand}/><div><strong>{brand.wordmark}</strong><small>Pagamento do seu pedido</small></div></div><section className="pay-card"><h1>{data?.simulatedPaid?'Pagamento de teste concluído':data?.paid?'Pagamento confirmado!':'Pague com PIX'}</h1>{!data&&!error&&<p>Carregando pagamento…</p>}{error&&<p className="error" role="alert">{error}</p>}{data?.testMode&&<p className="error" role="status">Ambiente de teste: nenhum dinheiro real é movimentado.</p>}{data&&<><div className="amount">{new Intl.NumberFormat('pt-BR',{style:'currency',currency:'BRL'}).format(data.amount/100)}</div>{data.simulatedPaid?<p className="success">Simulação concluída. Este teste não confirma uma compra real.</p>:data.paid?<p className="success">Recebemos seu pagamento. Obrigado por comprar com a {brand.name}! ✅<br/><br/>Envie o comprovante ao vendedor para confirmar seu pedido.</p>:data.unavailable?<p className="error">Este PIX está vencido ou indisponível para pagamento. Consulte o vendedor. Se já pagou, use o botão abaixo para verificar.</p>:<><p>Escaneie o QR Code ou copie o código e cole na opção PIX do seu banco.</p><img className="qr" src={data.qrUrl||('data:image/png;base64,'+data.qr)} referrerPolicy="no-referrer" alt="QR Code para pagar este pedido via PIX"/><label className="field"><span>PIX copia e cola</span><textarea className="pix-code" readOnly value={data.code} onFocus={e=>e.target.select()}/></label><Button className="action" onClick={async()=>{try{await navigator.clipboard.writeText(data.code);setCopied(true);setTimeout(()=>setCopied(false),2500)}catch{setError('Selecione e copie o código no campo acima.')}}}>{copied?'Código copiado!':'Copiar código PIX'}</Button></> }</>}{data?.canVerify&&!data.paid&&!data.simulatedPaid&&<Button className="action" disabled={busy} onClick={load}>{busy?'Consultando…':'Já paguei — verificar pagamento'}</Button>}{error&&!data&&<Button className="action" disabled={busy} onClick={load}>Tentar novamente</Button>}<p className="muted">Após o pagamento, envie o comprovante ao vendedor.</p></section></main>}
+--- /dev/null
++++ b/lib/atlas-webhook.ts
+@@ -0,0 +1,47 @@
++import {credentials,database,json} from './payments';
++import {refreshAtlasPayment} from './atlas';
++
++/** Web Crypto verifies HMAC without comparing secret-dependent strings in JavaScript. */
++export async function verifyAtlasSignature(raw:string,header:string|null,secret:string,now=Date.now()){
++ if(!header||header.length>256)return false;
++ const match=/^t=(\d{10}),v1=([a-fA-F0-9]{64})$/.exec(header);
++ if(!match||Math.abs(now/1000-Number(match[1]))>300)return false;
++ const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(secret),{name:'HMAC',hash:'SHA-256'},false,['verify']);
++ const signature=Uint8Array.from(match[2].match(/../g)!,x=>parseInt(x,16));
++ return crypto.subtle.verify('HMAC',key,signature,new TextEncoder().encode(match[1]+'.'+raw));
++}
++
++async function rawBody(req:Request){
++ if(Number(req.headers.get('content-length')||0)>262144)throw Error('Body too large');
++ const reader=req.body?.getReader();if(!reader)return '';
++ const parts:Uint8Array[]=[];let size=0;
++ for(;;){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>262144){await reader.cancel();throw Error('Body too large');}parts.push(value);}
++ const bytes=new Uint8Array(size);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
++ return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
++}
++
++export async function atlasWebhook(req:Request){
++ try{
++  const c=await credentials('atlas');if(!c?.agent)return json({error:'Webhook Atlas não configurado.'},503);
++  let raw:string;try{raw=await rawBody(req);}catch{return json({error:'Corpo inválido.'},413);}
++  if(!await verifyAtlasSignature(raw,req.headers.get('x-atlas-signature'),c.agent))return json({error:'Assinatura inválida ou vencida.'},401);
++  let event:any;try{event=JSON.parse(raw);}catch{return json({error:'Evento inválido.'},400);}
++  if(typeof event?.id!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(event.id)||event.id!==req.headers.get('x-atlas-event-id')||typeof event.type!=='string')return json({error:'Identificação do evento inválida.'},400);
++  if(event.type==='webhook.test')return json({received:true,test:true});
++  if(!['transaction.pending','transaction.paid','transaction.failed','transaction.expired','transaction.refunded','transaction.chargeback'].includes(event.type))return json({received:true,ignored:true});
++  const db=database(),key='atlas_event:'+event.id;
++  if(await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind(key).first())return json({received:true,duplicate:true});
++  const data=event.data;
++  if(!data||typeof data.id!=='string'||typeof data.external_id!=='string'||typeof data.livemode!=='boolean'||event.livemode!==data.livemode)return json({error:'Cobrança do evento inválida.'},400);
++  const row=await db.prepare('SELECT * FROM payment_orders WHERE request_id=? AND provider=?').bind(data.external_id,'atlas').first();
++  // Events from other checkouts on the same Atlas account belong to those systems.
++  if(!row)return json({received:true,ignored:true});
++  if(!row.transaction_id)return json({error:'Cobrança em processamento. Tente novamente.'},503);
++  if(data.id!==row.transaction_id)return json({error:'Cobrança divergente.'},400);
++  // Out-of-order, replayed or misleading events never set state directly. Verify
++  // the authoritative charge, including amount, environment and external_id.
++  await refreshAtlasPayment(row,true,3500);
++  await db.prepare('INSERT INTO payment_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO NOTHING').bind(key,JSON.stringify({chargeId:row.id,at:Date.now()})).run();
++  return json({received:true});
++ }catch{return json({error:'Não foi possível confirmar o evento. Tente novamente.'},503);}
++}
+--- /dev/null
++++ b/lib/atlas.ts
+@@ -0,0 +1,175 @@
++import QRCode from 'qrcode/lib/browser';
++import {credentials,database,json,PAYMENT_ORIGIN,saveCredentials} from './payments';
++import {documentValid,InputError} from './firebot';
++import {recordCreationRejection} from './gateway-failures';
++import {checkoutBrandForOrigin} from './checkout-brand';
++
++export const ATLAS_ORIGIN='https://atlaspags.com/api/v1';
++type Credential={token:string;agent:string};
++const auth=(c:Credential)=>({Authorization:'Bearer '+c.token,Accept:'application/json'});
++export const atlasKeyValid=(key:unknown):key is string=>typeof key==='string'&&key.length<=1024&&/^atlas_sk_(live|test)_[\x21-\x7e]+$/.test(key);
++export const atlasWebhookKeyValid=(key:unknown):key is string=>typeof key==='string'&&key.length<=1024&&/^whsec_[\x21-\x7e]+$/.test(key);
++const live=(c:Credential)=>c.token.startsWith('atlas_sk_live_');
++const metaKey=(id:string)=>'atlas_charge:'+id;
++const payloadKey=(id:string)=>'atlas_payload:'+id;
++const link=(id:string)=>json({url:PAYMENT_ORIGIN+'/pagar/'+id});
++const digest=async(value:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(x=>x.toString(16).padStart(2,'0')).join('');
++export class AtlasSetupError extends Error {}
++
++export async function activateAtlas(token:string,webhookSecret?:string){
++ const c={token,agent:webhookSecret||''};
++ let r:Response;
++ try{r=await fetch(ATLAS_ORIGIN+'/charges?limit=1',{headers:auth(c),redirect:'manual',signal:AbortSignal.timeout(15000)});}
++ catch{throw new AtlasSetupError('Não foi possível conectar à Atlas Pags. Tente novamente.');}
++ if(r.status===401)return false;
++ if(r.status===403)throw new AtlasSetupError('A Atlas recusou o acesso (HTTP 403). Confira a verificação da conta e as permissões da chave.');
++ if(r.status===429)throw new AtlasSetupError('A Atlas limitou as consultas. Aguarde o prazo indicado no painel Atlas antes de tentar novamente.');
++ if(!r.ok)throw new AtlasSetupError('A consulta da Atlas retornou HTTP '+r.status+'. Nenhuma cobrança foi criada.');
++ let d:any;try{d=await r.json();}catch{throw new AtlasSetupError('A Atlas não retornou uma resposta JSON válida.');}
++ if(d?.object!=='list'||!Array.isArray(d.data)||typeof d.has_more!=='boolean')throw new AtlasSetupError('A Atlas não retornou a lista de cobranças esperada.');
++ const previous=await credentials('atlas');
++ await saveCredentials(token,webhookSecret===undefined?previous?.agent||'':webhookSecret,'atlas');
++ return true;
++}
++
++export function atlasOrder(b:any,ip=''){
++ if(!Number.isSafeInteger(b.amount)||b.amount<600||b.amount>300000)throw new InputError('Informe um valor entre R$ 6,00 e R$ 3.000,00.');
++ const c=b.customer||{},name=typeof c.name==='string'?c.name.trim():'',email=typeof c.email==='string'?c.email.trim():'';
++ const document=typeof c.cpf==='string'?c.cpf.replace(/\D/g,''):'';
++ const phone=typeof c.phone==='string'?c.phone.trim():'';
++ if(name.length<2||name.length>120||/[\x00-\x1f<>]/.test(name))throw new InputError('Informe o nome completo do comprador para a Atlas Pags (até 120 caracteres).');
++ if(email.length>254||!/^\S+@\S+\.\S+$/.test(email)||/[\x00-\x1f<>]/.test(email))throw new InputError('Informe um e-mail válido do comprador para a Atlas Pags.');
++ if(!documentValid(document))throw new InputError('Informe um CPF ou CNPJ válido do comprador para a Atlas Pags.');
++ if(phone&&(phone.length>30||!/^\+?[\d ()-]{8,30}$/.test(phone)))throw new InputError('Confira o telefone com DDD do comprador.');
++ const brand=checkoutBrandForOrigin(typeof b.checkoutOrigin==='string'?b.checkoutOrigin:null);
++ return {amount:b.amount/100,method:'pix',customer:{name,email,document,...(phone?{phone}:{}),...(ip.length<=45&&/^[\da-fA-F:.]+$/.test(ip)?{ip}:{})},description:'Pedido '+brand.name,external_id:b.requestId,checkout_url:brand.origin+'/checkout'};
++}
++
++/** The response must belong to this exact order and environment before it can change a balance. */
++export function atlasResult(d:any,row:{amount:number;request_id:string;transaction_id?:string|null},livemode:boolean){
++ if(!d||typeof d!=='object'||typeof d.id!=='string'||!/^[A-Za-z0-9_-]{1,200}$/.test(d.id)||typeof d.amount!=='number'||!Number.isFinite(d.amount)||Math.abs(d.amount*100-row.amount)>0.001||d.external_id!==row.request_id||d.livemode!==livemode||row.transaction_id&&d.id!==row.transaction_id||d.method!==undefined&&d.method!=='pix')throw Error('Invalid Atlas charge identity');
++ const states:Record<string,string>={pending:'ready',paid:livemode?'paid':'test_paid',failed:'failed',expired:'expired',refunded:'refunded',chargeback:'chargeback'};
++ if(typeof d.status!=='string'||!Object.hasOwn(states,d.status))throw Error('Invalid Atlas charge status');
++ const expiresAt=typeof d.pix?.expires_at==='string'&&Number.isFinite(Date.parse(d.pix.expires_at))?d.pix.expires_at:null;
++ const money=(v:unknown)=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&Math.abs(v*100-Math.round(v*100))<0.001;
++ return {state:states[d.status],expiresAt,livemode,...(money(d.fee)?{fee:d.fee}:{}),...(money(d.net_amount)?{netAmount:d.net_amount}:{}),...(money(d.refunded)?{refunded:d.refunded}:{})};
++}
++
++async function saveCharge(row:any,d:any,livemode:boolean,lease?:number){
++ const info=atlasResult(d,row,livemode),db=database();
++ let code:string|null=null,qr:string|null=null;
++ if(info.state==='ready'){
++  if(typeof d.pix?.code!=='string'||!d.pix.code.startsWith('000201')||d.pix.code.length>4096)throw Error('Invalid Atlas PIX');
++  const pixCode:string=d.pix.code;code=pixCode;
++  // Build from the verified copy-and-paste code; never embed provider HTML or remote images.
++  qr='data:image/svg+xml;base64,'+btoa(await QRCode.toString(pixCode,{type:'svg',errorCorrectionLevel:'M',margin:4,width:320}));
++ }
++ const update=lease===undefined
++  ?db.prepare('UPDATE payment_orders SET state=?,transaction_id=?,pix_code=?,qr=? WHERE id=?').bind(info.state,d.id,code,qr,row.id)
++  :db.prepare('UPDATE payment_orders SET state=?,transaction_id=?,pix_code=?,qr=? WHERE id=? AND checked_at=?').bind(info.state,d.id,code,qr,row.id,lease);
++ const metadata=lease===undefined
++  ?db.prepare('INSERT INTO payment_settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(metaKey(row.id),JSON.stringify(info))
++  :db.prepare('INSERT INTO payment_settings (key,value) SELECT ?,? WHERE EXISTS(SELECT 1 FROM payment_orders WHERE id=? AND checked_at=? AND state=? AND transaction_id=?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').bind(metaKey(row.id),JSON.stringify(info),row.id,lease,info.state,d.id);
++ // D1 batches are transactional: the payment and its expiry/environment snapshot
++ // must become visible together, and an older refresh cannot overwrite a newer one.
++ const changed=await db.batch([update,metadata]);
++ if(!changed[0].meta?.changes)throw Error('Atlas refresh superseded');
++ return info;
++}
++
++export async function createAtlas(b:any,c:Credential,ip:string){
++ const payload=atlasOrder(b,ip),db=database();
++ const {ip:_ip,...customer}=payload.customer;
++ const identity=JSON.stringify({amount:b.amount,customer,sellerName:b.sellerName||null});
++ const hash=await digest(identity);
++ const now=Date.now();let id=crypto.randomUUID();
++ const claimed=await db.prepare('INSERT INTO payment_orders (id,request_id,amount,state,created_at,checked_at,provider,payload_hash,seller_name) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(request_id) DO NOTHING').bind(id,b.requestId,b.amount,'creating',now,now,'atlas',hash,b.sellerName||null).run();
++ let row:any={id,request_id:b.requestId,amount:b.amount},lease=now;
++ if(!claimed.meta?.changes){
++  row=await db.prepare('SELECT * FROM payment_orders WHERE request_id=?').bind(b.requestId).first();
++  if(row?.provider!=='atlas'||row.payload_hash!==hash)return json({error:'Este pedido já foi iniciado com outros dados. Recupere a cobrança original.',code:'ORDER_CHANGED'},409);
++  id=row.id;
++  if(row.pix_code||['paid','test_paid'].includes(row.state))return link(id);
++  if(['rejected','failed','expired','refunded','chargeback'].includes(row.state))return json({error:'Esta cobrança foi recusada, encerrada ou estornada. Confira o pedido no painel Atlas.',code:'ATLAS_CLOSED'},409);
++  if(row.state==='creating'&&row.checked_at>now-75000)return json({error:'Pedido em processamento. Aguarde e recupere o mesmo pedido.',code:'PAYMENT_PROCESSING'},409);
++  lease=Math.max(now,row.checked_at+1);
++  const lock=await db.prepare('UPDATE payment_orders SET state=?,checked_at=? WHERE id=? AND state=? AND checked_at=?').bind('creating',lease,id,row.state,row.checked_at).run();
++  if(!lock.meta?.changes)return json({error:'Pedido em processamento. Aguarde antes de tentar novamente.'},409);
++ }
++ let stage='snapshot',httpStatus=0;
++ try{
++  let snapshot=await credentials(payloadKey(id));
++  if(!snapshot){await saveCredentials(JSON.stringify({payload,livemode:live(c),credentialHash:await digest(c.token)}),'',payloadKey(id));snapshot=await credentials(payloadKey(id));}
++  const original=JSON.parse(snapshot.token);
++  if(original.livemode!==live(c))throw Error('Atlas environment changed');
++  let d:any;
++  // Recover before posting again. The encrypted original body keeps IP, origin and
++  // optional fields identical even when the buyer returns from another device/domain.
++  if(!claimed.meta?.changes){
++   stage='recovery';
++   const path=row.transaction_id?'/charges/'+encodeURIComponent(row.transaction_id):'/charges?external_id='+encodeURIComponent(b.requestId)+'&limit=100';
++   const recovered=await fetch(ATLAS_ORIGIN+path,{headers:auth(c),redirect:'manual',signal:AbortSignal.timeout(20000)});
++   httpStatus=recovered.status;if(!recovered.ok)throw Error('Atlas recovery unavailable');
++   const result:any=await recovered.json();
++   if(row.transaction_id)d=result;
++   else{
++    if(result?.object!=='list'||!Array.isArray(result.data)||typeof result.has_more!=='boolean'||result.has_more||result.data.length>1)throw Error('Ambiguous Atlas recovery');
++    d=result.data[0];
++   }
++  }
++  if(!d){
++   // A replacement key may belong to another Atlas account, whose idempotency
++   // namespace is different. Querying is safe; a second POST is not authorized.
++   if(original.credentialHash!==await digest(c.token))throw Error('Atlas credential changed before recovery');
++   stage='connection';
++   const raw=JSON.stringify(original.payload);
++   const r=await fetch(ATLAS_ORIGIN+'/charges',{method:'POST',headers:{...auth(c),'Content-Type':'application/json','Idempotency-Key':b.requestId,'Content-Length':String(new TextEncoder().encode(raw).length)},body:raw,redirect:'manual',signal:AbortSignal.timeout(20000)});
++   httpStatus=r.status;stage='http';
++   if(!r.ok){
++    // Only a first, explicit denial can authorize trying another gateway.
++    if(claimed.meta?.changes&&await recordCreationRejection(id,r))return json({error:'A Atlas recusou a autenticação ou a permissão de venda.'},502);
++    if(claimed.meta?.changes&&[400,422].includes(r.status)){
++     const result:any=await r.clone().json().catch(()=>null);
++     if(result?.error?.status===r.status&&['invalid_request','validation_error'].includes(result.error.code)&&!result.id&&!result.data){
++      await db.prepare('UPDATE payment_orders SET state=? WHERE id=? AND state=?').bind('rejected',id,'creating').run();
++      return json({error:'A Atlas recusou os dados da cobrança (HTTP '+r.status+'). Confira o comprador e a configuração da conta.',code:'ATLAS_REJECTED'},502);
++     }
++    }
++    throw Error('Unconfirmed Atlas create');
++   }
++   stage='json';d=await r.json();
++  }
++  stage='charge';await saveCharge({...row,id},d,original.livemode,lease);
++  if(!['pending','paid'].includes(d.status))return json({error:'A Atlas encerrou esta cobrança com status '+d.status+'. Confira no painel Atlas.',code:'ATLAS_CLOSED'},502);
++  return link(id);
++ }catch{
++  console.error('atlas_create_failed',JSON.stringify({stage,httpStatus}));
++  await db.prepare('UPDATE payment_orders SET state=? WHERE id=? AND state=? AND checked_at=?').bind('unconfirmed',id,'creating',lease).run().catch(()=>{});
++  return json({error:'Não foi possível confirmar o PIX na Atlas'+(httpStatus?' (HTTP '+httpStatus+')':'')+'. Use Recuperar o mesmo pedido antes de iniciar outra cobrança.',code:'ATLAS_UNCONFIRMED'},502);
++ }
++}
++
++export async function refreshAtlasPayment(row:any,force=false,timeout=15000){
++ const db=database();
++ if(!row.transaction_id)throw Error('Atlas charge unavailable');
++ if(!force&&row.checked_at>=Date.now()-10000)return;
++ const lease=Math.max(Date.now(),row.checked_at+1);
++ const claim=await db.prepare('UPDATE payment_orders SET checked_at=? WHERE id=? AND checked_at=?').bind(lease,row.id,row.checked_at).run();
++ if(!claim.meta?.changes){if(force)throw Error('Atlas refresh in progress');return;}
++ const c=await credentials('atlas'),snapshot=await credentials(payloadKey(row.id));
++ if(!c||!snapshot)throw Error('Atlas unavailable');
++ const original=JSON.parse(snapshot.token);
++ const r=await fetch(ATLAS_ORIGIN+'/charges/'+encodeURIComponent(row.transaction_id),{headers:auth(c),redirect:'manual',signal:AbortSignal.timeout(timeout)});
++ if(!r.ok)throw Error('Atlas status unavailable');
++ await saveCharge(row,await r.json(),original.livemode,lease);
++}
++
++export async function readAtlasPayment(row:any){
++ await refreshAtlasPayment(row);
++ const db=database(),current=await db.prepare('SELECT * FROM payment_orders WHERE id=?').bind(row.id).first();
++ const saved=await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind(metaKey(row.id)).first();
++ if(!current||!saved)throw Error('Atlas payment unavailable');
++ const meta=JSON.parse(saved.value),paid=current.state==='paid',simulatedPaid=current.state==='test_paid';
++ const blocked=current.state!=='ready'||!!meta.expiresAt&&Date.parse(meta.expiresAt)<=Date.now();
++ return json({amount:current.amount,paid,simulatedPaid,testMode:!meta.livemode,code:blocked?null:current.pix_code,qrUrl:blocked?null:current.qr,provider:'atlas',canVerify:true,unavailable:!paid&&blocked,status:current.state,expiresAt:meta.expiresAt});
++}
+--- a/lib/create-payment.ts
++++ b/lib/create-payment.ts
+@@ -1,5 +1,6 @@
+ import {createBeehive,beeOrder,backendCustomer} from './beehive';
+ import {createBeehiveCard} from './beehive-card';
++import {createAtlas,atlasOrder} from './atlas';
+ import {createEleva,elevaOrder} from './eleva';
+ import {createFirebot,firebotOrder} from './firebot';
+ import {createGestao,gestaoOrder} from './gestao';
+@@ -10,7 +11,8 @@
+ 
+ export async function validatePaymentInput(b:any,provider:Gateway,ip:string){
+  if(b.paymentMethod==='credit_card')return;
+- if(provider==='firebot')firebotOrder(b);
++ if(provider==='atlas')atlasOrder(b,ip);
++ else if(provider==='firebot')firebotOrder(b);
+  else if(provider==='poseidon')physicalOrder(b);
+  else if(provider==='gestao')gestaoOrder(b);
+  else if(provider==='eleva')elevaOrder(b);
+@@ -21,6 +23,7 @@
+  if(!selected)return json({error:'Pagamento temporariamente indisponível. Contate o vendedor.'},409);
+  if(b.paymentMethod&&b.paymentMethod!=='pix'&&(b.paymentMethod!=='credit_card'||provider!=='beehive'))return json({error:'Forma de pagamento indisponível.'},400);
+  if(provider==='beehive')return b.paymentMethod==='credit_card'?createBeehiveCard(b,selected):createBeehive(b,selected,ip);
++ if(provider==='atlas')return createAtlas(b,selected,ip);
+  if(provider==='eleva')return createEleva(b,selected);
+  if(provider==='gestao')return createGestao(b,selected);
+  if(provider==='firebot')return createFirebot(b,selected);
+--- a/lib/gateways.ts
++++ b/lib/gateways.ts
+@@ -1,5 +1,5 @@
+ import {credentials,database} from './payments';
+-export const gateways=['gestao','firebot','poseidon','buckpay','eleva','beehive'] as const;
++export const gateways=['gestao','firebot','poseidon','buckpay','eleva','beehive','atlas'] as const;
+ export type Gateway=typeof gateways[number];
+ export const isGateway=(value:unknown):value is Gateway=>typeof value==='string'&&(gateways as readonly string[]).includes(value);
+ export type GatewaySelection={provider:Gateway;value:string|null;epoch:string};
+--- a/lib/payment-fallback.ts
++++ b/lib/payment-fallback.ts
+@@ -3,7 +3,7 @@
+ import {InputError as PhysicalInputError} from './poseidon';
+ import {credentials,database,json,PAYMENT_ORIGIN} from './payments';
+ import {isConfirmedRejection} from './gateway-failures';
+-import {fallbackPolicy,gatewayHealth,markGatewayFailure,switchGatewayAutomatically,isGateway} from './gateways';
++import {fallbackPolicy,gatewayHealth,markGatewayFailure,switchGatewayAutomatically,isGateway,gateways} from './gateways';
+ import type {FallbackPolicy,Gateway,GatewaySelection} from './gateways';
+ 
+ type Attempt={provider:Gateway;requestId:string;outcome:'pending'|'rejected'|'skipped'|'ready'|'unconfirmed'};
+@@ -20,7 +20,7 @@
+  const key=keyFor(id),row=await database().prepare('SELECT value FROM payment_settings WHERE key=?').bind(key).first();
+  if(!row)return null;
+  const value=JSON.parse(row.value) as Intent;
+- if(value.version!==1||typeof value.hash!=='string'||!Array.isArray(value.attempts)||value.attempts.length>6)throw Error('Invalid fallback request');
++ if(value.version!==1||typeof value.hash!=='string'||!Array.isArray(value.attempts)||value.attempts.length>gateways.length)throw Error('Invalid fallback request');
+  return {key,raw:row.value,value};
+ }
+ async function paymentRow(requestId:string){return database().prepare('SELECT * FROM payment_orders WHERE request_id=?').bind(requestId).first();}
+@@ -54,7 +54,7 @@
+  }else{
+   if(saved.value.hash!==hash)return json({error:'Este pedido já foi iniciado com outros dados. Recupere a cobrança original.',code:'ORDER_CHANGED'},409);
+   const attempt=saved.value.attempts.at(-1),row=attempt?await paymentRow(attempt.requestId):null;
+-  if(row&&(['ready','paid'].includes(row.state)||saved.value.state==='complete'))return resultFor(row);
++  if(row&&(['ready','paid','test_paid'].includes(row.state)||saved.value.state==='complete'))return resultFor(row);
+   if(saved.value.state==='complete')return inProgress();
+   if(saved.value.state==='failed')return json({error:'As gateways de reserva não puderam gerar este PIX. Contate o responsável.',code:'FALLBACK_EXHAUSTED'},503);
+   if(saved.value.leaseUntil>Date.now())return inProgress();
+@@ -88,7 +88,7 @@
+     if(!isGateway(row.provider))return json({error:'Este pedido já usa outra forma de pagamento.',code:'ORDER_CHANGED'},409);
+     return createPayment(payload,row.provider,ip);
+    }
+-   if(row&&['ready','paid'].includes(row.state)){attempt.outcome='ready';intent.state='complete';intent.leaseUntil=0;await persist();return resultFor(row);}
++   if(row&&['ready','paid','test_paid'].includes(row.state)){attempt.outcome='ready';intent.state='complete';intent.leaseUntil=0;await persist();return resultFor(row);}
+    if(await isConfirmedRejection(row)){attempt.outcome='rejected';await markGatewayFailure(provider,'rejected',intent.selection.epoch);intent.index++;await persist();continue;}
+    if(attempt.outcome==='skipped'||attempt.outcome==='rejected'){intent.index++;await persist();continue;}
+    if(!row){
+@@ -107,7 +107,7 @@
+     if(error instanceof InputError||error instanceof PhysicalInputError)response=json({error:error.message},400);else throw error;
+    }
+    row=await paymentRow(attempt.requestId);
+-   if(row&&['ready','paid'].includes(row.state)){
++   if(row&&['ready','paid','test_paid'].includes(row.state)){
+     attempt.outcome='ready';intent.state='complete';intent.leaseUntil=0;await persist();
+     if(intent.index>0&&policy.autoSwitch){const failed=intent.attempts.find(item=>item.outcome==='rejected');if(failed)await changeFutureGateway(intent,failed.provider,'rejected',provider).catch(()=>{});}
+     return resultFor(row);
+--- /dev/null
++++ b/tests/atlas-worker.test.mjs
+@@ -0,0 +1,146 @@
++import assert from 'node:assert/strict';
++import {test,beforeEach,after} from 'node:test';
++import {readFileSync} from 'node:fs';
++import {createHmac} from 'node:crypto';
++import {build} from 'esbuild';
++import {Miniflare} from 'miniflare';
++
++// Real route handlers, encrypted vault and transactional D1; only provider HTTP is simulated.
++const source=`import {POST as order} from './app/api/orders/route';import {GET as settings} from './app/api/settings/route';import {GET as pay} from './app/api/pay/[id]/route';import {GET as adminGet,POST as adminPost} from './app/api/admin/atlas/route';import {POST as hook} from './app/api/webhooks/atlas/route';import {saveCredentials} from './lib/payments';import {selectGateway,saveFallbackPolicy,activeGateway,gateways} from './lib/gateways';import {setPanelPassword,sessionCookie} from './lib/gateway-access';export default {async fetch(req){globalThis.__fixtureHeaders=req.headers;const p=new URL(req.url).pathname;if(p==='/fixture/setup'){const b=await req.json();await saveCredentials(b.token,b.secret||'','atlas');await saveCredentials('buck-fixture-only','fixture-agent','buckpay');await selectGateway(b.provider||'atlas');if(b.policy)await saveFallbackPolicy(b.policy);const password=await setPanelPassword('fixture-admin-password');return Response.json({cookie:(await sessionCookie(password)).split(';')[0],gateways});}if(p==='/fixture/active')return Response.json({provider:await activeGateway()});if(p==='/api/settings')return settings(req);if(p==='/api/admin/atlas')return req.method==='GET'?adminGet(req):adminPost(req);if(p==='/api/webhooks/atlas')return hook(req);if(p.startsWith('/api/pay/'))return pay(req,{params:Promise.resolve({id:p.split('/').pop()})});return order(req)}}`;
++const compiled=await build({stdin:{contents:source,resolveDir:process.cwd(),loader:'ts'},bundle:true,format:'esm',platform:'browser',write:false,external:['cloudflare:workers'],plugins:[{name:'fixture-headers',setup(b){b.onResolve({filter:/^next\/headers$/},()=>({path:'headers',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export async function headers(){return globalThis.__fixtureHeaders;}',loader:'js'}));}}]});
++const origin='https://pagamento.bravuspix.shop',bio='https://biocamisas.shop';
++const key='atlas_sk_live_fixture_only',secret='whsec_fixture_only';
++let remote=new Map(),calls=[],mode='',mutate=null,cookie='';
++const list=data=>Response.json({object:'list',data,has_more:false});
++const mf=new Miniflare({modules:true,script:compiled.outputFiles[0].text,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:['DB'],bindings:{PAYMENT_VAULT_KEY:Buffer.alloc(32,37).toString('base64')},outboundService:async req=>{
++ const url=new URL(req.url),body=req.method==='POST'?await req.json():null;
++ calls.push({url:req.url,method:req.method,body,key:req.headers.get('idempotency-key'),authorization:req.headers.get('authorization')});
++ if(url.hostname==='api.realtechdev.com.br')return Response.json({data:{total_amount:body.amount,pix:{code:'000201-fixture-buck',qrcode_base64:'aGVsbG8='}}},{status:201});
++ assert.equal(url.origin,'https://atlaspags.com');assert.match(req.headers.get('authorization'),/^Bearer atlas_sk_(live|test)_/);
++ if(mode==='auth-denied')return Response.json({detail:'Invalid API key',error:{code:'authentication_required',status:401,request_id:'req_fixture'}},{status:401});
++ if(mode==='redirect')return new Response(null,{status:307,headers:{location:'https://untrusted.example'}});
++ if(req.method==='GET'){
++  if(mode==='bad-list')return Response.json({data:[]});
++  if(mode==='read-unavailable')return Response.json({error:'Unavailable'},{status:503});
++  if(url.pathname==='/api/v1/charges'){
++   let items=[...remote.values()];if(url.searchParams.has('external_id'))items=items.filter(x=>x.external_id===url.searchParams.get('external_id'));
++   return list(items.map(x=>mutate?{...x,...mutate}:x));
++  }
++  const charge=[...remote.values()].find(x=>x.id===url.pathname.split('/').pop());
++  return charge?Response.json(mutate?{...charge,...mutate}:charge):Response.json({error:'Not found'},{status:404});
++ }
++ assert.equal(url.pathname,'/api/v1/charges');assert.equal(req.headers.get('idempotency-key'),body.external_id);assert.equal(body.method,'pix');assert.equal(typeof body.amount,'number');assert.equal(body.customer.document,'52998224725');assert.ok(!('sellerName' in body));assert.ok(!('paymentMethod' in body));assert.ok(!('cpf' in body.customer));assert.ok(!('card_token' in body));
++ const charge=remote.get(body.external_id)||{id:'charge_'+remote.size,status:'pending',method:'pix',amount:body.amount,livemode:req.headers.get('authorization').includes('atlas_sk_live_'),external_id:body.external_id,fee:7.98,net_amount:body.amount-7.98,refunded:0,pix:{code:'000201-ATLAS-FIXTURE-NOT-A-REAL-PIX',qr_code_image:'https://untrusted.example/qr.svg',expires_at:'2099-01-01T00:00:00Z'}};
++ remote.set(body.external_id,charge);
++ if(mode==='uncertain')return Response.json({error:{code:'service_unavailable'}},{status:503});
++ if(mode==='non-json')return new Response('not JSON');
++ return Response.json(mutate?{...charge,...mutate}:charge);
++}});
++const db=await mf.getD1Database('DB');
++for(const migration of ['0000_bitter_king_bedlam','0001_stale_reaper','0002_complex_roulette'])await db.exec(readFileSync('drizzle/'+migration+'.sql','utf8').replace(/--[^\n]*/g,'').replace(/\s+/g,' '));
++const request=async(path,body,options={})=>{
++ const url=(options.origin||origin)+path,headers={...(body?{'Content-Type':'application/json',Origin:options.origin||origin}:{}),...(options.admin?{Cookie:cookie}:{}),...options.headers};
++ const r=await mf.dispatchFetch(url,{method:body?'POST':'GET',headers,...(body?{body:JSON.stringify(body)}:{})});return {status:r.status,data:await r.json()};
++};
++const setup=async(extra={})=>{const result=await request('/fixture/setup',{token:key,secret,...extra});assert.equal(result.status,200);cookie=result.data.cookie;return result.data;};
++const order=extra=>({requestId:crypto.randomUUID(),amount:9989,sellerName:'Vendedor privado',customer:{name:'Maria Souza',email:'maria@example.test',cpf:'529.982.247-25'},...extra});
++const post=b=>request('/api/orders',b);
++const posts=()=>calls.filter(x=>x.method==='POST');
++const rowFor=id=>db.prepare('SELECT * FROM payment_orders WHERE request_id=?').bind(id).first();
++const age=id=>db.prepare('UPDATE payment_orders SET checked_at=0 WHERE request_id=?').bind(id).run();
++const policy=extra=>({enabled:true,autoSwitch:true,order:['atlas','buckpay'],ticketRouting:{enabled:false,rules:[]},...extra});
++const eventFor=(b,extra={})=>{const charge=remote.get(b.requestId);return {id:'evt_'+crypto.randomUUID(),type:'transaction.paid',livemode:charge.livemode,data:{id:charge.id,external_id:b.requestId,livemode:charge.livemode,...extra}}};
++async function webhook(event,{timestamp=Math.floor(Date.now()/1000),bad=false,raw=JSON.stringify(event),headerId=event.id}={}){
++ const digest=createHmac('sha256',secret).update(timestamp+'.'+raw).digest('hex');
++ const r=await mf.dispatchFetch(origin+'/api/webhooks/atlas',{method:'POST',headers:{'Content-Type':'application/json','X-Atlas-Event-Id':headerId,'X-Atlas-Signature':`t=${timestamp},v1=${bad?'0'.repeat(64):digest}`},body:raw});return {status:r.status,data:await r.json()};
++}
++beforeEach(async()=>{await db.exec('DELETE FROM payment_orders;DELETE FROM payment_settings;');remote=new Map();calls=[];mode='';mutate=null;await setup();});
++after(async()=>{await mf.dispose();});
++
++test('Atlas admin protects credentials, verifies read-only access and preserves existing keys/default on failure',async()=>{
++ assert.equal((await request('/api/admin/atlas')).status,403);
++ assert.equal((await request('/api/admin/atlas',{token:key},{admin:true,headers:{Origin:'https://untrusted.example'}})).status,403);
++ assert.equal((await request('/api/admin/atlas',{token:'atlas_pk_live_public'},{admin:true})).status,400);assert.equal(calls.length,0);
++ await setup({provider:'buckpay'});
++ assert.equal((await request('/api/admin/atlas',{token:'Bearer '+key},{admin:true})).status,200);assert.equal(calls.length,1);assert.equal(calls[0].method,'GET');assert.equal((await request('/fixture/active')).data.provider,'buckpay');
++ const info=await request('/api/admin/atlas',null,{admin:true});assert.deepEqual(info.data,{configured:true,webhookConfigured:true,testMode:false});assert.ok(!JSON.stringify(info).includes(key));assert.ok(!JSON.stringify(info).includes(secret));
++ const encrypted=(await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind('atlas').first()).value;assert.ok(!encrypted.includes(key));assert.ok(!encrypted.includes(secret));
++ for(const failure of ['auth-denied','redirect','bad-list']){mode=failure;const r=await request('/api/admin/atlas',{token:'atlas_sk_live_replacement_fixture',webhookSecret:'whsec_replacement_fixture'},{admin:true});assert.ok([422,503].includes(r.status));assert.equal((await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind('atlas').first()).value,encrypted);}
++ assert.equal(posts().length,0);
++});
++
++test('Atlas validates buyer data, cents/reais boundaries and PIX-only method before any provider call',async()=>{
++ for(const patch of [{amount:599},{amount:300001},{customer:{}},{customer:{name:'M',email:'maria@example.test',cpf:'52998224725'}},{customer:{name:'Maria Souza',email:'bad',cpf:'52998224725'}},{customer:{name:'Maria Souza',email:'maria@example.test',cpf:'11111111111'}},{paymentMethod:'credit_card'}])assert.equal((await post(order(patch))).status,400);
++ assert.equal(calls.length,0);assert.equal((await db.prepare('SELECT count(*) AS n FROM payment_orders').first()).n,0);
++ for(const amount of [600,300000])assert.equal((await post(order({amount}))).status,200);
++ assert.deepEqual(posts().map(x=>x.body.amount),[6,3000]);
++});
++
++test('Atlas creates exact documented JSON, generates local QR and recovers without duplicate POST or leaking customer data',async()=>{
++ const b=order({checkoutOrigin:'https://untrusted.example'});
++ const result=await request('/api/orders',b,{origin:bio,headers:{'cf-connecting-ip':'203.0.113.8'}});assert.equal(result.status,200);assert.match(result.data.url,/^https:\/\/biocamisas.shop\/pagar\//);
++ assert.equal(posts()[0].body.amount,99.89);assert.equal(posts()[0].body.checkout_url,bio+'/checkout');assert.equal(posts()[0].body.customer.ip,'203.0.113.8');assert.equal(posts()[0].body.description,'Pedido Bio Camisas');
++ const row=await rowFor(b.requestId);assert.equal(row.provider,'atlas');assert.match(row.qr,/^data:image\/svg\+xml;base64,/);assert.ok(!row.qr.includes('untrusted'));
++ const info=await request('/api/pay/'+row.id);assert.equal(info.status,200);assert.equal(info.data.paid,false);assert.equal(info.data.canVerify,true);assert.equal(info.data.testMode,false);assert.ok(!JSON.stringify(info).includes('Maria'));assert.ok(!JSON.stringify(info).includes('Vendedor'));assert.ok(!JSON.stringify(info).includes(key));
++ assert.equal((await post(b)).status,200);assert.equal(posts().length,1);assert.equal((await post({...b,amount:10000})).status,409);
++ const saved=await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind('atlas_payload:'+row.id).first();assert.ok(!saved.value.includes('maria@example.test'));assert.ok(!saved.value.includes('203.0.113.8'));
++});
++
++test('Atlas recovers uncertain create by external_id with the immutable original payload and never falls back',async()=>{
++ await setup({policy:policy()});mode='uncertain';const b=order();assert.equal((await post(b)).status,502);assert.equal(posts().length,1);
++ mode='';const recovered=await request('/api/orders',b,{origin:bio,headers:{'cf-connecting-ip':'203.0.113.9'}});assert.equal(recovered.status,200);assert.equal(posts().length,1);assert.equal((await rowFor(b.requestId)).state,'ready');assert.ok(calls.some(x=>x.url.includes('?external_id='+b.requestId)));assert.ok(!calls.some(x=>x.url.includes('realtechdev')));
++});
++
++test('Atlas retries the exact body and idempotency key only after successful empty recovery; concurrent create has one POST',async()=>{
++ mode='uncertain';const b=order();assert.equal((await post(b)).status,502);const original=posts()[0];remote.clear();mode='';
++ assert.equal((await request('/api/orders',b,{origin:bio,headers:{'cf-connecting-ip':'203.0.113.100'}})).status,200);
++ assert.equal(posts().length,2);assert.equal(posts()[1].key,original.key);assert.deepEqual(posts()[1].body,original.body);
++ const second=order();await Promise.all([post(second),post(second)]);assert.equal(posts().filter(x=>x.key===second.requestId).length,1);
++});
++
++test('Atlas credential rotation cannot duplicate an uncertain charge in another account',async()=>{
++ mode='uncertain';const b=order();assert.equal((await post(b)).status,502);assert.equal(posts().length,1);
++ remote.clear();mode='';await setup({token:'atlas_sk_live_replacement_fixture'});
++ assert.equal((await post(b)).status,502);assert.equal(posts().length,1);assert.equal((await rowFor(b.requestId)).state,'unconfirmed');
++});
++
++test('Atlas confirmed authentication rejection permits configured fallback; malformed or uncertain responses do not',async()=>{
++ await setup({policy:policy()});mode='auth-denied';const b=order();const r=await post(b);assert.equal(r.status,200);assert.equal(posts().length,2);assert.equal((await request('/fixture/active')).data.provider,'buckpay');const failed=await rowFor(b.requestId);assert.equal(failed.state,'rejected');
++ await db.exec('DELETE FROM payment_orders;DELETE FROM payment_settings;');remote.clear();calls=[];await setup({policy:policy()});mode='non-json';assert.equal((await post(order())).status,502);assert.equal(posts().length,1);assert.ok(posts()[0].url.startsWith('https://atlaspags.com/'));
++});
++
++test('Atlas checks charge ID, exact amount, external ID, status and environment before recording success',async()=>{
++ for(const patch of [{amount:1},{amount:'99.89'},{external_id:'another-order'},{livemode:false},{status:'unknown'},{id:'../bad'}]){mutate=patch;assert.equal((await post(order())).status,502);}
++ mutate=null;const b=order();assert.equal((await post(b)).status,200);const row=await rowFor(b.requestId);remote.get(b.requestId).status='paid';
++ await age(b.requestId);mutate={amount:1};assert.equal((await request('/api/pay/'+row.id)).status,503);assert.equal((await rowFor(b.requestId)).state,'ready');
++ mutate=null;await age(b.requestId);const paid=await request('/api/pay/'+row.id);assert.equal(paid.data.paid,true);assert.equal(paid.data.code,null);assert.equal(paid.data.qrUrl,null);
++ remote.get(b.requestId).status='refunded';await age(b.requestId);const refund=await request('/api/pay/'+row.id);assert.equal(refund.status,200);assert.equal(refund.data.paid,false);assert.equal(refund.data.unavailable,true);assert.equal(refund.data.code,null);
++});
++
++test('Atlas expiry blocks PIX and sandbox paid never becomes a real paid store order',async()=>{
++ const b=order();await post(b);const row=await rowFor(b.requestId);remote.get(b.requestId).pix.expires_at='2020-01-01T00:00:00Z';await age(b.requestId);const expired=await request('/api/pay/'+row.id);assert.equal(expired.data.unavailable,true);assert.equal(expired.data.code,null);
++ await setup({token:'atlas_sk_test_fixture_only'});const sandbox=order();await post(sandbox);const testRow=await rowFor(sandbox.requestId);remote.get(sandbox.requestId).status='paid';await age(sandbox.requestId);const simulated=await request('/api/pay/'+testRow.id);assert.equal(simulated.data.testMode,true);assert.equal(simulated.data.simulatedPaid,true);assert.equal(simulated.data.paid,false);assert.equal((await rowFor(sandbox.requestId)).state,'test_paid');
++});
++
++test('Atlas ticket routes honor exact threshold, legacy settings and maximum provider count',async()=>{
++ const setupData=await setup({provider:'buckpay',policy:policy({enabled:false,ticketRouting:{enabled:true,rules:[{aboveCents:50000,gateway:'atlas'}]}})});assert.equal(setupData.gateways.length,7);
++ assert.equal((await request('/api/settings?amount=50000')).data.provider,'buckpay');assert.equal((await request('/api/settings?amount=50001')).data.provider,'atlas');assert.equal((await request('/fixture/active')).data.provider,'buckpay');
++ const b=order({amount:50001});assert.equal((await post(b)).status,200);assert.equal((await rowFor(b.requestId)).provider,'atlas');
++});
++
++test('Atlas signed webhook verifies authoritative charge, rejects tampering/replay, deduplicates and ignores stale event status',async()=>{
++ const b=order();await post(b);const row=await rowFor(b.requestId),event=eventFor(b);
++ assert.equal((await webhook(event,{bad:true})).status,401);assert.equal((await webhook(event,{timestamp:Math.floor(Date.now()/1000)-301})).status,401);assert.equal((await webhook(event,{headerId:'wrong-id'})).status,400);
++ // Signed "paid" with an authoritative pending charge cannot release the order.
++ assert.equal((await webhook(event)).status,200);assert.equal((await rowFor(b.requestId)).state,'ready');const before=calls.length;assert.equal((await webhook(event)).data.duplicate,true);assert.equal(calls.length,before);
++ remote.get(b.requestId).status='paid';assert.equal((await webhook(eventFor(b))).status,200);assert.equal((await rowFor(b.requestId)).state,'paid');
++ const delayed=eventFor(b);delayed.type='transaction.pending';assert.equal((await webhook(delayed)).status,200);assert.equal((await rowFor(b.requestId)).state,'paid');
++ remote.get(b.requestId).status='chargeback';assert.equal((await webhook(eventFor(b))).status,200);assert.equal((await rowFor(b.requestId)).state,'chargeback');
++});
++
++test('Atlas webhook retries failed verification, bounds body size and acknowledges signed test events without a charge',async()=>{
++ const b=order();await post(b);const event=eventFor(b);mode='read-unavailable';assert.equal((await webhook(event)).status,503);assert.equal(await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind('atlas_event:'+event.id).first(),null);
++ mode='';remote.get(b.requestId).status='paid';assert.equal((await webhook(event)).status,200);
++ const before=calls.length;assert.equal((await webhook({id:'evt_test',type:'webhook.test'})).data.test,true);assert.equal(calls.length,before);
++ assert.equal((await webhook(event,{raw:'x'.repeat(262145)})).status,413);
++});
+--- a/tests/payments.test.mjs
++++ b/tests/payments.test.mjs
+@@ -230,8 +230,8 @@
+ for(const provider of ['buckpay','poseidon','firebot','gestao','buckpay']){
+  assert.equal((await gatewayAdmin.POST(request({provider}))).status,200);
+  assert.equal((await (await settings.GET(new Request(origin))).json()).provider,provider);
+- const panel=await (await gatewayAdmin.GET(new Request(origin))).json();assert.equal(panel.active,provider);assert.equal(panel.providers.length,6);
+- assert.ok(panel.providers.filter(p=>!['eleva','beehive'].includes(p.id)).every(p=>p.configured));assert.ok(!JSON.stringify(panel).includes(keys.secretKey));
++ const panel=await (await gatewayAdmin.GET(new Request(origin))).json();assert.equal(panel.active,provider);assert.equal(panel.providers.length,7);
++ assert.ok(panel.providers.filter(p=>!['eleva','beehive','atlas'].includes(p.id)).every(p=>p.configured));assert.ok(!JSON.stringify(panel).includes(keys.secretKey));
+ }
+ // Existing requests retain their original gateway after switching, with no new charge.
+ assert.equal((await orders.POST(request({...gestaoOrder,provider:'gestao'}))).status,200);

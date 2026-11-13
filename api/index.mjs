@@ -476,10 +476,10 @@ function isExclusiveCheckout(id) {
 
 // server/partner-tariff-migration.ts
 var REQUESTED_PARTNER_TARIFF = {
-  migration: "named-parceiro-16-percent-from-2026-11-13-v1",
+  migration: "named-parceiro-14-percent-from-2026-11-13-v2",
   name: "parceiro",
   effectiveFrom: "2026-11-13",
-  feeBps: 1600,
+  feeBps: 1400,
   fixedFeeCents: 200,
   // This account already appears in the owner's report through November 12.
   // Do not attach the request to a similarly named account created afterwards.

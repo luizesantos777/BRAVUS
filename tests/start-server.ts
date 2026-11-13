@@ -11,7 +11,7 @@ const directory = mkdtempSync(join(tmpdir(), 'bravus-browser-'));
 const store = await PortalStore.open(join(directory, 'portal.sqlite'));
 for (const platform of ['desktop', 'mobile']) {
   const dated = await store.createPartner(`Parceiro tarifa por data ${platform}`, `fixture_${platform}_dated_tariff_01234567890123456789`);
-  await store.sql.prepare('UPDATE attendants SET partner_fee_rules=? WHERE id=?').run(JSON.stringify([{ effectiveFrom: '2026-11-13', feeBps: 1600, fixedFeeCents: 200 }]), dated.id);
+  await store.sql.prepare('UPDATE attendants SET partner_fee_rules=? WHERE id=?').run(JSON.stringify([{ effectiveFrom: '2026-11-13', feeBps: 1400, fixedFeeCents: 200 }]), dated.id);
 }
 for (const platform of ['desktop', 'mobile']) {
   for (const scenario of ['exclusive', 'exclusive_resume', 'exclusive_ads']) {

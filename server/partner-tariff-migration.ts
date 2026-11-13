@@ -4,8 +4,8 @@ import type { SqlDatabase } from './database.ts';
 import { appendAudit } from './controls-schema.ts';
 
 export const REQUESTED_PARTNER_TARIFF = {
-  migration: 'named-parceiro-16-percent-from-2026-11-13-v1',
-  name: 'parceiro', effectiveFrom: '2026-11-13', feeBps: 1600, fixedFeeCents: 200,
+  migration: 'named-parceiro-14-percent-from-2026-11-13-v2',
+  name: 'parceiro', effectiveFrom: '2026-11-13', feeBps: 1400, fixedFeeCents: 200,
   // This account already appears in the owner's report through November 12.
   // Do not attach the request to a similarly named account created afterwards.
   accountCreatedBefore: '2026-11-13T03:00:00.000Z',

@@ -57,8 +57,8 @@ async function importArchive(db: SqlDatabase, archive: Archive) {
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map(column => String(column.name));
       // Older archives use schema defaults for account type and self-funded ADS.
       // A missing merchant gateway cost stays nullable until migration; all other columns remain mandatory.
-      const optional = name === 'attendants' ? 'account_kind' : name === 'costs' ? 'partner_ads_cents' : name === 'sales' ? 'gateway_cost_cents' : undefined;
-      const required = optional && Array.isArray(table.columns) && !table.columns.includes(optional) ? expected.filter(column => column !== optional) : expected;
+      const optional = name === 'attendants' ? ['account_kind', 'partner_fee_rules'] : name === 'costs' ? ['partner_ads_cents'] : name === 'sales' ? ['gateway_cost_cents'] : [];
+      const required = Array.isArray(table.columns) ? expected.filter(column => !optional.includes(column) || table.columns.includes(column)) : expected;
       if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some(column => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error('Invalid backup columns');
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map(column => '"' + column + '"').join(',')}) VALUES (${table.columns.map(() => '?').join(',')})`);
       for (const row of table.rows) {

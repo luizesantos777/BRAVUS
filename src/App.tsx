@@ -73,7 +73,8 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const { rows, date, pending } = draft.draft;
   const { setRows, setDate } = draft;
   const partner = portal.profile.accountKind === 'partner';
-  const onlyCheckout = portal.checkouts.length === 1 ? portal.checkouts[0] : undefined;
+  const datedCheckouts = accountCheckouts(portal.checkouts, portal.profile.accountKind, portal.profile.partnerFeeRules, date);
+  const onlyCheckout = datedCheckouts.length === 1 ? datedCheckouts[0] : undefined;
   useEffect(() => { if (onlyCheckout) draft.selectOnlyCheckout(onlyCheckout.id); }, [onlyCheckout?.id, draft.ready, pending, rows]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -231,7 +232,7 @@ export default function App() {
   async function refresh() { setLoading(true); try { setPortal(await client.portal(period)); setError(null); } catch (cause) { setError({ text: (cause as Error).message, status: cause instanceof ApiError ? cause.status : 0 }); } finally { setLoading(false); } }
   async function viewReceipt(id: string) { try { setReceiptUrl(await client.receipt(id)); } catch (cause) { setNotice({ text: (cause as Error).message, error: true }); } }
   const rawDisplay = portal ?? demoPortal(demoInitial(), period), canInteract = !loading && !error && !!portal;
-  const display = { ...rawDisplay, checkouts: accountCheckouts(rawDisplay.checkouts, rawDisplay.profile.accountKind) };
+  const display = { ...rawDisplay, checkouts: accountCheckouts(rawDisplay.checkouts, rawDisplay.profile.accountKind, rawDisplay.profile.partnerFeeRules, rawDisplay.today) };
   const profile = display.profile, finance = display.finance, partner = profile.accountKind === 'partner';
   const partnerPortal = partner || display.checkouts.some(checkout => checkout.id === 'exclusive_' + profile.id);
   const visibleTabs = tabs.filter(item => item.id !== 'marketing' || partnerPortal);

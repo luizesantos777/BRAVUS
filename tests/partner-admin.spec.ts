@@ -20,7 +20,7 @@ test('venda do parceiro mostra a taxa uma única vez e usa os rótulos corretos 
   const { name, id } = await fixture(page, info, 'rotulos');
   await page.getByRole('combobox', { name: 'Filtrar por atendente', exact: true }).selectOption(id);
   const card = page.locator('.review-sale').filter({ has: page.getByText(name, { exact: true }) });
-  await expect(card.locator('.review-values dt')).toHaveText(['Valor da venda', 'Taxa da venda (12% + R$ 2,00)', 'Valor do parceiro a liberar', 'Custo do gateway BRAVUS', 'Lucro BRAVUS projetado']);
+  await expect(card.locator('.review-values dt')).toHaveText(['Valor da venda', 'Taxa da venda', 'Valor do parceiro a liberar', 'Custo do gateway BRAVUS', 'Lucro BRAVUS projetado']);
   await expect(card.locator('.review-values dd').nth(0)).toHaveText(/219,00/);await expect(card.locator('.review-values dd').nth(1)).toHaveText(/28,28/);await expect(card.locator('.review-values dd').nth(2)).toHaveText(/190,72/);
   for (const wrong of ['Taxa do atendente', 'Taxa da BRAVUS', 'BRAVUS após taxas', 'Comissão']) await expect(card).not.toContainText(wrong);
   await card.getByRole('button', { name: 'Aprovar venda', exact: true }).click();
@@ -45,7 +45,7 @@ test('admin vê lucro após ADS próprios, exporta o valor e mantém lucro após
   await accountRow.getByRole('button', { name: 'Ver faturamento e repasses', exact: true }).click();
   const balance = page.locator('.attendant-balance').filter({ has: page.getByRole('heading', { name, exact: true }) });
   const value = (label: string) => balance.locator('dl>div').filter({ has: page.getByText(label, { exact: true }) });
-  await expect(value('Taxa da venda (12% + R$ 2,00)')).toContainText('28,28');await expect(value('Custo do gateway BRAVUS')).toContainText('15,11');await expect(value('Lucro BRAVUS nas taxas')).toContainText('13,17');await expect(balance.getByRole('note')).toContainText('ADS não são descontados dos repasses.');await expect(value('ADS próprios do parceiro')).toContainText('50,00');await expect(value('Lucro do parceiro após ADS')).toContainText('130,72');await expect(value('Saldo disponível para repasse')).toContainText('190,72');
+  await expect(value('Taxas das vendas (conforme a data)')).toContainText('28,28');await expect(value('Custo do gateway BRAVUS')).toContainText('15,11');await expect(value('Lucro BRAVUS nas taxas')).toContainText('13,17');await expect(balance.getByRole('note')).toContainText('ADS não são descontados dos repasses.');await expect(value('ADS próprios do parceiro')).toContainText('50,00');await expect(value('Lucro do parceiro após ADS')).toContainText('130,72');await expect(value('Saldo disponível para repasse')).toContainText('190,72');
   await expect(balance).not.toContainText('Comissão após taxas');
   await page.getByRole('button', { name: 'Fechamento', exact: true }).click();
   await page.getByLabel('Início do período', { exact: true }).fill(today);await page.getByLabel('Fim do período', { exact: true }).fill(today);await page.getByRole('combobox', { name: 'Atendente do relatório', exact: true }).selectOption(id);await page.getByRole('button', { name: 'Consultar fechamento', exact: true }).click();

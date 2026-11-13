@@ -6,7 +6,7 @@ export const PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
 export interface PartnerBusinessSummary { saleCount: number; partnerFeeCents: number; gatewayCostCents: number; profitCents: number }
 type CostedSale = Pick<AdminSale, 'amountCents' | 'feeCents' | 'gatewayCostCents' | 'status' | 'date'>;
 
-/** Merchant expense, separate from the 12% charged to the partner. Round each transaction. */
+/** Merchant expense, separate from the tariff charged to the partner. Round each transaction. */
 export function partnerGatewayCost(amountCents: number): number {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Valor inválido para calcular o custo do gateway.');
   return Math.floor((amountCents * PARTNER_PROVIDER_FEE_BPS + 5000) / 10000) + PARTNER_PROVIDER_FIXED_FEE_CENTS;

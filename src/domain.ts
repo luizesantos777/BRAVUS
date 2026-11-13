@@ -7,7 +7,8 @@ export type SaleStatus = 'pending' | 'approved' | 'rejected';
 export const saleStatusLabels: Record<SaleStatus, string> = { pending: 'Em análise', approved: 'Aprovada', rejected: 'Recusada' };
 export const periodLabels: Record<Period, string> = { today: 'Hoje', yesterday: 'Ontem', week: 'Últimos 7 dias', month: 'Este mês', all: 'Todo o período' };
 export const pixLabels: Record<PixType, string> = { '': 'Selecione o tipo', email: 'E-mail', cpf: 'CPF', cnpj: 'CNPJ', phone: 'Telefone', random: 'Chave aleatória' };
-export interface Profile { id: string; accountKind?: AccountKind; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
+export interface PartnerFeeRule { effectiveFrom: string; feeBps: number; fixedFeeCents: number }
+export interface Profile { id: string; accountKind?: AccountKind; partnerFeeRules?: PartnerFeeRule[]; name: string; email: string; phone: string; pixType: PixType; pixKey: string; pixOwner: string; commissionBps: number; photoUrl: string; saleAlertTemplate: string }
 export interface CheckoutTier { aboveAmountCents: number; feeBps: number; fixedFeeCents: number }
 export interface CheckoutTierInput { aboveAmount: string; fee: string; fixedFee: string }
 export interface Checkout { id: string; name: string; feeBps: number; fixedFeeCents: number; minAmountCents: number; higherTier: CheckoutTier | null; maxAmountCents: number | null }
@@ -28,7 +29,7 @@ export interface SaleBatch { date: string; sales: SaleInput[] }
 export interface Finance { grossCents: number; feeCents: number; transactionFeeCents: number; gatewayFeeCents: number; businessGatewayFeeCents: number; withdrawalFeeCents: number; businessShareCents: number; adsCents: number; commissionCents: number; availableCents: number; pendingPayoutCents: number; paidPayoutCents: number; paidPayoutNetCents: number; debtCents: number; count: number; pendingSalesCount: number; pendingSalesCents: number; rejectedSalesCount: number }
 export interface Portal { maxRequestBytes?: number; profile: Profile; checkouts: Checkout[]; sales: Sale[]; payouts: Payout[]; finance: Finance; marketing?: MarketingReport; today: string }
 export interface RankingEntry { id: string; name: string; photoUrl: string; grossCents: number; count: number; mine: boolean }
-export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner'> { id: string; accountKind?: AccountKind; name: string; active: boolean; canDelete?: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance; marketing?: MarketingReport; business?: PartnerBusinessSummary }
+export interface AdminAttendant extends Pick<Profile, 'pixType' | 'pixKey' | 'pixOwner' | 'partnerFeeRules'> { id: string; accountKind?: AccountKind; name: string; active: boolean; canDelete?: boolean; commissionBps: number; createdAt: string; salesCount: number; grossCents: number; finance: Finance; marketing?: MarketingReport; business?: PartnerBusinessSummary }
 export interface AdminPayout extends Payout { attendantId: string; attendantName: string; pixType: PixType; pixKey: string; pixOwner: string }
 export interface AdminDashboard { attendants: AdminAttendant[]; payouts: AdminPayout[]; checkouts: Checkout[]; pendingSalesCount: number; todayAdsCents: number; costs: AdminCost[] }
 export interface Invitation { attendantId: string; accountKind?: AccountKind; name: string; token: string }
@@ -76,11 +77,20 @@ export const money = (cents: number) => new Intl.NumberFormat('pt-BR', { style: 
 export function splitGatewayFee(feeCents: number): number { return Math.floor((feeCents * ATTENDANT_GATEWAY_FEE_BPS + 5000) / 10000); }
 /** Partners bear the gateway fee in full and retain the remaining gross amount. */
 export function allocatedSaleFee(feeCents: number, accountKind?: AccountKind): number { return accountKind === 'partner' ? feeCents : splitGatewayFee(feeCents); }
-/** One automatic partner tariff; shared attendant tariffs remain separate. */
-export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind): Checkout[] {
+export function partnerTariffAt(rules: PartnerFeeRule[] = [], date = businessToday()) {
+  const rule = [...rules].filter(item => item.effectiveFrom <= date).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).at(-1);
+  return { feeBps: rule?.feeBps ?? PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: rule?.fixedFeeCents ?? PARTNER_FIXED_FEE_CENTS, effectiveFrom: rule?.effectiveFrom ?? null };
+}
+export function partnerTariffLabel(rules: PartnerFeeRule[] = [], date = businessToday()) {
+  const tariff = partnerTariffAt(rules, date);
+  return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(tariff.feeBps / 100) + '% + ' + money(tariff.fixedFeeCents);
+}
+/** A partner's dated rule overrides the default only from its effective date. */
+export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind, rules: PartnerFeeRule[] = [], date = businessToday()): Checkout[] {
   if (accountKind !== 'partner') return checkouts.filter(checkout => checkout.id !== PARTNER_CHECKOUT.id);
   const checkout = checkouts.find(item => item.id.startsWith('exclusive_')) ?? checkouts.find(item => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
-  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, higherTier: null }];
+  const tariff = partnerTariffAt(rules, date);
+  return [{ ...checkout, feeBps: tariff.feeBps, fixedFeeCents: tariff.fixedFeeCents, higherTier: null }];
 }
 export function withdrawalFees(accountKind?: AccountKind) { return accountKind === 'partner' ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS }; }
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }

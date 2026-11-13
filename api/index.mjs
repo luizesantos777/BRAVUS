@@ -220,10 +220,15 @@ function splitGatewayFee(feeCents) {
 function allocatedSaleFee(feeCents, accountKind) {
   return accountKind === "partner" ? feeCents : splitGatewayFee(feeCents);
 }
-function accountCheckouts(checkouts, accountKind) {
+function partnerTariffAt(rules = [], date = businessToday()) {
+  const rule = [...rules].filter((item) => item.effectiveFrom <= date).sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom)).at(-1);
+  return { feeBps: rule?.feeBps ?? PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: rule?.fixedFeeCents ?? PARTNER_FIXED_FEE_CENTS, effectiveFrom: rule?.effectiveFrom ?? null };
+}
+function accountCheckouts(checkouts, accountKind, rules = [], date = businessToday()) {
   if (accountKind !== "partner") return checkouts.filter((checkout2) => checkout2.id !== PARTNER_CHECKOUT.id);
   const checkout = checkouts.find((item) => item.id.startsWith("exclusive_")) ?? checkouts.find((item) => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
-  return [{ ...checkout, feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, higherTier: null }];
+  const tariff = partnerTariffAt(rules, date);
+  return [{ ...checkout, feeBps: tariff.feeBps, fixedFeeCents: tariff.fixedFeeCents, higherTier: null }];
 }
 function withdrawalFees(accountKind) {
   return accountKind === "partner" ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS };
@@ -469,6 +474,41 @@ function isExclusiveCheckout(id) {
   return id.startsWith("exclusive_");
 }
 
+// server/partner-tariff-migration.ts
+var REQUESTED_PARTNER_TARIFF = {
+  migration: "named-parceiro-16-percent-from-2026-11-13-v1",
+  name: "parceiro",
+  effectiveFrom: "2026-11-13",
+  feeBps: 1600,
+  fixedFeeCents: 200,
+  // This account already appears in the owner's report through November 12.
+  // Do not attach the request to a similarly named account created afterwards.
+  accountCreatedBefore: "2026-11-13T03:00:00.000Z"
+};
+async function applyRequestedPartnerTariff(db) {
+  const rule = REQUESTED_PARTNER_TARIFF;
+  if (await db.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(rule.migration)) return;
+  const matches = await db.prepare("SELECT id, name, partner_fee_rules FROM attendants WHERE account_kind='partner' AND active=1 AND lower(trim(name))=? AND created_at<?").all(rule.name, rule.accountCreatedBefore);
+  if (matches.length !== 1) return;
+  const account = matches[0], oldRules = String(account.partner_fee_rules), actor = { id: "system", name: "Sistema / altera\xE7\xE3o solicitada" };
+  const rules = JSON.parse(oldRules).filter((item) => item.effectiveFrom !== rule.effectiveFrom);
+  rules.push({ effectiveFrom: rule.effectiveFrom, feeBps: rule.feeBps, fixedFeeCents: rule.fixedFeeCents });
+  rules.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+  await db.prepare("UPDATE attendants SET partner_fee_rules=? WHERE id=?").run(JSON.stringify(rules), String(account.id));
+  await appendAudit(db, actor, "partner.tariff_changed", String(account.id), String(account.name), { rules: oldRules }, { rules: JSON.stringify(rules), effectiveFrom: rule.effectiveFrom, feeBps: rule.feeBps, fixedFeeCents: rule.fixedFeeCents });
+  const sales = await db.prepare("SELECT id, date, amount_cents, fee_cents, attendant_fee_cents, commission_bps, commission_mode FROM sales WHERE attendant_id=? AND date>=?").all(String(account.id), rule.effectiveFrom);
+  for (const sale of sales) {
+    const tariff = partnerTariffAt(rules, String(sale.date));
+    const fee = Math.floor((Number(sale.amount_cents) * tariff.feeBps + 5e3) / 1e4) + tariff.fixedFeeCents;
+    if (Number(sale.fee_cents) === fee && Number(sale.attendant_fee_cents) === fee && sale.attendant_fee_cents !== null && Number(sale.commission_bps) === 1e4 && sale.commission_mode === "gross-share-less-fees") continue;
+    const before = { date: String(sale.date), feeCents: Number(sale.fee_cents), attendantFeeCents: sale.attendant_fee_cents == null ? null : Number(sale.attendant_fee_cents), commissionBps: Number(sale.commission_bps), commissionMode: String(sale.commission_mode) };
+    const after = { date: String(sale.date), feeCents: fee, attendantFeeCents: fee, commissionBps: 1e4, commissionMode: "gross-share-less-fees" };
+    await appendAudit(db, actor, "partner.dated_sale_repriced", String(sale.id), String(account.name), before, after);
+    await db.prepare("UPDATE sales SET fee_cents=?, attendant_fee_cents=?, commission_bps=10000, commission_mode='gross-share-less-fees' WHERE id=?").run(fee, fee, String(sale.id));
+  }
+  await db.prepare("INSERT INTO schema_migrations VALUES (?)").run(rule.migration);
+}
+
 // src/receipt-types.ts
 function isPdfReceipt(bytes) {
   const header = String.fromCharCode(...bytes.subarray(0, 9));
@@ -561,6 +601,7 @@ var PortalStore = class _PortalStore {
         await store.sql.exec("UPDATE payouts SET gateway_fee_cents = withdrawal_fee_cents WHERE status = 'paid'");
       }
       const profileColumns = new Set((await store.sql.prepare("PRAGMA table_info(attendants)").all()).map((column) => column.name));
+      if (!profileColumns.has("partner_fee_rules")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN partner_fee_rules TEXT NOT NULL DEFAULT '[]'");
       if (!profileColumns.has("account_kind")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN account_kind TEXT NOT NULL DEFAULT 'attendant' CHECK(account_kind IN ('attendant','partner'))");
       if (!profileColumns.has("photo_url")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''");
       if (!profileColumns.has("sale_alert_template")) await store.sql.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '\u2705 Venda de {valor} lan\xE7ada com sucesso!'");
@@ -652,6 +693,7 @@ var PortalStore = class _PortalStore {
       await store.applyPartnerTerms();
       await store.recordPartnerGatewayCosts();
       await store.applyPartnerFixedFee();
+      await applyRequestedPartnerTariff(store.sql);
     });
   }
   /** Runs inside initialization's write transaction, including the audit and marker. */
@@ -716,7 +758,7 @@ var PortalStore = class _PortalStore {
   }
   async adminDashboard() {
     return this.sql.transaction(async (db) => {
-      const rows2 = await db.prepare(`SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
+      const rows2 = await db.prepare(`SELECT id, name, account_kind AS accountKind, partner_fee_rules AS partnerFeeRules, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
       const sales = await db.prepare("SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales").all();
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all();
       const costs = await db.prepare("SELECT c.attendant_id AS attendantId, a.name AS attendantName, c.date, c.ads_cents AS adsCents, c.withdrawal_fee_cents AS withdrawalFeeCents FROM costs c JOIN attendants a ON a.id = c.attendant_id ORDER BY c.date DESC, a.name").all();
@@ -734,7 +776,7 @@ var PortalStore = class _PortalStore {
       const attendants = rows2.map((row) => {
         const records = ownSales.get(String(row.id)) ?? [];
         const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], "all", today, row.accountKind);
-        return { ...row, active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today), business: calculatePartnerBusiness(records, "all", today) } : {} };
+        return { ...row, partnerFeeRules: JSON.parse(String(row.partnerFeeRules)), active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...row.accountKind === "partner" ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], "all", today), business: calculatePartnerBusiness(records, "all", today) } : {} };
       });
       return { attendants, payouts, checkouts: await new _PortalStore(db).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter((sale) => sale.status === "pending").length, todayAdsCents: costs.filter((cost) => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0) };
     }, "read");
@@ -946,9 +988,9 @@ var PortalStore = class _PortalStore {
     return { id: String(row.id) };
   }
   async profile(auth) {
-    const row = await this.sql.prepare("SELECT id, name, account_kind, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?").get(auth.id);
+    const row = await this.sql.prepare("SELECT id, name, account_kind, partner_fee_rules, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?").get(auth.id);
     if (!row) throw new PortalError(401, "Atendente n\xE3o encontrado pelo token informado.");
-    return { id: row.id, name: row.name, accountKind: row.account_kind, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
+    return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
   async checkouts() {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
@@ -968,7 +1010,7 @@ var PortalStore = class _PortalStore {
   }
   async portal(auth, period = "today") {
     const profile = await this.profile(auth), sales = await this.sales(auth), costs = await this.costs(auth), payouts = await this.payouts(auth), today = businessToday();
-    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today, profile.accountKind);
+    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, today), finance = calculateFinance(sales, costs, payouts, period, today, profile.accountKind);
     const partner = profile.accountKind === "partner" || checkouts.some((checkout) => checkout.id === exclusiveCheckoutId(auth.id));
     const ownAds = partner ? (await this.sql.prepare("SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND partner_ads_cents > 0").all(auth.id)).map((row) => ({ date: String(row.date), adsCents: Number(row.adsCents) })) : [];
     return { profile, checkouts, sales: sales.filter((sale) => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance, ...partner ? { marketing: calculateMarketing(finance, ownAds, period, today) } : {}, today };
@@ -1037,7 +1079,7 @@ var PortalStore = class _PortalStore {
     const batch = input;
     if (typeof batch.date !== "string" || !validDate(batch.date) || batch.date > businessToday()) invalid("Informe uma data v\xE1lida, at\xE9 hoje.");
     if (!Array.isArray(batch.sales) || !batch.sales.length || batch.sales.length > 10) invalid("Envie entre 1 e 10 vendas por vez.");
-    const profile = await this.profile(auth), checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind);
+    const profile = await this.profile(auth), checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, batch.date);
     const normalized = batch.sales.map((row) => {
       if (!row || typeof row !== "object" || typeof row.amount !== "string" || typeof row.note !== "string" || row.note.length > 500 || typeof row.time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) return invalid("Confira o valor, o hor\xE1rio e a observa\xE7\xE3o de cada venda.");
       const checkout = profile.accountKind === "partner" ? checkouts[0] : checkouts.find((item) => item.id === row.checkoutId);
@@ -1062,12 +1104,16 @@ var PortalStore = class _PortalStore {
         if (existing.payload_hash !== payloadHash) throw new PortalError(409, "Este envio j\xE1 foi registrado com outros dados. Confira o hist\xF3rico e atualize a p\xE1gina antes de lan\xE7ar novas vendas.");
         return { duplicate: true, count: normalized.length };
       }
+      const settlementProfile = profile.accountKind === "partner" ? await store.profile(auth) : profile;
+      const partnerCheckout = settlementProfile.accountKind === "partner" ? accountCheckouts(await store.checkoutsFor(auth), "partner", settlementProfile.partnerFeeRules, batch.date)[0] : void 0;
       const batchId = randomUUID2(), createdAt = (/* @__PURE__ */ new Date()).toISOString();
       await store.sql.prepare("INSERT INTO batches VALUES (?, ?, ?, ?)").run(batchId, auth.id, requestKey, payloadHash);
       for (const row of normalized) {
+        const checkout = partnerCheckout ?? row.checkout;
+        const feeCents = partnerCheckout ? checkoutFee(row.amountCents, checkout) : row.feeCents;
         const receiptId = randomUUID2();
         await store.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(row.feeCents, profile.accountKind), profile.accountKind === "partner" ? partnerGatewayCost(row.amountCents) : null);
+        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, checkout.id, checkout.name, row.amountCents, feeCents, settlementProfile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(feeCents, settlementProfile.accountKind), settlementProfile.accountKind === "partner" ? partnerGatewayCost(row.amountCents) : null);
       }
       await store.audit({ id: auth.id, name: profile.name }, "sales.submitted", batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
       return { duplicate: false, count: normalized.length };
@@ -1191,7 +1237,9 @@ var auditActions = {
   "attendant.rule_updated": "Regra financeira da conta alterada",
   "partner.sale_repriced": "Taxa da venda do parceiro recalculada",
   "partner.sale_tariff_updated": "Venda do parceiro atualizada para 12% + R$ 2,00",
-  "partner.gateway_cost_recorded": "Custo do gateway do parceiro registrado"
+  "partner.gateway_cost_recorded": "Custo do gateway do parceiro registrado",
+  "partner.tariff_changed": "Taxa individual do parceiro alterada com vig\xEAncia",
+  "partner.dated_sale_repriced": "Venda atualizada pela taxa individual vigente"
 };
 function validateDateRange(start, end) {
   if (!validDate(start) || !validDate(end) || start > end || end > businessToday()) throw new Error("Informe um per\xEDodo v\xE1lido, com in\xEDcio at\xE9 o fim e sem datas futuras.");
@@ -1734,8 +1782,8 @@ async function importArchive(db, archive) {
     for (const name of TABLES) {
       const table = archive.tables.find((item) => item.name === name);
       const expected = (await connection.prepare(`PRAGMA table_info(${name})`).all()).map((column) => String(column.name));
-      const optional = name === "attendants" ? "account_kind" : name === "costs" ? "partner_ads_cents" : name === "sales" ? "gateway_cost_cents" : void 0;
-      const required = optional && Array.isArray(table.columns) && !table.columns.includes(optional) ? expected.filter((column) => column !== optional) : expected;
+      const optional = name === "attendants" ? ["account_kind", "partner_fee_rules"] : name === "costs" ? ["partner_ads_cents"] : name === "sales" ? ["gateway_cost_cents"] : [];
+      const required = Array.isArray(table.columns) ? expected.filter((column) => !optional.includes(column) || table.columns.includes(column)) : expected;
       if (!Array.isArray(table.columns) || table.columns.length !== required.length || new Set(table.columns).size !== required.length || table.columns.some((column) => !required.includes(column)) || !Array.isArray(table.rows)) throw new Error("Invalid backup columns");
       const statement = connection.prepare(`INSERT INTO ${name} (${table.columns.map((column) => '"' + column + '"').join(",")}) VALUES (${table.columns.map(() => "?").join(",")})`);
       for (const row of table.rows) {

@@ -447,3 +447,11 @@ As colunas antigas de meta permanecem no SQLite para preservar a compatibilidade
 Os pagamentos manuais, a conferência de saldo, o registro da auditoria e a idempotência são gravados na mesma transação. Repetir um pagamento com a mesma chave não cria outro débito nem outra tarifa; instâncias distintas compartilham a mesma proteção no banco.
 
 Os testes em `tests/cloud.test.ts` usam libSQL com um banco temporário para verificar a mesma API da Vercel, persistência entre instâncias, comprovantes binários, inicialização concorrente, idempotência e proteção contra reserva/pagamento duplicado. Também verificam 503 sem configuração e o artefato JavaScript implantado. Não usam credenciais reais nem bancos de produção.
+
+## Tarifa individual de Parceiro a partir de 13/11/2026
+
+O cadastro ativo de parceiro com nome exato **Parceiro**, já existente antes de 13/11/2026, passa a pagar **16% + R$ 2,00 por venda** nas vendas datadas de **13/11/2026 em diante**. Os demais parceiros continuam com o padrão de 12% + R$ 2,00; atendentes não mudam. A vigência usa a data da venda em São Paulo, inclusive nos lançamentos retroativos.
+
+A inicialização executa `named-parceiro-16-percent-from-2026-11-13-v1` depois das migrações anteriores. A correspondência deve ser única; nomes duplicados, contas novas, atendentes e cadastros revogados não são escolhidos. A regra fica vinculada ao ID da conta em `partner_fee_rules`, sobrevive a mudança de nome/token e é incluída nos backups. A coluna assume `[]` nas cópias anteriores que não a possuíam.
+
+O recálculo afeta somente as vendas desse ID a partir da vigência, de qualquer situação. Antes e depois dos campos alterados ficam na auditoria, na mesma transação da regra e do marcador. Vendas anteriores, custos reais do gateway, ADS, comprovantes, decisões e repasses já pagos são preservados. O saldo e o lucro refletem as tarifas gravadas por venda; o painel distingue a tarifa atual dos totais que abrangem mais de uma vigência.

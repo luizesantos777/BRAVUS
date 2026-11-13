@@ -14,6 +14,8 @@ export const auditActions = {
   'partner.sale_repriced': 'Taxa da venda do parceiro recalculada',
   'partner.sale_tariff_updated': 'Venda do parceiro atualizada para 12% + R$ 2,00',
   'partner.gateway_cost_recorded': 'Custo do gateway do parceiro registrado',
+  'partner.tariff_changed': 'Taxa individual do parceiro alterada com vigência',
+  'partner.dated_sale_repriced': 'Venda atualizada pela taxa individual vigente',
 } as const;
 export type AuditAction = keyof typeof auditActions;
 export type AuditValues = Record<string, string | number | boolean | null>;

@@ -1,0 +1,228 @@
+{
+  "date": "2026-11-13",
+  "project": "Checkout BRAVUS / Bio Camisas",
+  "includes_atlas": true,
+  "deployed": false,
+  "archives": {
+    "Gateways_Painel_Atualizacao_Com_Atlas.zip": {
+      "bytes": 87385,
+      "files": 36,
+      "sha256": "f76378983dcc4c743a90a1a07e94151a1fd5f972692aa41b8e7d50107171cb99"
+    },
+    "Bravus_Checkout_Completo_Gestao_Gateways.zip": {
+      "bytes": 430187,
+      "files": 217,
+      "sha256": "9a0d0abfd8f804b6abc4b31223874353f7bdecc2b55b41222ba4ffdd4bb71eb0"
+    }
+  },
+  "changed_since_atlas": [
+    "ATLASPAGS.md",
+    "GATEWAYS-AUTOMATICOS.md",
+    "GESTAO-DE-GATEWAYS.md",
+    "README.md",
+    "app/admin/gateways/connect.tsx",
+    "app/admin/gateways/cost-editor.tsx",
+    "app/admin/gateways/ui.tsx",
+    "app/api/admin/atlas/route.ts",
+    "app/api/admin/beehive/route.ts",
+    "app/api/admin/eleva/route.ts",
+    "app/api/admin/firebot/route.ts",
+    "app/api/admin/gateways/route.ts",
+    "app/api/admin/gestao/route.ts",
+    "app/api/admin/poseidon/route.ts",
+    "app/api/orders/route.ts",
+    "app/api/settings/route.ts",
+    "app/globals.css",
+    "lib/create-payment.ts",
+    "lib/gateway-catalog.ts",
+    "lib/gateway-costs.ts",
+    "lib/gateway-management.ts",
+    "lib/gateway-status.ts",
+    "lib/gateways.ts",
+    "lib/payment-fallback.ts",
+    "tests/gateway-management-worker.test.mjs",
+    "tests/payments.test.mjs"
+  ],
+  "files": [
+    {
+      "path": "ATLASPAGS.md",
+      "sha256": "0a25fa14ca0942a07d0870b24f73c7e29581aed158ec0664a78c758ec8e10bc4",
+      "base_sha256": null
+    },
+    {
+      "path": "GATEWAYS-AUTOMATICOS.md",
+      "sha256": "74be140660ed441f06d78c4f191cb562d68d095fa805c2cf9323c68b781cfba1",
+      "base_sha256": "1a6ef786d7070401a928faac0e73c71c9a5284e5672f4a8914823912d1a6c089"
+    },
+    {
+      "path": "GESTAO-DE-GATEWAYS.md",
+      "sha256": "d6b52fc22b63bfa8ad0db885a829776aeeaced7a8b59e855b65e5b174e7d746a",
+      "base_sha256": null
+    },
+    {
+      "path": "README.md",
+      "sha256": "22af7d8ced78e6455e1f99055cf71aca815cb5e4899a01327877e6196c168998",
+      "base_sha256": "80250ef7648f516cdc9e8882dbe389eb57667a473676623e9187d2a0f9f34408"
+    },
+    {
+      "path": "app/admin/atlas/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/atlas/ui.tsx",
+      "sha256": "0aef7a9e6e84140ead95b3a6422914dcac7cd3a08ea103f893436e8854b5d077",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/gateways/connect.tsx",
+      "sha256": "2e1b4901c252e326690d11b2c0b4bfa05d276c14c82ed3f9c1fccdc94c8aabdb",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/gateways/cost-editor.tsx",
+      "sha256": "7fda3ed1cff03b5d9080ecf26df119e9fd03386634febf4768e6d9558374d454",
+      "base_sha256": null
+    },
+    {
+      "path": "app/admin/gateways/routing-controls.tsx",
+      "sha256": "130e9e1f9dbff2799c2e57ffc2da7ca1ff8c3a3107c812282902d77ad8623409",
+      "base_sha256": "84c433ecda23b469bf9518d50a7102f51ec558a4801bde96bd15d952a36232b6"
+    },
+    {
+      "path": "app/admin/gateways/ui.tsx",
+      "sha256": "1609421eaa3ab54f9e7b27796fe2450eb0bcea8779f54bcc310eda161013d692",
+      "base_sha256": "1175d44000b0927034001d544f07ec7883dd95cc65ed533d8c2201bcbc1eca4f"
+    },
+    {
+      "path": "app/api/admin/atlas/route.ts",
+      "sha256": "940dbf4cad33bdd9a67640cc6ed3f2fa8a5f204cf2a594052754b94a16664ed9",
+      "base_sha256": null
+    },
+    {
+      "path": "app/api/admin/beehive/route.ts",
+      "sha256": "9e3276d719800999557682de175a265a7d7cf1a24924c87f72a73f1b9f075610",
+      "base_sha256": "6f2758fc60833d81190548fadb9c11f2dca0c4ef8bee8a78513415865cb76f99"
+    },
+    {
+      "path": "app/api/admin/eleva/route.ts",
+      "sha256": "8c6c2279d1698906ab7798f460c51e08a6ecf8cef72c86663dc8b08d2af422dc",
+      "base_sha256": "1bc1a5c66aadd27a38d9f87d9338e531c071dba87a2fc86b22a2b741c1b7539f"
+    },
+    {
+      "path": "app/api/admin/firebot/route.ts",
+      "sha256": "6d59b8ddb6fad8e02a65034fb1c8c8b8551ae74b764f26074e01e7bcf2d81a96",
+      "base_sha256": "abb108bd2681324405c33d10921a289a006d31f049a5a1642da6b0e6a0ae365e"
+    },
+    {
+      "path": "app/api/admin/gateways/route.ts",
+      "sha256": "93d4a39565aa9e78541decca1025f3c4d7374a875418cf3bb98e1e78574ba8cc",
+      "base_sha256": "e10b0a55a3c605df193a2e9dc1cb2810edbcad027740c9ec209ba34458b2b2cc"
+    },
+    {
+      "path": "app/api/admin/gestao/route.ts",
+      "sha256": "f5d2d01ec5c17560805fc129976811d4008a0363c28d08ae55f9858d29da2187",
+      "base_sha256": "3ea612155193d11680ced26fcdbc117ffc9d1effacef7d2643f925c80c79e625"
+    },
+    {
+      "path": "app/api/admin/poseidon/route.ts",
+      "sha256": "4212e3a509d0d74bf111acab91bf1a0983c55932bfde624aac0a29fc8d1938d9",
+      "base_sha256": "206ea5982349a6769de3bcc26d01fe1958ab91c780b7b55eb26e2644c2c8225a"
+    },
+    {
+      "path": "app/api/orders/route.ts",
+      "sha256": "a5c69ab478b85cf82c3f2d311962bff5deaa0239fafe654ced994424cbc36a96",
+      "base_sha256": "72d3b0ef10f3a33080643a25c9f65e802649d464494067678d7bec20a9ff2565"
+    },
+    {
+      "path": "app/api/pay/[id]/route.ts",
+      "sha256": "50d64e4b3f82c502dea5109f55ced7dcb1e072e514301f6c255ca964c5f79d9b",
+      "base_sha256": "113f1913307b767960da3e9cc470d8d21d6ac420c58edf0b1102241bab444ec3"
+    },
+    {
+      "path": "app/api/settings/route.ts",
+      "sha256": "ad88719c19847915905c413c6f494b400fdac883cb30ab6d242e1890fb7e1b85",
+      "base_sha256": "0944291b9213fb79de360fec0e93355e5baf2c3e2b0dbb90eebef0cd27e6b3b8"
+    },
+    {
+      "path": "app/api/webhooks/atlas/route.ts",
+      "sha256": "57b906308a732383db2f97300b2e130c160e3ca1c5971a565a2c6e4b7c6af15e",
+      "base_sha256": null
+    },
+    {
+      "path": "app/checkout/ui.tsx",
+      "sha256": "2ee23b6aa7665f1ff77400214b73592cc867fb8a6b58828ae65b6986a55c50c1",
+      "base_sha256": "cee2a8d90e7d6a6676b37cf70086fed023ed3cd519aab18a45545d31c3ceacc4"
+    },
+    {
+      "path": "app/globals.css",
+      "sha256": "1c64437c5baac5daabaeb1147960c925c0b34fd88874ab8568f2dbd30685f26c",
+      "base_sha256": "ea9626673187bb2a1caa1d667162a49af1bc182459ed93b6e050ca09b081d752"
+    },
+    {
+      "path": "app/pagar/[id]/ui.tsx",
+      "sha256": "c4a0673a602b2232b3fd8cad401dbc026b51e21cb30e565131548d7b9a8ff5e1",
+      "base_sha256": "e0d612de941f40ea7af306dc713bf09675696de19051825089ed9ed70facb8ad"
+    },
+    {
+      "path": "lib/atlas-webhook.ts",
+      "sha256": "e6e0d9c6b1350ec03e5f161bbcd12376555374c4f22c9c0212cd34b6b19963aa",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/atlas.ts",
+      "sha256": "56a55aadcabc18ee6d6ebb4603996e7a7e206cc53487de6757cd28ce4fd71514",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/create-payment.ts",
+      "sha256": "9a3330d7d0fcaed16432ae889f0eeef06f84a0765ab9b1d63a65fabd20a84381",
+      "base_sha256": "c958914f54db1be64c78d1c1079d2a214f5db1aa56b079d4d4d6840fa7a95149"
+    },
+    {
+      "path": "lib/gateway-catalog.ts",
+      "sha256": "ae6fd68c2accb35f0b37a1c7cd9b5b55ac5f76b87dfa254ebea7106d32b74ec3",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/gateway-costs.ts",
+      "sha256": "92111264321f6c752710adb3ccaf36cc4bf4121e88f8bb738f7498899aeae444",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/gateway-management.ts",
+      "sha256": "602afc54c6e557168ec932c726041117a849a69ec00822d0e8f99fd970d5080c",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/gateway-status.ts",
+      "sha256": "9eb65010ea73128b90fae248ad4eeff9a1469196dacce613119f4249a14a7c76",
+      "base_sha256": null
+    },
+    {
+      "path": "lib/gateways.ts",
+      "sha256": "304c4f6c1782e2c2338be87026c80b1c98eb27da0e87aa9ba1f3e802cc96bd9a",
+      "base_sha256": "3001f099e21a612c801f702d39e0755801cba2a25339bdcc1ff11299f8b05bf6"
+    },
+    {
+      "path": "lib/payment-fallback.ts",
+      "sha256": "22b5a2cddb05c249f8fef2f7bb1b83ec777c56c6a456fe322484994b80a21743",
+      "base_sha256": "97a753a4ad795b00d34fdcaf30f7f502e6ad5d3a454c30acb3085087d5d746b9"
+    },
+    {
+      "path": "tests/atlas-worker.test.mjs",
+      "sha256": "1f01f84aafbf2b3210f0df8c722b2d573519643bc35456ed6f4a4210c0836c2a",
+      "base_sha256": null
+    },
+    {
+      "path": "tests/gateway-management-worker.test.mjs",
+      "sha256": "3dff380a0a7e3119d1d4baa86f08e101bc8ba8c54fe00ea6bbec15d21da02cb8",
+      "base_sha256": null
+    },
+    {
+      "path": "tests/payments.test.mjs",
+      "sha256": "95cee9ce2936a46fd8dcadfd3498df1fbf5562fa2cff725c5b3d64cd699eb7e4",
+      "base_sha256": "a53b0878a642c0f964e8eaee709449cfba6de9970dc7b709d219d0fe9cdad8b5"
+    }
+  ]
+}

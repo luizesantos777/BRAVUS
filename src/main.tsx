@@ -40,7 +40,7 @@ function Router() {
   React.useEffect(() => { const change = () => setPage(currentPage()); window.addEventListener('hashchange', change); window.addEventListener('popstate', change); return () => { window.removeEventListener('hashchange', change); window.removeEventListener('popstate', change); }; }, []);
   React.useEffect(() => {
     const theme = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (theme) theme.content = tracking ? '#f1f4f8' : '#070907';
+    if (theme) theme.content = tracking ? '#f1f4f8' : '#090c12';
     const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest) manifest.href = publicAssetUrl(admin ? 'admin.webmanifest' : 'manifest.webmanifest');
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
@@ -48,7 +48,7 @@ function Router() {
     const appName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
     if (appName) appName.content = 'Lucro Certo Pay';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
-    if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
+    if (appleIcon) appleIcon.href = publicAssetUrl('lucro-certo-wolf-icon.png');
     // The authenticated portal owns its title; the router must not overwrite it.
     if (admin || tracking) applyPageMetadata(tracking ? 'tracking' : 'admin');
   }, [admin, tracking]);

@@ -20,7 +20,7 @@ html:not([data-portal="tracking"]) body { background: #090c12; color: #e8edf5; }
 .admin-stats { gap: 16px; }
 .admin-stats .panel { position: relative; overflow: hidden; background: linear-gradient(140deg,#18202d,#111721); padding: 25px; }
 .admin-stats .panel:first-child { background: linear-gradient(130deg,#392021,#181a23); border-color: #895046; }
-.admin-stats .panel:first-child::after { content: ''; position: absolute; right: 12px; bottom: -24px; width: 120px; height: 120px; background: url('/lucro-certo-wolf.svg') center/contain no-repeat; opacity: .08; pointer-events: none; }
+.admin-stats .panel:first-child::after { content: ''; position: absolute; right: 12px; bottom: -24px; width: 120px; height: 120px; background: url('/lucro-certo-wolf-icon.png') center/contain no-repeat; opacity: .08; pointer-events: none; }
 .admin-stats .panel > span { color: #a6b2c3; letter-spacing: 1.5px; font-size: 9px; }
 .admin-stats .panel > strong { color: #f3f5fa; font-size: 28px; letter-spacing: -1px; }
 .admin-stats .panel:first-child > strong { color: #ff9b88; }
@@ -68,3 +68,11 @@ input,select,textarea { background: #0d131d; color: #edf1f8; border-color: #3642
  .command-eyebrow { font-size: 7px; letter-spacing: 1px; }
  .brand-intro { background-position: center,65% center; }
 }
+html:not([data-portal="tracking"]) body {
+ background: linear-gradient(#090c12e8,#090c12f7),url('/lucro-certo-wolf-realistic.png') right top / cover fixed;
+}
+.brand-emblem { border-radius: 14px; object-fit: cover; box-shadow: 0 0 22px #ff6a2522; }
+.admin-login { background: linear-gradient(#101722e8,#101722f5),url('/lucro-certo-wolf-realistic.png') center / cover; }
+.admin-brand-image { border-radius: 24px; box-shadow: 0 0 38px #ff6a2526; }
+.portal-header { background: #090c1255; }
+.panel,.profile-panel,.checkout-card,.dialog { border-color: #344052; }

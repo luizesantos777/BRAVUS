@@ -1,7 +1,7 @@
 import { ShieldCheck, TrendingUp, Zap } from 'lucide-react';
 import type { AccountKind } from './domain.ts';
 import { publicAssetUrl } from './pwa.ts';
-export const brandImage = publicAssetUrl('lucro-certo-wolf.svg');
+export const brandImage = publicAssetUrl('lucro-certo-wolf-icon.png');
 export function Brand() {
   return <span className="brand-lockup"><img className="brand-emblem" src={brandImage} alt="" width="64" height="64" /><span className="brand-wordmark"><strong>LUCRO CERTO <em>PAY</em></strong><small>INSTINTO PARA CRESCER.</small></span></span>;
 }

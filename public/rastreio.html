@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f1f4f8">
   <meta name="description" content="Demonstração visual do acompanhamento de um pedido.">
   <meta name="referrer" content="no-referrer">
-  <title>Rastreio Brasil — Demonstração</title>
+  <title>Lucro Certo Pay — Rastreio</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E📦%3C/text%3E%3C/svg%3E">
   <style>
 html.tracking-page {
@@ -285,13 +285,20 @@ html.tracking-page {
     .tracking-notice { margin-top: 18px; padding: 12px; border: 1px solid #e9d29a; border-radius: 12px; background: #fff8e8; color: #765b23; font-size: .75rem; line-height: 1.6; overflow-wrap: anywhere; }
     noscript p { margin: 20px; font: 16px/1.6 Arial, sans-serif; color: #765b23; }
 
-  </style>
+
+html.tracking-page, .tracking-page body { color-scheme:dark; background:#090c12; color:#e8edf5; }
+.tracking-page body { background:linear-gradient(#090c12dd,#090c12f5),url('./lucro-certo-wolf-realistic.png') center/cover fixed; }
+.tracking-card { background:#121822; border:1px solid #344052; box-shadow:0 18px 70px #0008; }
+.tracking-heading h1,.tracking-order,.tracking-order h2,.tracking-step h2,.tracking-step h3 { color:#eef2fa; }
+.tracking-status { background:#ff60491a; color:#ffb18f; border-color:#ff604944; }
+.tracking-code,.tracking-order-date,.tracking-updated,.tracking-step p,.tracking-availability { color:#adb8ca; }
+</style>
 </head>
 <body>
   <noscript><p>Ative o JavaScript do navegador para iniciar a demonstração de rastreio.</p></noscript>
   <main class="tracking-shell">
     <article class="tracking-card" id="tracking-card" aria-labelledby="tracking-title">
-      <header class="tracking-heading">
+      <div style="display:flex;align-items:center;gap:12px;padding-bottom:24px;color:#f4f4f7;font-weight:800;letter-spacing:1px"><img src="./lucro-certo-wolf-icon.png" alt="" width="48" height="48" style="border-radius:12px">LUCRO CERTO PAY</div><header class="tracking-heading">
         <h1 id="tracking-title"><span aria-hidden="true">📦</span> Rastreio</h1>
         <span class="tracking-code" id="order-code">—</span>
       </header>

@@ -1,8 +1,8 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import App from './App.tsx';
-import Admin from './Admin.tsx';
-import Tracking from './Tracking.tsx';
+const App = React.lazy(() => import('./App.tsx'));
+const Admin = React.lazy(() => import('./Admin.tsx'));
+const Tracking = React.lazy(() => import('./Tracking.tsx'));
 import { publicAssetUrl } from './pwa.ts';
 import { applyPageMetadata } from './page-metadata.ts';
 import './styles.css';
@@ -48,12 +48,12 @@ function Router() {
     const appName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
     if (appName) appName.content = 'Lucro Certo Pay';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
-    if (appleIcon) appleIcon.href = publicAssetUrl('lucro-certo-wolf-icon.png');
+    if (appleIcon) appleIcon.href = publicAssetUrl('lucro-certo-wolf-icon-192.png');
     // The authenticated portal owns its title; the router must not overwrite it.
     if (admin || tracking) applyPageMetadata(tracking ? 'tracking' : 'admin');
   }, [admin, tracking]);
   return tracking ? <Tracking /> : admin ? <Admin /> : <App />;
 }
 createRoot(document.getElementById('root')!).render(
-  <React.StrictMode><Router /></React.StrictMode>,
+  <React.StrictMode><React.Suspense fallback={<main className="portal-shell" role="status">Carregando Lucro Certo Pay…</main>}><Router /></React.Suspense></React.StrictMode>,
 );

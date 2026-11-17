@@ -11,15 +11,26 @@ export const REQUESTED_PARTNER_TARIFF = {
   accountCreatedBefore: '2026-11-13T03:00:00.000Z',
 } as const;
 
+export const CAPITAL_PARTNER_TARIFF = {
+  migration: 'named-capital-14-percent-all-sales-v1',
+  name: 'capital', effectiveFrom: '0001-01-01', feeBps: 1400, fixedFeeCents: 200,
+  accountCreatedBefore: '2026-11-18T03:00:00.000Z',
+  allSales: true,
+} as const;
+
 /** Called inside initialize's write transaction, after earlier default migrations. */
 export async function applyRequestedPartnerTariff(db: SqlDatabase) {
-  const rule = REQUESTED_PARTNER_TARIFF;
+  await applyTariff(db, REQUESTED_PARTNER_TARIFF);
+  await applyTariff(db, CAPITAL_PARTNER_TARIFF);
+}
+
+async function applyTariff(db: SqlDatabase, rule: { migration: string; name: string; effectiveFrom: string; feeBps: number; fixedFeeCents: number; accountCreatedBefore: string; allSales?: boolean }) {
   if (await db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(rule.migration)) return;
   const matches = await db.prepare("SELECT id, name, partner_fee_rules FROM attendants WHERE account_kind='partner' AND active=1 AND lower(trim(name))=? AND created_at<?").all(rule.name, rule.accountCreatedBefore);
   // Never guess between duplicate names or create an account to match the request.
   if (matches.length !== 1) return;
   const account = matches[0], oldRules = String(account.partner_fee_rules), actor = { id: 'system', name: 'Sistema / alteração solicitada' };
-  const rules: PartnerFeeRule[] = (JSON.parse(oldRules) as PartnerFeeRule[]).filter(item => item.effectiveFrom !== rule.effectiveFrom);
+  const rules: PartnerFeeRule[] = rule.allSales ? [] : (JSON.parse(oldRules) as PartnerFeeRule[]).filter(item => item.effectiveFrom !== rule.effectiveFrom);
   rules.push({ effectiveFrom: rule.effectiveFrom, feeBps: rule.feeBps, fixedFeeCents: rule.fixedFeeCents });
   rules.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
   await db.prepare('UPDATE attendants SET partner_fee_rules=? WHERE id=?').run(JSON.stringify(rules), String(account.id));

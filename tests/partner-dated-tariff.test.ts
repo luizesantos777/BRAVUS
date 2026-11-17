@@ -88,3 +88,25 @@ test('falha no recálculo reverte taxa, auditoria e marcador; backup anterior se
   const restored=await PortalStore.open(':memory:');try{await restoreArchive(gzipSync(Buffer.from(JSON.stringify(archive))),restored);assert.deepEqual((await restored.profile({id:p.id})).partnerFeeRules,[]);}finally{restored.close();}
  }finally{store.close();}
 });
+
+for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital recebe 14% + R$ 2 em todo o histórico e nas próximas vendas', async () => {
+ const dir=mkdtempSync(join(tmpdir(),'bravus-capital-')),path=join(dir,'portal.sqlite');
+ const store=await (driver==='sqlite'?PortalStore.open(path):PortalStore.open(libsqlDatabase(createClient({url:'file:'+path,intMode:'number'}))));
+ try {
+  const capital=await store.createPartner('Capital'),other=await store.createPartner('Outro capital');
+  await store.sql.prepare('UPDATE attendants SET created_at=?, partner_fee_rules=? WHERE id=?').run('2026-11-01T12:00:00Z',JSON.stringify([{effectiveFrom:'2026-11-13',feeBps:1600,fixedFeeCents:200}]),capital.id);
+  for(const date of ['2026-10-01','2026-11-13']) await store.recordSales({id:capital.id},input(date),'capital_'+date);
+  await store.recordSales({id:other.id},input('2026-11-13'),'capital_other');
+  const others=await store.sales({id:other.id});
+  const {applyRequestedPartnerTariff}=await import('../server/partner-tariff-migration.ts');
+  await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
+  assert.deepEqual((await store.profile({id:capital.id})).partnerFeeRules,[{effectiveFrom:'0001-01-01',feeBps:1400,fixedFeeCents:200}]);
+  assert.ok((await store.sales({id:capital.id})).every(s=>s.feeCents===1600&&s.attendantFeeCents===1600));
+  assert.deepEqual(await store.sales({id:other.id}),others);
+  await store.recordSales({id:capital.id},input(businessToday()),'capital_future');
+  assert.ok((await store.sales({id:capital.id})).every(s=>s.feeCents===1600));
+  const audit=await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all();
+  await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
+  assert.deepEqual(await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all(),audit);
+ } finally {store.close();rmSync(dir,{recursive:true,force:true});}
+});

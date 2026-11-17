@@ -12,8 +12,8 @@ export const REQUESTED_PARTNER_TARIFF = {
 } as const;
 
 export const CAPITAL_PARTNER_TARIFF = {
-  migration: 'named-capital-16-percent-all-sales-v3',
-  name: 'capital', effectiveFrom: '0001-01-01', feeBps: 1600, fixedFeeCents: 200,
+  migration: 'named-capital-16-percent-399-all-sales-v4',
+  name: 'capital', effectiveFrom: '0001-01-01', feeBps: 1600, fixedFeeCents: 399,
   accountCreatedBefore: '2026-11-18T03:00:00.000Z',
   allSales: true,
 } as const;

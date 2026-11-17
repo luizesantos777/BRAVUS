@@ -486,11 +486,11 @@ var REQUESTED_PARTNER_TARIFF = {
   accountCreatedBefore: "2026-11-13T03:00:00.000Z"
 };
 var CAPITAL_PARTNER_TARIFF = {
-  migration: "named-capital-16-percent-all-sales-v3",
+  migration: "named-capital-16-percent-399-all-sales-v4",
   name: "capital",
   effectiveFrom: "0001-01-01",
   feeBps: 1600,
-  fixedFeeCents: 200,
+  fixedFeeCents: 399,
   accountCreatedBefore: "2026-11-18T03:00:00.000Z",
   allSales: true
 };

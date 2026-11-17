@@ -89,7 +89,7 @@ test('falha no recálculo reverte taxa, auditoria e marcador; backup anterior se
  }finally{store.close();}
 });
 
-for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital recebe 20% sem taxa fixa em todo o histórico e nas próximas vendas', async () => {
+for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital recebe 20% desde 17/11 e recupera os valores originais anteriores', async () => {
  const dir=mkdtempSync(join(tmpdir(),'bravus-capital-')),path=join(dir,'portal.sqlite');
  const store=await (driver==='sqlite'?PortalStore.open(path):PortalStore.open(libsqlDatabase(createClient({url:'file:'+path,intMode:'number'}))));
  try {
@@ -98,14 +98,22 @@ for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital rec
   for(const date of ['2026-10-01','2026-11-13']) await store.recordSales({id:capital.id},input(date),'capital_'+date);
   await store.recordSales({id:other.id},input('2026-11-13'),'capital_other');
   await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('named-capital-16-percent-399-all-sales-v4');
+  for(const sale of await store.sales({id:capital.id})) await store.reviewSale(sale.id,{status:'approved',note:'Aprovação original'});
+  const originalSales=await store.sales({id:capital.id});
+  const {appendAudit}=await import('../server/controls-schema.ts');
+  await appendAudit(store.sql,{id:'system',name:'Sistema'},'partner.tariff_changed',capital.id,'Capital',{rules:JSON.stringify([{effectiveFrom:'2026-11-13',feeBps:1600,fixedFeeCents:200}])},{rules:'[]'});
+  for(const sale of originalSales) {
+   await appendAudit(store.sql,{id:'system',name:'Sistema'},'partner.dated_sale_repriced',sale.id,'Capital',{feeCents:sale.feeCents,attendantFeeCents:sale.attendantFeeCents ?? null,commissionBps:sale.commissionBps,commissionMode:sale.commissionMode ?? 'net-share'},{});
+   await store.sql.prepare('UPDATE sales SET fee_cents=2000,attendant_fee_cents=2000 WHERE id=?').run(sale.id);
+  }
   const others=await store.sales({id:other.id});
   const {applyRequestedPartnerTariff}=await import('../server/partner-tariff-migration.ts');
   await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
-  assert.deepEqual((await store.profile({id:capital.id})).partnerFeeRules,[{effectiveFrom:'0001-01-01',feeBps:2000,fixedFeeCents:0}]);
-  assert.ok((await store.sales({id:capital.id})).every(s=>s.feeCents===2000&&s.attendantFeeCents===2000));
+  assert.deepEqual((await store.profile({id:capital.id})).partnerFeeRules,[{effectiveFrom:'2026-11-13',feeBps:1600,fixedFeeCents:200},{effectiveFrom:'2026-11-17',feeBps:2000,fixedFeeCents:0}]);
+  assert.deepEqual(await store.sales({id:capital.id}),originalSales);
   assert.deepEqual(await store.sales({id:other.id}),others);
   await store.recordSales({id:capital.id},input(businessToday()),'capital_future');
-  assert.ok((await store.sales({id:capital.id})).every(s=>s.feeCents===2000));
+  assert.equal((await store.sales({id:capital.id})).find(s=>s.date===businessToday())!.feeCents,2000);
   const audit=await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all();
   await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
   assert.deepEqual(await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all(),audit);

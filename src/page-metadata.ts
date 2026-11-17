@@ -1,8 +1,8 @@
 export const pageMetadata = {
-  loading: { title: 'Lucro Certo — Portal BRAVUS', description: 'Acesse seu portal BRAVUS. Acompanhe suas vendas e pagamentos.' },
-  attendant: { title: 'Lucro Certo — Portal do Atendente BRAVUS', description: 'Portal individual do atendente BRAVUS. Lance suas vendas, acompanhe comissões, ranking e repasses.' },
-  partner: { title: 'Lucro Certo — Portal do Parceiro BRAVUS', description: 'Portal do Parceiro BRAVUS. Acompanhe suas vendas e pagamentos.' },
-  admin: { title: 'GESTÃO', description: 'Administração BRAVUS. Acompanhe vendas, pagamentos e custos.' },
+  loading: { title: 'Lucro Certo Pay — Portal', description: 'Acesse seu portal Lucro Certo Pay. Acompanhe suas vendas e pagamentos.' },
+  attendant: { title: 'Lucro Certo Pay — Portal do Atendente Lucro Certo Pay', description: 'Portal individual do atendente Lucro Certo Pay. Lance suas vendas, acompanhe comissões, ranking e repasses.' },
+  partner: { title: 'Lucro Certo Pay — Portal do Parceiro Lucro Certo Pay', description: 'Portal do Parceiro Lucro Certo Pay. Acompanhe suas vendas e pagamentos.' },
+  admin: { title: 'Lucro Certo Pay — Gestão', description: 'Administração Lucro Certo Pay. Acompanhe vendas, pagamentos e custos.' },
   tracking: { title: 'Rastreio — Acompanhe seu pedido', description: 'Acompanhe as etapas da entrega do seu pedido.' },
 } as const;
 export type PageKind = keyof typeof pageMetadata;

@@ -1,33 +1,10 @@
-import { Fish, Mountain, Tractor } from 'lucide-react';
-import brandImage from './assets/bravus-brasil.webp?inline';
+import { ShieldCheck, TrendingUp, Zap } from 'lucide-react';
 import type { AccountKind } from './domain.ts';
-
-export { brandImage };
-
+import { publicAssetUrl } from './pwa.ts';
+export const brandImage = publicAssetUrl('lucro-certo-wolf.svg');
 export function Brand() {
-  return <span className="brand-lockup">
-    <img className="brand-emblem" src={brandImage} alt="" width="64" height="64" />
-    <span className="brand-wordmark">
-      <strong>BRAVUS</strong>
-      <span className="brand-country"><i />BRASIL<i /></span>
-      <small>PESCA · AGRO · AVENTURA</small>
-    </span>
-  </span>;
+  return <span className="brand-lockup"><img className="brand-emblem" src={brandImage} alt="" width="64" height="64" /><span className="brand-wordmark"><strong>LUCRO CERTO <em>PAY</em></strong><small>INSTINTO PARA CRESCER.</small></span></span>;
 }
-
 export function BrandIntro({ accountKind }: { accountKind?: AccountKind }) {
-  const partner = accountKind === 'partner';
-  return <section className="brand-intro" aria-label="BRAVUS Brasil">
-    <div className="brand-intro-content">
-      <span className="brand-eyebrow"><i />BRAVUS BRASIL</span>
-      <h1>{partner ? 'Portal do Parceiro' : 'Portal do Atendente'}<span>.</span></h1>
-      <p>{partner ? 'Acompanhe suas vendas e pagamentos.' : 'Acompanhe suas vendas, comissões e repasses.'}</p>
-      <div className="brand-sectors" aria-label="Pesca, Agro e Aventura">
-        <span><Fish size={15} />Pesca</span>
-        <span><Tractor size={16} />Agro</span>
-        <span><Mountain size={15} />Aventura</span>
-      </div>
-    </div>
-    <img className="brand-intro-image" src={brandImage} alt="Marca BRAVUS Brasil — Pesca, Agro e Aventura" width="192" height="192" fetchPriority="high" />
-  </section>;
+  return <section className="brand-intro" aria-label="Lucro Certo Pay"><div className="brand-intro-content"><span className="brand-eyebrow"><i />LUCRO CERTO PAY</span><h1>{accountKind === 'partner' ? 'Portal do Parceiro' : 'Portal do Atendente'}<span>.</span></h1><p>Seu próximo resultado começa aqui. Acompanhe vendas, saldo e repasses.</p><div className="brand-sectors"><span><TrendingUp size={15} />Performance</span><span><ShieldCheck size={16} />Controle</span><span><Zap size={15} />Agilidade</span></div></div><img className="brand-intro-image" src={brandImage} alt="Lobo Lucro Certo Pay" width="192" height="192" fetchPriority="high" /></section>;
 }

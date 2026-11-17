@@ -9,6 +9,7 @@ import './styles.css';
 import './brand.css';
 import './profile.css';
 import './admin.css';
+import './wolf.css';
 
 function currentPage() {
   if (window.location.hash === '#/rastreio' || /^\/rastreio\/?$/.test(window.location.pathname)) return 'tracking';
@@ -43,9 +44,9 @@ function Router() {
     const manifest = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
     if (manifest) manifest.href = publicAssetUrl(admin ? 'admin.webmanifest' : 'manifest.webmanifest');
     const appleName = document.querySelector<HTMLMetaElement>('meta[name="apple-mobile-web-app-title"]');
-    if (appleName) appleName.content = admin ? 'GESTÃO' : 'Lucro Certo';
+    if (appleName) appleName.content = 'Lucro Certo Pay';
     const appName = document.querySelector<HTMLMetaElement>('meta[name="application-name"]');
-    if (appName) appName.content = admin ? 'GESTÃO' : 'Lucro Certo';
+    if (appName) appName.content = 'Lucro Certo Pay';
     const appleIcon = document.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
     if (appleIcon) appleIcon.href = publicAssetUrl('firebot-apple-touch-icon.png');
     // The authenticated portal owns its title; the router must not overwrite it.

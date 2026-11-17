@@ -1,0 +1,47 @@
+html:not([data-portal="tracking"]) {
+  --brand-gold: #ff6049; --brand-gold-light: #ff9b88; --brand-green: #ff6049;
+  color-scheme: dark;
+}
+html:not([data-portal="tracking"]) body { background: #090c12; color: #e8edf5; }
+.portal-shell { background: radial-gradient(ellipse at 95% 0, #ff533c0d, transparent 48%); }
+.portal-header { border-bottom-color: #29313f; padding-bottom: 24px; }
+.portal-header::after { background: linear-gradient(90deg,#ff6049,#ff604900); width: 210px; }
+.brand-wordmark { align-items: flex-start; }
+.brand-wordmark > strong { color: #f1f4fa; font-size: 25px; font-style: normal; letter-spacing: -1px; }
+.brand-wordmark em { color: #ff6049; font-size: 14px; font-style: normal; letter-spacing: 2px; }
+.brand-wordmark > small { color: #8793a6; font-size: 8px; letter-spacing: 2px; }
+.brand-emblem,.brand-intro-image,.admin-brand-image { border-radius: 0; }
+.panel,.notifications-card,.attendant-balance { background: #121822; border-color: #293343; border-radius: 15px; box-shadow: 0 8px 24px #00000016; }
+.panel h1,.panel h2,.admin-heading h1 { color: #f1f4fa; }
+.command-eyebrow { display: block; color: #ff806a; font-size: 9px; letter-spacing: 2.3px; font-weight: 700; margin-bottom: 14px; }
+.admin-heading { padding: 32px 0 22px; position: relative; }
+.admin-heading h1 { font-size: clamp(26px,4vw,36px); letter-spacing: -1.2px; }
+.admin-heading p { color: #a4afbf; font-size: 13px; }
+.admin-stats { gap: 16px; }
+.admin-stats .panel { position: relative; overflow: hidden; background: linear-gradient(140deg,#18202d,#111721); padding: 25px; }
+.admin-stats .panel:first-child { background: linear-gradient(130deg,#392021,#181a23); border-color: #895046; }
+.admin-stats .panel:first-child::after { content: ''; position: absolute; right: 12px; bottom: -24px; width: 120px; height: 120px; background: url('/lucro-certo-wolf.svg') center/contain no-repeat; opacity: .08; pointer-events: none; }
+.admin-stats .panel > span { color: #a6b2c3; letter-spacing: 1.5px; font-size: 9px; }
+.admin-stats .panel > strong { color: #f3f5fa; font-size: 28px; letter-spacing: -1px; }
+.admin-stats .panel:first-child > strong { color: #ff9b88; }
+.admin-stats small,.section-description,.admin-live-status { color: #9caabe; }
+.button.primary { background: #ff6049; color: #110c0b; border-color: #ff6049; font-weight: 750; }
+.button.primary:hover { background: #ff826b; }
+.button.secondary { background: #171f2b; border-color: #344256; color: #dae2ef; }
+.portal-tabs { border-color: #2c3747; }
+.portal-tabs button { color: #a3afbf; }
+.portal-tabs button.active { color: #ff9b88; border-color: #ff6049; background: #ff60490d; }
+input,select,textarea { background: #0d131d; color: #edf1f8; border-color: #364258; }
+.brand-intro { background: linear-gradient(120deg,#1d202c,#121822); border-color: #344050; }
+.brand-intro p,.brand-sectors > span { color: #b1bac9; }
+.admin-pending-link,.receipt-link,.admin-back { color: #ff9b88; }
+@media(max-width:600px) {
+ .brand-wordmark > strong { font-size: 18px; letter-spacing: -.6px; }
+ .brand-wordmark em { font-size: 10px; letter-spacing: 1px; }
+ .brand-wordmark > small { font-size: 6px; letter-spacing: 1px; }
+ .admin-stats .panel { padding: 19px; }
+ .admin-stats .panel > strong { font-size: 24px; }
+ .command-eyebrow { font-size: 8px; letter-spacing: 1.2px; }
+}
+.admin-stats .panel { border-color: #2d394c; }
+.admin-stats .panel:first-child { border-color: #895046; }

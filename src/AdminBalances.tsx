@@ -18,8 +18,8 @@ export default function AdminBalances({ attendants, selected, select }: { attend
         <div><dt>{item.accountKind === 'partner' ? 'Valor do parceiro após as taxas de venda' : 'Comissão após taxas das vendas'}</dt><dd>{money(item.finance.commissionCents)}</dd></div>
         {item.accountKind === 'partner' && <>
           <div><dt>Taxas das vendas (conforme a data)</dt><dd>{money(item.finance.transactionFeeCents)}</dd></div>
-          <div><dt>Custo do gateway BRAVUS</dt><dd>{item.business ? money(item.business.gatewayCostCents) : '—'}</dd><small>{partnerGatewayCostLabel()}</small></div>
-          <div className={item.business && item.business.profitCents < 0 ? 'negative' : 'partner-profit'}><dt>Lucro BRAVUS nas taxas</dt><dd>{item.business ? money(item.business.profitCents) : '—'}</dd><small>Taxas cobradas nas vendas menos o custo do gateway</small></div>
+          <div><dt>Custo do gateway Lucro Certo Pay</dt><dd>{item.business ? money(item.business.gatewayCostCents) : '—'}</dd><small>{partnerGatewayCostLabel()}</small></div>
+          <div className={item.business && item.business.profitCents < 0 ? 'negative' : 'partner-profit'}><dt>Lucro Lucro Certo Pay nas taxas</dt><dd>{item.business ? money(item.business.profitCents) : '—'}</dd><small>Taxas cobradas nas vendas menos o custo do gateway</small></div>
           <div><dt>ADS próprios do parceiro</dt><dd>{item.marketing ? money(item.marketing.ownAdsCents) : '—'}</dd></div>
           <div className={item.marketing && item.marketing.profitCents < 0 ? 'negative' : 'partner-profit'}><dt>Lucro do parceiro após ADS</dt><dd>{item.marketing ? money(item.marketing.profitCents) : '—'}</dd><small>Vendas aprovadas menos as tarifas do período e os ADS registrados</small></div>
           <div><dt>ROI do parceiro</dt><dd>{item.marketing?.roiPercent == null ? '—' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(item.marketing.roiPercent) + '%'}</dd></div>

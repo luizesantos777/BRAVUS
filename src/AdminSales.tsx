@@ -19,11 +19,11 @@ function SaleValues({ sale, partner }: { sale: AdminSale; partner: boolean }) {
   const outcome = sale.cancelledAt ? 'cancelado' : sale.status === 'pending' ? 'a liberar' : sale.status === 'rejected' ? 'recusado' : 'liberado';
   const values: [string, number][] = partner ? [
     ['Valor da venda', sale.amountCents], ['Taxa da venda', sale.feeCents], [`Valor do parceiro ${outcome}`, saleEarnings(sale)],
-    ['Custo do gateway BRAVUS', recordedPartnerGatewayCost(sale)],
-    [sale.status === 'approved' ? 'Lucro BRAVUS nas taxas' : 'Lucro BRAVUS projetado', sale.feeCents - recordedPartnerGatewayCost(sale)],
+    ['Custo do gateway Lucro Certo Pay', recordedPartnerGatewayCost(sale)],
+    [sale.status === 'approved' ? 'Lucro Lucro Certo Pay nas taxas' : 'Lucro Lucro Certo Pay projetado', sale.feeCents - recordedPartnerGatewayCost(sale)],
   ] : [
     ['Valor da venda', sale.amountCents], ['Taxa total do gateway', sale.feeCents], ['Taxa do atendente', attendantSaleFee(sale)],
-    ['Taxa da BRAVUS', sale.feeCents - attendantSaleFee(sale)], ['BRAVUS após taxas', sale.amountCents - sale.feeCents - saleEarnings(sale)],
+    ['Taxa da Lucro Certo Pay', sale.feeCents - attendantSaleFee(sale)], ['Lucro Certo Pay após taxas', sale.amountCents - sale.feeCents - saleEarnings(sale)],
     [`Comissão ${sale.cancelledAt ? 'cancelada' : sale.status === 'pending' ? 'a liberar' : sale.status === 'rejected' ? 'recusada' : 'liberada'}`, saleEarnings(sale)],
   ];
   return <dl className={'review-values' + (partner ? ' partner-review-values' : '')}>{values.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{money(value)}</dd></div>)}</dl>;
@@ -58,7 +58,7 @@ export default function AdminSales({ client, attendants, refreshKey, resetKey, p
       <div className="review-sale-heading"><div><strong>{sale.attendantName}</strong><small>{dateLabel(sale.date)} às {sale.time} · {sale.checkoutName}</small></div><span className={`sale-status ${sale.status}`}>{saleStatusLabel(sale)}</span></div>
       <ReceiptDuplicateWarning sale={sale} />
       <SaleValues sale={sale} partner={partnerSale(sale)} />
-      {partnerSale(sale) && <p className="review-note">Custo BRAVUS: {partnerGatewayCostLabel()}. A diferença entre a taxa registrada nesta venda e esse custo compõe o lucro BRAVUS nas taxas. O restante da venda fica para o parceiro. Só vendas aprovadas entram no fechamento.</p>}
+      {partnerSale(sale) && <p className="review-note">Custo Lucro Certo Pay: {partnerGatewayCostLabel()}. A diferença entre a taxa registrada nesta venda e esse custo compõe o lucro Lucro Certo Pay nas taxas. O restante da venda fica para o parceiro. Só vendas aprovadas entram no fechamento.</p>}
       {sale.note && <p className="review-note">{sale.note}</p>}{sale.reviewNote && <p className="review-note"><strong>{sale.cancelledAt ? 'Motivo do cancelamento' : sale.status === 'rejected' ? 'Motivo da recusa' : 'Observação da análise'}:</strong> {sale.reviewNote}</p>}
       <div className="review-actions"><button className="button secondary" onClick={() => void openReceipt(sale.receiptId)}><FileImage size={14} />Ver comprovante</button>{sale.status === 'pending' && <><button className="button secondary reject-sale" disabled={busy} onClick={() => { setDecision({ sale, status: 'rejected' }); setNote(''); }}><X size={14} />Recusar venda</button><button className="button primary" disabled={busy} onClick={() => { setDecision({ sale, status: 'approved' }); setNote(''); }}><Check size={14} />Aprovar venda</button></>}{sale.status === 'approved' && <button className="button secondary reject-sale" disabled={busy} onClick={() => { setDecision({ sale, status: 'cancelled' }); setNote(''); }}><X size={14} />Cancelar venda aprovada</button>}</div>
     </article>)}</div> : <div className="empty"><Check size={28} /><h3>Nenhuma venda nesta lista</h3><p>Os lançamentos de atendentes e parceiros aparecerão aqui para você analisar.</p></div>}

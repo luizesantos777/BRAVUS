@@ -66,7 +66,7 @@ function SaleValuePreview({ row, checkout, index, commissionBps, accountKind }: 
       net = saleEarnings({ amountCents, feeCents, attendantFeeCents: allocatedSaleFee(feeCents, accountKind), commissionBps: accountKind === 'partner' ? 10000 : commissionBps, commissionMode: 'gross-share-less-fees' });
     } catch (cause) { error = (cause as Error).message; }
   }
-  return <div className="sale-fee-preview" aria-label={`Resumo da venda ${index + 1}`}><span>{checkout.name}</span>{net !== null && <span>Seu valor: <strong>{money(net)}</strong><i />Antes de ADS</span>}{error && <span className="fee-validation">{error}</span>}</div>;
+  return <div className="sale-fee-preview" aria-label={`Resumo da venda ${index + 1}`}><span>{accountKind === 'partner' ? 'Valor líquido da venda' : checkout.name}</span>{accountKind === 'partner' && <details className="partner-fee-details"><summary>Ver taxas</summary><p>{(checkout.feeBps / 100).toLocaleString('pt-BR')}% + {money(checkout.fixedFeeCents)} por venda. A prévia já desconta essas taxas.</p></details>}{net !== null && <span>Seu valor: <strong>{money(net)}</strong><i />Antes de ADS</span>}{error && <span className="fee-validation">{error}</span>}</div>;
 }
 function SalesForm({ client, portal, disabled, refresh, notify, preview }: { client: PortalClient; portal: Portal; disabled: boolean; refresh: () => Promise<void>; notify: (notice: Notice) => void; preview: (receipt: ReceiptView) => void }) {
   const draft = useSalesDraft(client, client.isDemo || portal.profile.id !== 'demo');

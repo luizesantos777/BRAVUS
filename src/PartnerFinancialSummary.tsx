@@ -1,5 +1,5 @@
 import PartnerAdsNotice from './PartnerAdsNotice.tsx';
-import { money } from './domain.ts';
+import { money, partnerTariffLabel } from './domain.ts';
 import type { Portal } from './domain.ts';
 
 export default function PartnerFinancialSummary({ portal }: { portal: Portal }) {
@@ -7,6 +7,7 @@ export default function PartnerFinancialSummary({ portal }: { portal: Portal }) 
   const roi = marketing?.roiPercent == null ? '—' : new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(marketing.roiPercent) + '%';
   return <>
     <PartnerAdsNotice />
+    <details className="partner-fee-details"><summary>Ver taxas</summary><p>Taxa atual: {partnerTariffLabel(portal.profile.partnerFeeRules)} por venda. Seu valor nas vendas e o saldo para repasse já consideram os descontos aplicáveis.</p></details>
     <div className="financial-grid partner-financial-grid">
       <article className="metric" aria-label="Faturamento aprovado do parceiro"><h3>FATURAMENTO APROVADO</h3><strong>{money(finance.grossCents)}</strong><small>{finance.count} {finance.count === 1 ? 'venda aprovada' : 'vendas aprovadas'} no período</small></article>
       <article className="metric" aria-label="ADS próprio do parceiro"><h3>ADS PAGOS POR VOCÊ</h3><strong>{marketing ? money(marketing.ownAdsCents) : '—'}</strong><small>Pago por fora · Sem desconto no repasse</small></article>

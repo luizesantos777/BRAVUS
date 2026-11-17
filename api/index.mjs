@@ -486,16 +486,16 @@ var REQUESTED_PARTNER_TARIFF = {
   accountCreatedBefore: "2026-11-13T03:00:00.000Z"
 };
 var CAPITAL_PARTNER_TARIFF = {
-  migration: "named-capital-20-percent-from-2026-11-17-v6",
+  migration: "named-capital-15-percent-200-all-sales-v7",
   name: "capital",
-  effectiveFrom: "2026-11-17",
-  feeBps: 2e3,
-  fixedFeeCents: 0,
+  effectiveFrom: "0001-01-01",
+  feeBps: 1500,
+  fixedFeeCents: 200,
+  allSales: true,
   accountCreatedBefore: "2026-11-18T03:00:00.000Z"
 };
 async function applyRequestedPartnerTariff(db) {
   await applyTariff(db, REQUESTED_PARTNER_TARIFF);
-  await restoreCapitalHistory(db);
   await applyTariff(db, CAPITAL_PARTNER_TARIFF);
 }
 async function applyTariff(db, rule) {
@@ -519,26 +519,6 @@ async function applyTariff(db, rule) {
     await db.prepare("UPDATE sales SET fee_cents=?, attendant_fee_cents=?, commission_bps=10000, commission_mode='gross-share-less-fees' WHERE id=?").run(fee, fee, String(sale.id));
   }
   await db.prepare("INSERT INTO schema_migrations VALUES (?)").run(rule.migration);
-}
-async function restoreCapitalHistory(db) {
-  const rule = CAPITAL_PARTNER_TARIFF;
-  if (await db.prepare("SELECT id FROM schema_migrations WHERE id=?").get(rule.migration)) return;
-  const accounts = await db.prepare("SELECT id, name FROM attendants WHERE account_kind='partner' AND active=1 AND lower(trim(name))=? AND created_at<?").all(rule.name, rule.accountCreatedBefore);
-  if (accounts.length !== 1) return;
-  const account = accounts[0], actor = { id: "system", name: "Sistema / corre\xE7\xE3o de vig\xEAncia solicitada" };
-  const tariff = await db.prepare("SELECT before_json FROM audit_events WHERE target_id=? AND action='partner.tariff_changed' AND actor_id='system' ORDER BY created_at ASC, rowid ASC LIMIT 1").get(String(account.id));
-  if (tariff) {
-    const original = JSON.parse(String(tariff.before_json));
-    await db.prepare("UPDATE attendants SET partner_fee_rules=? WHERE id=?").run(original.rules, String(account.id));
-  }
-  const sales = await db.prepare("SELECT id, fee_cents, attendant_fee_cents, commission_bps, commission_mode FROM sales WHERE attendant_id=? AND date<?").all(String(account.id), rule.effectiveFrom);
-  for (const sale of sales) {
-    const audit = await db.prepare("SELECT before_json FROM audit_events WHERE target_id=? AND action='partner.dated_sale_repriced' AND actor_id='system' ORDER BY created_at ASC, rowid ASC LIMIT 1").get(String(sale.id));
-    if (!audit) continue;
-    const original = JSON.parse(String(audit.before_json));
-    await appendAudit(db, actor, "partner.dated_sale_repriced", String(sale.id), String(account.name), { feeCents: Number(sale.fee_cents), attendantFeeCents: sale.attendant_fee_cents == null ? null : Number(sale.attendant_fee_cents), commissionBps: Number(sale.commission_bps), commissionMode: String(sale.commission_mode) }, original);
-    await db.prepare("UPDATE sales SET fee_cents=?, attendant_fee_cents=?, commission_bps=?, commission_mode=? WHERE id=?").run(original.feeCents, original.attendantFeeCents, original.commissionBps, original.commissionMode, String(sale.id));
-  }
 }
 
 // src/receipt-types.ts

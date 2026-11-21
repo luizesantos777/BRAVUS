@@ -58,9 +58,13 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
 test('checkout individual identifica atendentes e parceiros ativos sem expor o acesso privado', async t => {
   const { store, a, b, call } = await fixture(t);
   const partner = await store.createPartner('Parceiro Teste');
+  const anotherPartner = await store.createPartner('Outro Parceiro Teste');
   const lookup = (id: string) => call(`/api/public/checkout-attendants/${id}`, '');
-  assert.equal(attendantCheckoutUrl(a.id), `https://pagamento.bravuspix.shop/a/${a.id}`);
-  assert.notEqual(attendantCheckoutUrl(a.id), attendantCheckoutUrl(b.id));
+  assert.equal(attendantCheckoutUrl(a.id, 'attendant'), `https://pagamento.bravuspix.shop/a/${a.id}`);
+  assert.notEqual(attendantCheckoutUrl(a.id, 'attendant'), attendantCheckoutUrl(b.id, 'attendant'));
+  assert.equal(attendantCheckoutUrl(partner.id, 'partner'), `https://biocamisas.shop/a/${partner.id}`);
+  assert.equal(attendantCheckoutUrl(anotherPartner.id, 'partner'), `https://biocamisas.shop/a/${anotherPartner.id}`);
+  assert.notEqual(attendantCheckoutUrl(partner.id, 'partner'), attendantCheckoutUrl(anotherPartner.id, 'partner'));
   const first = await lookup(a.id);
   assert.equal(first.status, 200);
   assert.equal(first.headers.get('cache-control'), 'no-store');

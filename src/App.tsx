@@ -73,7 +73,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const { rows, date, pending } = draft.draft;
   const { setRows, setDate } = draft;
   const partner = portal.profile.accountKind === 'partner';
-  const checkoutUrl = client.isDemo ? GENERAL_CHECKOUT_URL : attendantCheckoutUrl(portal.profile.id) ?? GENERAL_CHECKOUT_URL;
+  const checkoutUrl = client.isDemo ? GENERAL_CHECKOUT_URL : attendantCheckoutUrl(portal.profile.id, portal.profile.accountKind) ?? GENERAL_CHECKOUT_URL;
   const datedCheckouts = accountCheckouts(portal.checkouts, portal.profile.accountKind, portal.profile.partnerFeeRules, date);
   const onlyCheckout = datedCheckouts.length === 1 ? datedCheckouts[0] : undefined;
   useEffect(() => { if (onlyCheckout) draft.selectOnlyCheckout(onlyCheckout.id); }, [onlyCheckout?.id, draft.ready, pending, rows]);

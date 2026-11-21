@@ -16,6 +16,8 @@ import { readAudit, readFinancialReport } from './admin-controls.ts';
 import { financialCsv } from '../src/admin-domain.ts';
 import { receiptExtension } from '../src/receipt-types.ts';
 import { isCheckoutAttendantId } from '../src/checkout-link.ts';
+import { parseCheckoutSaleProof, parseVerifiedCheckoutSale, verifyCheckoutSale, wakeCheckoutSales } from './checkout-sales.ts';
+import type { CheckoutSaleVerifier } from './checkout-sales.ts';
 
 const BODY_LIMIT = 12 * 1024 * 1024;
 const json = (response: ServerResponse, status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
@@ -39,7 +41,7 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
     request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
   });
 }
-export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string }
+export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string; verifyCheckoutSale?: CheckoutSaleVerifier }
 export function createPortalHandler(store: PortalStore, options: PortalHttpOptions = {}) {
   const failedAuth = new Map<string, { count: number; started: number }>();
   const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
@@ -60,6 +62,19 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
         }
         if (url.pathname === '/api/health' && request.method === 'GET') { await store.health(); json(response, 200, { status: 'ok', push: options.push ? 'enabled' : 'disabled' }); return; }
+        if (url.pathname === '/api/integrations/checkout-sales') {
+          if (request.method !== 'POST') throw new PortalError(405, 'Método não permitido.');
+          const claim = parseCheckoutSaleProof(await readJson(request, 1024));
+          if (!claim) throw new PortalError(400, 'Identificação do pagamento inválida.');
+          let verified: unknown;
+          try { verified = await (options.verifyCheckoutSale ?? verifyCheckoutSale)(claim); }
+          catch { throw new PortalError(503, 'Não foi possível consultar o pagamento no checkout.'); }
+          if (verified === null) throw new PortalError(404, 'Pagamento confirmado não encontrado.');
+          const sale = parseVerifiedCheckoutSale(verified, claim.orderId);
+          if (!sale) throw new PortalError(503, 'O checkout retornou uma confirmação inválida.');
+          json(response, 200, await store.recordCheckoutSale(sale));
+          return;
+        }
         const checkoutAttendantsPath = '/api/public/checkout-attendants';
         if (url.pathname === checkoutAttendantsPath || url.pathname.startsWith(`${checkoutAttendantsPath}/`)) {
           const id = url.pathname.slice(checkoutAttendantsPath.length + 1);
@@ -76,10 +91,16 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         for (const [key, value] of failedAuth) if (now - value.started > 60_000) failedAuth.delete(key);
         if ((failedAuth.get(identity)?.count ?? 0) >= 30) throw new PortalError(429, 'Muitas tentativas. Aguarde um minuto e tente novamente.');
         const authorization = request.headers.authorization ?? '';
-        if (url.pathname === '/api/cron/backups') {
+        if (url.pathname === '/api/cron/backups' || url.pathname === '/api/cron/checkout-sales') {
           const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
           if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest())) throw new PortalError(401, 'Acesso não autorizado.');
           if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
+          if (url.pathname === '/api/cron/checkout-sales') {
+            try { await wakeCheckoutSales(); }
+            catch { throw new PortalError(503, 'Não foi possível acionar o checkout.'); }
+            json(response, 200, { triggered: true });
+            return;
+          }
           if (!options.backups) throw new PortalError(503, 'Backups ainda não configurados.');
           json(response, 200, await options.backups.run('daily')); return;
         }

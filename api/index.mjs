@@ -541,6 +541,7 @@ var PortalError = class extends Error {
 };
 var systemActor = { id: "system", name: "Sistema / terminal" };
 var accountHistorySql = ["sales", "costs", "payouts", "batches", "receipts"].map((table) => `EXISTS (SELECT 1 FROM ${table} WHERE attendant_id = a.id)`).join(" OR ");
+var approvalNote = "Pagamento confirmado automaticamente pelo checkout.";
 var tokenHash = (token) => createHash("sha256").update(token).digest("hex");
 var invalid = (message) => {
   throw new PortalError(400, message);
@@ -587,6 +588,7 @@ var PortalStore = class _PortalStore {
       CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, fee_bps INTEGER NOT NULL CHECK(fee_bps BETWEEN 0 AND 10000));
       INSERT OR IGNORE INTO checkouts (id, name, fee_bps) VALUES ('main', 'Checkout principal', 0), ('pix', 'PIX manual', 0);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), request_key TEXT NOT NULL, payload_hash TEXT NOT NULL, UNIQUE(attendant_id, request_key));
+      CREATE UNIQUE INDEX IF NOT EXISTS batches_checkout_order ON batches(request_key) WHERE request_key GLOB 'sites:*';
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), batch_id TEXT NOT NULL REFERENCES batches(id), date TEXT NOT NULL, time TEXT NOT NULL, checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), fee_cents INTEGER NOT NULL, commission_bps INTEGER NOT NULL, goal_cents INTEGER NOT NULL, note TEXT NOT NULL, receipt_id TEXT NOT NULL REFERENCES receipts(id), created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS sales_attendant_date ON sales(attendant_id, date);
@@ -1005,8 +1007,8 @@ var PortalStore = class _PortalStore {
     return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
   async checkoutAttendant(id) {
-    const row = await this.sql.prepare("SELECT name FROM attendants WHERE id = ? AND active = 1 AND account_kind = 'attendant'").get(id);
-    return row ? { name: String(row.name) } : null;
+    const row = await this.sql.prepare("SELECT name, account_kind FROM attendants WHERE id = ? AND active = 1").get(id);
+    return row ? { name: String(row.name), kind: row.account_kind === "partner" ? "partner" : "attendant" } : null;
   }
   async checkouts() {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
@@ -1083,6 +1085,41 @@ var PortalStore = class _PortalStore {
     if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES || !(receipt.mime === "image/png" && png || receipt.mime === "image/jpeg" && jpeg || receipt.mime === "image/webp" && webp || receipt.mime === "application/pdf" && isPdfReceipt(bytes))) return invalid("Use um print PNG, JPG ou WEBP, ou um PDF v\xE1lido, de at\xE9 2 MB.");
     return { name: receipt.name, mime: receipt.mime, bytes };
   }
+  async insertRecordedSale(sale) {
+    const { profile, batchId, date, time, checkout, amountCents, feeCents, note, receipt, createdAt, approved } = sale;
+    const receiptId = randomUUID2(), id = randomUUID2();
+    await this.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, profile.id, receipt.name, receipt.mime, receipt.bytes);
+    await this.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, review_note, reviewed_at, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gross-share-less-fees', ?, ?)").run(id, profile.id, batchId, date, time, checkout.id, checkout.name, amountCents, feeCents, profile.commissionBps, 0, note, receiptId, createdAt, approved ? "approved" : "pending", approved ? approvalNote : "", approved ? createdAt : null, allocatedSaleFee(feeCents, profile.accountKind), profile.accountKind === "partner" ? partnerGatewayCost(amountCents) : null);
+    return id;
+  }
+  async recordCheckoutSale(sale) {
+    const requestKey = `sites:${sale.orderId}`;
+    const payloadHash = createHash("sha256").update(JSON.stringify([sale.accountId, sale.amountCents, sale.provider, sale.date, sale.time])).digest("hex");
+    return this.withTransaction(async (store) => {
+      const previous = await store.sql.prepare("SELECT b.payload_hash, s.id AS sale_id FROM batches b JOIN sales s ON s.batch_id = b.id WHERE b.request_key = ? AND b.request_key GLOB 'sites:*'").get(requestKey);
+      if (previous) {
+        if (previous.payload_hash !== payloadHash) throw new PortalError(409, "Este pagamento j\xE1 foi recebido com outros dados.");
+        return { processed: true, duplicate: true, saleId: String(previous.sale_id) };
+      }
+      const auth = { id: sale.accountId };
+      const profile = await store.profile(auth).catch((error) => {
+        if (error instanceof PortalError && error.status === 401) throw new PortalError(404, "Conta do pagamento n\xE3o encontrada.");
+        throw error;
+      });
+      const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
+      const checkout = profile.accountKind === "partner" || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id) ? checkouts[0] : checkouts.find((item) => item.id === (sale.provider === "buckpay" ? "buckpay" : "main"));
+      if (!checkout) throw new PortalError(503, "Tarifa do checkout indispon\xEDvel.");
+      const feeCents = checkoutFee(sale.amountCents, { ...checkout, minAmountCents: 1, maxAmountCents: null });
+      const receipt = store.receiptInput(sale.receipt);
+      const batchId = randomUUID2(), createdAt = (/* @__PURE__ */ new Date()).toISOString();
+      await store.sql.prepare("INSERT INTO batches VALUES (?, ?, ?, ?)").run(batchId, profile.id, requestKey, payloadHash);
+      const saleId = await store.insertRecordedSale({ profile, batchId, date: sale.date, time: sale.time, checkout, amountCents: sale.amountCents, feeCents, note: `Pagamento do checkout ${sale.orderId}.`, receipt, createdAt, approved: true });
+      const actor = { id: "checkout-sites", name: "Checkout Lucro Certo Pay" };
+      await store.audit(actor, "sales.submitted", batchId, profile.name, null, { count: 1, amountCents: sale.amountCents, date: sale.date });
+      await store.audit(actor, "sale.approved", saleId, profile.name, null, { status: "approved", note: approvalNote, orderId: sale.orderId, provider: sale.provider });
+      return { processed: true, duplicate: false, saleId };
+    });
+  }
   async recordSales(auth, input, requestKey) {
     if (!/^[A-Za-z0-9_-]{12,100}$/.test(requestKey)) invalid("Identificador de envio inv\xE1lido. Atualize a p\xE1gina.");
     if (!input || typeof input !== "object") invalid("Lan\xE7amento inv\xE1lido.");
@@ -1127,9 +1164,7 @@ var PortalStore = class _PortalStore {
       for (const row of normalized) {
         const checkout = partnerCheckout ?? row.checkout;
         const feeCents = partnerCheckout ? checkoutFee(row.amountCents, checkout) : row.feeCents;
-        const receiptId = randomUUID2();
-        await store.sql.prepare("INSERT INTO receipts VALUES (?, ?, ?, ?, ?)").run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes);
-        await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID2(), auth.id, batchId, batch.date, row.time, checkout.id, checkout.name, row.amountCents, feeCents, settlementProfile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(feeCents, settlementProfile.accountKind), settlementProfile.accountKind === "partner" ? partnerGatewayCost(row.amountCents) : null);
+        await store.insertRecordedSale({ ...row, profile: settlementProfile, batchId, date: batch.date, checkout, feeCents, createdAt });
       }
       await store.audit({ id: auth.id, name: profile.name }, "sales.submitted", batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
       return { duplicate: false, count: normalized.length };
@@ -1367,6 +1402,44 @@ var CHECKOUT_ORIGIN = "https://pagamento.bravuspix.shop";
 var GENERAL_CHECKOUT_URL = `${CHECKOUT_ORIGIN}/checkout`;
 var isCheckoutAttendantId = (id) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
 
+// server/checkout-sales.ts
+var CHECKOUT_VERIFIER = `${CHECKOUT_ORIGIN}/api/integrations/checkout-sales/verify`;
+var uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+function parseCheckoutSaleProof(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 2) return null;
+  const { orderId, proof } = value;
+  if (typeof orderId !== "string" || !uuidV4.test(orderId) || typeof proof !== "string" || !/^[0-9a-f]{64}$/.test(proof)) return null;
+  return { orderId, proof };
+}
+function parseVerifiedCheckoutSale(value, expectedOrderId) {
+  if (!value || typeof value !== "object") return null;
+  const { orderId, accountId, amountCents, provider, date, time, receipt } = value;
+  if (orderId !== expectedOrderId || typeof accountId !== "string" || !uuidV4.test(accountId)) return null;
+  if (typeof amountCents !== "number" || !Number.isSafeInteger(amountCents) || amountCents < 600 || amountCents > 3e5) return null;
+  if (typeof provider !== "string" || !/^[a-z0-9_]{1,40}$/.test(provider) || typeof date !== "string" || !validDate(date) || date > businessToday()) return null;
+  if (typeof time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !receipt || typeof receipt !== "object") return null;
+  const { name, mime, base64 } = receipt;
+  if (typeof name !== "string" || mime !== "application/pdf" || typeof base64 !== "string") return null;
+  return { orderId, accountId, amountCents, provider, date, time, receipt: { name, mime, base64 } };
+}
+async function verifyCheckoutSale(claim) {
+  const response = await fetch(CHECKOUT_VERIFIER, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(claim),
+    redirect: "error",
+    signal: AbortSignal.timeout(7e3)
+  });
+  if (response.status === 400 || response.status === 401 || response.status === 403 || response.status === 404) return null;
+  if (!response.ok) throw new Error("N\xE3o foi poss\xEDvel consultar o pagamento no checkout.");
+  return response.json();
+}
+async function wakeCheckoutSales() {
+  const response = await fetch(`${CHECKOUT_ORIGIN}/checkout`, { redirect: "error", signal: AbortSignal.timeout(7e3) });
+  await response.body?.cancel();
+  if (!response.ok) throw new Error("N\xE3o foi poss\xEDvel acionar o checkout.");
+}
+
 // server/http.ts
 var BODY_LIMIT = 12 * 1024 * 1024;
 var json = (response, status, value) => {
@@ -1437,6 +1510,22 @@ function createPortalHandler(store, options = {}) {
           json(response, 200, { status: "ok", push: options.push ? "enabled" : "disabled" });
           return;
         }
+        if (url.pathname === "/api/integrations/checkout-sales") {
+          if (request.method !== "POST") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
+          const claim = parseCheckoutSaleProof(await readJson(request, 1024));
+          if (!claim) throw new PortalError(400, "Identifica\xE7\xE3o do pagamento inv\xE1lida.");
+          let verified;
+          try {
+            verified = await (options.verifyCheckoutSale ?? verifyCheckoutSale)(claim);
+          } catch {
+            throw new PortalError(503, "N\xE3o foi poss\xEDvel consultar o pagamento no checkout.");
+          }
+          if (verified === null) throw new PortalError(404, "Pagamento confirmado n\xE3o encontrado.");
+          const sale = parseVerifiedCheckoutSale(verified, claim.orderId);
+          if (!sale) throw new PortalError(503, "O checkout retornou uma confirma\xE7\xE3o inv\xE1lida.");
+          json(response, 200, await store.recordCheckoutSale(sale));
+          return;
+        }
         const checkoutAttendantsPath = "/api/public/checkout-attendants";
         if (url.pathname === checkoutAttendantsPath || url.pathname.startsWith(`${checkoutAttendantsPath}/`)) {
           const id = url.pathname.slice(checkoutAttendantsPath.length + 1);
@@ -1453,10 +1542,19 @@ function createPortalHandler(store, options = {}) {
         for (const [key, value] of failedAuth) if (now - value.started > 6e4) failedAuth.delete(key);
         if ((failedAuth.get(identity)?.count ?? 0) >= 30) throw new PortalError(429, "Muitas tentativas. Aguarde um minuto e tente novamente.");
         const authorization = request.headers.authorization ?? "";
-        if (url.pathname === "/api/cron/backups") {
+        if (url.pathname === "/api/cron/backups" || url.pathname === "/api/cron/checkout-sales") {
           const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
           if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash2("sha256").update(supplied).digest(), createHash2("sha256").update(options.cronSecret).digest())) throw new PortalError(401, "Acesso n\xE3o autorizado.");
           if (request.method !== "GET") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
+          if (url.pathname === "/api/cron/checkout-sales") {
+            try {
+              await wakeCheckoutSales();
+            } catch {
+              throw new PortalError(503, "N\xE3o foi poss\xEDvel acionar o checkout.");
+            }
+            json(response, 200, { triggered: true });
+            return;
+          }
           if (!options.backups) throw new PortalError(503, "Backups ainda n\xE3o configurados.");
           json(response, 200, await options.backups.run("daily"));
           return;

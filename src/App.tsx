@@ -42,7 +42,7 @@ function CheckoutCard({ notify, checkout, url }: { notify: (notice: Notice) => v
     try { await navigator.clipboard.writeText(url); notify({ text: 'Link do checkout copiado!' }); }
     catch { input.current?.focus(); input.current?.select(); notify({ text: 'O link foi selecionado. Use a opção Copiar do seu aparelho.' }); }
   }
-  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout Lucro Certo Pay</h3><p>Copie o link para enviar ao cliente ou abra o checkout.</p>{checkout?.maxAmountCents != null && <small className="checkout-limit">Até {money(checkout.maxAmountCents)} por venda</small>}</div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout Lucro Certo Pay</label><input ref={input} id="checkout-link" readOnly value={url} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
+  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout Lucro Certo Pay</h3><p>{url === GENERAL_CHECKOUT_URL ? 'Copie o link para enviar ao cliente ou abra o checkout.' : 'Envie este link ao cliente. Quando a gateway confirma o pagamento, a venda é aprovada no portal.'}</p>{checkout?.maxAmountCents != null && <small className="checkout-limit">Até {money(checkout.maxAmountCents)} por venda</small>}</div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout Lucro Certo Pay</label><input ref={input} id="checkout-link" readOnly value={url} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
 }
 function ManualPixCard({ notify, checkout }: { notify: (notice: Notice) => void; checkout?: Checkout }) {
   const input = useRef<HTMLInputElement>(null);
@@ -73,7 +73,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const { rows, date, pending } = draft.draft;
   const { setRows, setDate } = draft;
   const partner = portal.profile.accountKind === 'partner';
-  const checkoutUrl = client.isDemo || partner ? GENERAL_CHECKOUT_URL : attendantCheckoutUrl(portal.profile.id) ?? GENERAL_CHECKOUT_URL;
+  const checkoutUrl = client.isDemo ? GENERAL_CHECKOUT_URL : attendantCheckoutUrl(portal.profile.id) ?? GENERAL_CHECKOUT_URL;
   const datedCheckouts = accountCheckouts(portal.checkouts, portal.profile.accountKind, portal.profile.partnerFeeRules, date);
   const onlyCheckout = datedCheckouts.length === 1 ? datedCheckouts[0] : undefined;
   useEffect(() => { if (onlyCheckout) draft.selectOnlyCheckout(onlyCheckout.id); }, [onlyCheckout?.id, draft.ready, pending, rows]);

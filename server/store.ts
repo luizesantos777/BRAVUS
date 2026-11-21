@@ -12,6 +12,7 @@ import { appendAudit, controlsSchema } from './controls-schema.ts';
 import { exclusiveCheckoutId, isExclusiveCheckout, PARTNER_GATEWAY_SEED } from './partner-checkouts.ts';
 import { applyRequestedPartnerTariff } from './partner-tariff-migration.ts';
 import { isPdfReceipt } from '../src/receipt-types.ts';
+import type { VerifiedCheckoutSale } from './checkout-sales.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
@@ -21,6 +22,20 @@ const systemActor: AuditActor = { id: 'system', name: 'Sistema / terminal' };
 // even a rejected sale, a cancelled payout, a zero cost or a submitted batch without sales.
 const accountHistorySql = ['sales', 'costs', 'payouts', 'batches', 'receipts'].map(table => `EXISTS (SELECT 1 FROM ${table} WHERE attendant_id = a.id)`).join(' OR ');
 interface AttendantRow { partner_fee_rules: string; id: string; name: string; account_kind: AccountKind; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
+interface RecordedSale {
+  profile: Profile;
+  batchId: string;
+  date: string;
+  time: string;
+  checkout: Checkout;
+  amountCents: number;
+  feeCents: number;
+  note: string;
+  receipt: { name: string; mime: string; bytes: Buffer };
+  createdAt: string;
+  approved?: boolean;
+}
+const approvalNote = 'Pagamento confirmado automaticamente pelo checkout.';
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
 
@@ -58,6 +73,7 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, fee_bps INTEGER NOT NULL CHECK(fee_bps BETWEEN 0 AND 10000));
       INSERT OR IGNORE INTO checkouts (id, name, fee_bps) VALUES ('main', 'Checkout principal', 0), ('pix', 'PIX manual', 0);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), request_key TEXT NOT NULL, payload_hash TEXT NOT NULL, UNIQUE(attendant_id, request_key));
+      CREATE UNIQUE INDEX IF NOT EXISTS batches_checkout_order ON batches(request_key) WHERE request_key GLOB 'sites:*';
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), batch_id TEXT NOT NULL REFERENCES batches(id), date TEXT NOT NULL, time TEXT NOT NULL, checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), fee_cents INTEGER NOT NULL, commission_bps INTEGER NOT NULL, goal_cents INTEGER NOT NULL, note TEXT NOT NULL, receipt_id TEXT NOT NULL REFERENCES receipts(id), created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS sales_attendant_date ON sales(attendant_id, date);
@@ -461,9 +477,9 @@ export class PortalStore {
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
     return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
-  async checkoutAttendant(id: string): Promise<{ name: string } | null> {
-    const row = await this.sql.prepare("SELECT name FROM attendants WHERE id = ? AND active = 1 AND account_kind = 'attendant'").get(id);
-    return row ? { name: String(row.name) } : null;
+  async checkoutAttendant(id: string): Promise<{ name: string; kind: AccountKind } | null> {
+    const row = await this.sql.prepare('SELECT name, account_kind FROM attendants WHERE id = ? AND active = 1').get(id);
+    return row ? { name: String(row.name), kind: row.account_kind === 'partner' ? 'partner' : 'attendant' } : null;
   }
   async checkouts(): Promise<Checkout[]> {
     return (await this.sql.prepare('SELECT * FROM checkouts ORDER BY rowid').all()).map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
@@ -527,6 +543,47 @@ export class PortalStore {
     if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES || !(receipt.mime === 'image/png' && png || receipt.mime === 'image/jpeg' && jpeg || receipt.mime === 'image/webp' && webp || receipt.mime === 'application/pdf' && isPdfReceipt(bytes))) return invalid('Use um print PNG, JPG ou WEBP, ou um PDF válido, de até 2 MB.');
     return { name: receipt.name, mime: receipt.mime, bytes };
   }
+  private async insertRecordedSale(sale: RecordedSale): Promise<string> {
+    const { profile, batchId, date, time, checkout, amountCents, feeCents, note, receipt, createdAt, approved } = sale;
+    const receiptId = randomUUID(), id = randomUUID();
+    await this.sql.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, profile.id, receipt.name, receipt.mime, receipt.bytes);
+    await this.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, review_note, reviewed_at, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gross-share-less-fees', ?, ?)").run(id, profile.id, batchId, date, time, checkout.id, checkout.name, amountCents, feeCents, profile.commissionBps, 0, note, receiptId, createdAt, approved ? 'approved' : 'pending', approved ? approvalNote : '', approved ? createdAt : null, allocatedSaleFee(feeCents, profile.accountKind), profile.accountKind === 'partner' ? partnerGatewayCost(amountCents) : null);
+    return id;
+  }
+  async recordCheckoutSale(sale: VerifiedCheckoutSale): Promise<{ processed: true; duplicate: boolean; saleId: string }> {
+    // The manual submission API does not accept the colon used in this namespace.
+    const requestKey = `sites:${sale.orderId}`;
+    const payloadHash = createHash('sha256').update(JSON.stringify([sale.accountId, sale.amountCents, sale.provider, sale.date, sale.time])).digest('hex');
+    return this.withTransaction(async store => {
+      const previous = await store.sql.prepare("SELECT b.payload_hash, s.id AS sale_id FROM batches b JOIN sales s ON s.batch_id = b.id WHERE b.request_key = ? AND b.request_key GLOB 'sites:*'").get(requestKey);
+      if (previous) {
+        if (previous.payload_hash !== payloadHash) throw new PortalError(409, 'Este pagamento já foi recebido com outros dados.');
+        return { processed: true, duplicate: true, saleId: String(previous.sale_id) };
+      }
+
+      // A payment already attributed by the checkout belongs to that account even after revocation.
+      const auth = { id: sale.accountId };
+      const profile = await store.profile(auth).catch(error => {
+        if (error instanceof PortalError && error.status === 401) throw new PortalError(404, 'Conta do pagamento não encontrada.');
+        throw error;
+      });
+      const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
+      const checkout = profile.accountKind === 'partner' || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id)
+        ? checkouts[0]
+        : checkouts.find(item => item.id === (sale.provider === 'buckpay' ? 'buckpay' : 'main'));
+      if (!checkout) throw new PortalError(503, 'Tarifa do checkout indisponível.');
+      // The trusted checkout has already charged this amount. A manual-entry ceiling does not apply to imports.
+      const feeCents = checkoutFee(sale.amountCents, { ...checkout, minAmountCents: 1, maxAmountCents: null });
+      const receipt = store.receiptInput(sale.receipt);
+      const batchId = randomUUID(), createdAt = new Date().toISOString();
+      await store.sql.prepare('INSERT INTO batches VALUES (?, ?, ?, ?)').run(batchId, profile.id, requestKey, payloadHash);
+      const saleId = await store.insertRecordedSale({ profile, batchId, date: sale.date, time: sale.time, checkout, amountCents: sale.amountCents, feeCents, note: `Pagamento do checkout ${sale.orderId}.`, receipt, createdAt, approved: true });
+      const actor = { id: 'checkout-sites', name: 'Checkout Lucro Certo Pay' };
+      await store.audit(actor, 'sales.submitted', batchId, profile.name, null, { count: 1, amountCents: sale.amountCents, date: sale.date });
+      await store.audit(actor, 'sale.approved', saleId, profile.name, null, { status: 'approved', note: approvalNote, orderId: sale.orderId, provider: sale.provider });
+      return { processed: true, duplicate: false, saleId };
+    });
+  }
   async recordSales(auth: Authenticated, input: unknown, requestKey: string): Promise<{ duplicate: boolean; count: number }> {
     if (!/^[A-Za-z0-9_-]{12,100}$/.test(requestKey)) invalid('Identificador de envio inválido. Atualize a página.');
     if (!input || typeof input !== 'object') invalid('Lançamento inválido.');
@@ -565,9 +622,7 @@ export class PortalStore {
       for (const row of normalized) {
         const checkout = partnerCheckout ?? row.checkout;
         const feeCents = partnerCheckout ? checkoutFee(row.amountCents, checkout) : row.feeCents;
-        const receiptId = randomUUID();
-        (await store.sql.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes));
-        (await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID(), auth.id, batchId, batch.date, row.time, checkout.id, checkout.name, row.amountCents, feeCents, settlementProfile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(feeCents, settlementProfile.accountKind), settlementProfile.accountKind === 'partner' ? partnerGatewayCost(row.amountCents) : null));
+        await store.insertRecordedSale({ ...row, profile: settlementProfile, batchId, date: batch.date, checkout, feeCents, createdAt });
       }
     await store.audit({ id: auth.id, name: profile.name }, 'sales.submitted', batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
     return { duplicate: false, count: normalized.length };

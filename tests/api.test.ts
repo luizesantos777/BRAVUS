@@ -13,10 +13,12 @@ import { businessToday } from '../src/domain.ts';
 import { attendantCheckoutUrl } from '../src/checkout-link.ts';
 import { loadAdminKey } from '../server/admin-key.ts';
 import webpush from 'web-push';
-import { createECDH, createHash, randomBytes } from 'node:crypto';
+import { createECDH, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import { PushService, loadPushKeys } from '../server/push.ts';
 import { exclusiveCheckoutId, PARTNER_GATEWAY_SEED } from '../server/partner-checkouts.ts';
+import { pdfReceiptBytes } from './pdf-fixture.ts';
+import type { CheckoutSaleVerifier, VerifiedCheckoutSale } from '../server/checkout-sales.ts';
 
 const tokenA = 'fixture_attendant_a_012345678901234567890';
 const tokenB = 'fixture_attendant_b_012345678901234567890';
@@ -29,7 +31,7 @@ async function legacyRequest(store: PortalStore, token: string, input: unknown) 
   try { return new Response(JSON.stringify(await store.requestPayout(await store.authenticate(token), input)), { status: 201 }); }
   catch (error) { return new Response(JSON.stringify({ error: (error as Error).message }), { status: (error as { status?: number }).status ?? 500 }); }
 }
-async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSales = true } = {}) {
+async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSales = true, verifyCheckoutSale }: { defaultCheckoutRates?: boolean; approveSales?: boolean; verifyCheckoutSale?: CheckoutSaleVerifier } = {}) {
   const store = await PortalStore.open(':memory:');
   // General authorization and payout scenarios use an explicit fee-free checkout.
   if (!defaultCheckoutRates) (await store.adminSetCheckout('main', { name: 'Checkout principal', fee: '0', fixedFee: '0', higherTier: null }));
@@ -41,7 +43,7 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
     deliveries.push({ endpoint: subscription.endpoint, payload: String(payload) });
     return { statusCode: 201, body: '', headers: {} };
   });
-  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey, push });
+  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey, push, verifyCheckoutSale });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close(); resolve(); }); server.closeAllConnections(); }));
@@ -53,7 +55,7 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
   };
   return { store, a, b, call, submit, push, deliveries };
 }
-test('checkout individual identifica atendentes ativos sem expor o acesso privado', async t => {
+test('checkout individual identifica atendentes e parceiros ativos sem expor o acesso privado', async t => {
   const { store, a, b, call } = await fixture(t);
   const partner = await store.createPartner('Parceiro Teste');
   const lookup = (id: string) => call(`/api/public/checkout-attendants/${id}`, '');
@@ -62,14 +64,75 @@ test('checkout individual identifica atendentes ativos sem expor o acesso privad
   const first = await lookup(a.id);
   assert.equal(first.status, 200);
   assert.equal(first.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await first.json(), { name: 'Ana Teste' });
-  assert.deepEqual(await (await lookup(b.id)).json(), { name: 'Bruno Teste' });
+  assert.deepEqual(await first.json(), { name: 'Ana Teste', kind: 'attendant' });
+  assert.deepEqual(await (await lookup(b.id)).json(), { name: 'Bruno Teste', kind: 'attendant' });
+  assert.deepEqual(await (await lookup(partner.id)).json(), { name: 'Parceiro Teste', kind: 'partner' });
   await store.rotateToken(a.id);
-  assert.deepEqual(await (await lookup(a.id)).json(), { name: 'Ana Teste' });
+  assert.deepEqual(await (await lookup(a.id)).json(), { name: 'Ana Teste', kind: 'attendant' });
   await store.setAttendantActive(a.id, { active: false });
+  await store.setAttendantActive(partner.id, { active: false });
   for (const id of [a.id, partner.id, '11111111-2222-4333-8444-555555555555', 'invalid-id', tokenA, '']) {
     assert.equal((await lookup(id)).status, 404);
   }
+});
+test('checkout confirmado é aprovado uma única vez para a conta verificada e com transação atômica', async t => {
+  const proof = 'a'.repeat(64), confirmed = new Map<string, VerifiedCheckoutSale>();
+  const { store, a, b, call } = await fixture(t, { verifyCheckoutSale: async claim => claim.proof === proof ? confirmed.get(claim.orderId) ?? null : null });
+  const partner = await store.createPartner('Parceiro de checkout');
+  const receipt = { name: 'comprovante.pdf', mime: 'application/pdf', base64: pdfReceiptBytes().toString('base64') };
+  const register = (accountId: string, provider: string, amountCents: number) => {
+    const sale = { orderId: randomUUID(), accountId, amountCents, provider, date: businessToday(), time: '10:23', receipt };
+    confirmed.set(sale.orderId, sale);
+    return sale.orderId;
+  };
+  const submit = (orderId: string, extra = {}, suppliedProof = proof) => call('/api/integrations/checkout-sales', '', { method: 'POST', body: JSON.stringify({ orderId, proof: suppliedProof, ...extra }) });
+
+  const orderId = register(a.id, 'buckpay', 150_000);
+  assert.equal((await submit(orderId, { accountId: b.id, amountCents: 1000 })).status, 400);
+  assert.equal((await submit(orderId, {}, 'b'.repeat(64))).status, 404);
+  assert.equal((await submit(randomUUID())).status, 404);
+  assert.equal((await call('/api/cron/checkout-sales', '')).status, 401);
+  const attempts = await Promise.all([submit(orderId), submit(orderId)]);
+  assert.deepEqual(attempts.map(response => response.status), [200, 200]);
+  const outcomes = await Promise.all(attempts.map(response => response.json()));
+  assert.deepEqual(outcomes.map(result => result.duplicate).sort(), [false, true]);
+  assert.ok(outcomes.every(result => result.processed && result.saleId === outcomes[0].saleId));
+  const attendantSale = (await store.sales({ id: a.id }))[0];
+  assert.equal(attendantSale.status, 'approved');
+  assert.match(attendantSale.reviewNote, /automaticamente/);
+  assert.ok(attendantSale.reviewedAt);
+  assert.equal(attendantSale.checkoutId, 'buckpay');
+  assert.equal(attendantSale.amountCents, 150_000);
+  assert.equal(attendantSale.feeCents, 10_654);
+  assert.equal((await store.sales({ id: b.id })).length, 0);
+  assert.deepEqual(Buffer.from((await store.receipt({ id: a.id }, attendantSale.receiptId)).bytes), pdfReceiptBytes());
+
+  const original = confirmed.get(orderId)!;
+  confirmed.set(orderId, { ...original, accountId: b.id });
+  assert.equal((await submit(orderId)).status, 409);
+  confirmed.set(orderId, original);
+  await store.cancelSale(attendantSale.id, { note: 'Pagamento estornado no cenário de teste.' });
+  assert.equal((await (await submit(orderId)).json()).duplicate, true);
+  assert.equal((await store.sales({ id: a.id }))[0].status, 'rejected');
+
+  const partnerOrder = register(partner.id, 'beehive_card', 100_00);
+  await store.setAttendantActive(partner.id, { active: false });
+  assert.equal((await submit(partnerOrder)).status, 200);
+  const partnerSale = (await store.sales({ id: partner.id }))[0];
+  assert.equal(partnerSale.status, 'approved');
+  assert.equal(partnerSale.checkoutId, 'partner');
+  assert.equal(partnerSale.feeCents, 1400);
+  assert.equal(partnerSale.attendantFeeCents, 1400);
+
+  const failureOrder = register(b.id, 'atlas', 100_00);
+  await store.sql.exec("CREATE TEMP TRIGGER fail_approval BEFORE INSERT ON audit_events WHEN NEW.action = 'sale.approved' BEGIN SELECT RAISE(ABORT, 'synthetic approval failure'); END;");
+  assert.equal((await submit(failureOrder)).status, 500);
+  for (const table of ['batches', 'sales', 'receipts']) {
+    assert.equal(Number((await store.sql.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE attendant_id = ?`).get(b.id))?.count), 0);
+  }
+  await store.sql.exec('DROP TRIGGER fail_approval');
+  assert.equal((await submit(failureOrder)).status, 200);
+  assert.equal((await store.sales({ id: b.id }))[0].status, 'approved');
 });
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
   const { call, submit } = await fixture(t);

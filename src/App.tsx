@@ -19,12 +19,12 @@ import { clipboardFiles, readClipboardImage } from './clipboard-receipts.ts';
 import ReceiptPreview from './ReceiptPreview.tsx';
 import { receiptViewFromInput } from './receipts.ts';
 import type { ReceiptView } from './receipts.ts';
+import { attendantCheckoutUrl, GENERAL_CHECKOUT_URL } from './checkout-link.ts';
 
 type Tab = 'sales' | 'marketing' | 'ranking' | 'payouts' | 'profile';
 type Notice = { text: string; error?: boolean };
 const tabs = [{ id: 'sales', label: 'Lançar Vendas', icon: Plus }, { id: 'marketing', label: 'ADS e ROI', icon: Megaphone }, { id: 'ranking', label: 'Ranking', icon: Trophy }, { id: 'payouts', label: 'Repasses', icon: History }, { id: 'profile', label: 'Meus Dados e PIX', icon: UserRound }] as const;
 const MANUAL_PIX_KEY = 'd026e4d9-0a17-4ecf-b2fe-61e0ff386e6f';
-const CHECKOUT_URL = 'https://pagamento.bravuspix.shop/checkout';
 function initialTab(): Tab {
   const value = new URLSearchParams(window.location.search).get('aba');
   return value === 'perfil' ? 'profile' : value === 'ranking' ? 'ranking' : 'sales';
@@ -36,13 +36,13 @@ function Dialog({ title, close, children }: { title: string; close: () => void; 
   return <dialog ref={ref} className="dialog" aria-labelledby="dialog-title" onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}><header><h2 id="dialog-title">{title}</h2><button className="icon-button" aria-label="Fechar janela" onClick={close}><X size={19} /></button></header>{children}</dialog>;
 }
 function Empty({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) { return <div className="empty"><span>{icon}</span><h3>{title}</h3><p>{children}</p></div>; }
-function CheckoutCard({ notify, checkout }: { notify: (notice: Notice) => void; checkout?: Checkout }) {
+function CheckoutCard({ notify, checkout, url }: { notify: (notice: Notice) => void; checkout?: Checkout; url: string }) {
   const input = useRef<HTMLInputElement>(null);
   async function copy() {
-    try { await navigator.clipboard.writeText(CHECKOUT_URL); notify({ text: 'Link do checkout copiado!' }); }
+    try { await navigator.clipboard.writeText(url); notify({ text: 'Link do checkout copiado!' }); }
     catch { input.current?.focus(); input.current?.select(); notify({ text: 'O link foi selecionado. Use a opção Copiar do seu aparelho.' }); }
   }
-  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout Lucro Certo Pay</h3><p>Copie o link para enviar ao cliente ou abra o checkout.</p>{checkout?.maxAmountCents != null && <small className="checkout-limit">Até {money(checkout.maxAmountCents)} por venda</small>}</div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout Lucro Certo Pay</label><input ref={input} id="checkout-link" readOnly value={CHECKOUT_URL} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={CHECKOUT_URL} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
+  return <section className="checkout-card" aria-labelledby="checkout-title"><div className="checkout-heading"><ShoppingCart size={17} /><div><h3 id="checkout-title">Checkout Lucro Certo Pay</h3><p>Copie o link para enviar ao cliente ou abra o checkout.</p>{checkout?.maxAmountCents != null && <small className="checkout-limit">Até {money(checkout.maxAmountCents)} por venda</small>}</div></div><div className="checkout-controls"><label className="sr-only" htmlFor="checkout-link">Link do checkout Lucro Certo Pay</label><input ref={input} id="checkout-link" readOnly value={url} spellCheck={false} onFocus={event => event.currentTarget.select()} /><a className="button primary" href={url} target="_blank" rel="noopener noreferrer"><ExternalLink size={14} />Abrir checkout</a><button type="button" className="button secondary" onClick={() => void copy()}><Copy size={14} />Copiar link</button></div></section>;
 }
 function ManualPixCard({ notify, checkout }: { notify: (notice: Notice) => void; checkout?: Checkout }) {
   const input = useRef<HTMLInputElement>(null);
@@ -73,6 +73,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
   const { rows, date, pending } = draft.draft;
   const { setRows, setDate } = draft;
   const partner = portal.profile.accountKind === 'partner';
+  const checkoutUrl = client.isDemo || partner ? GENERAL_CHECKOUT_URL : attendantCheckoutUrl(portal.profile.id) ?? GENERAL_CHECKOUT_URL;
   const datedCheckouts = accountCheckouts(portal.checkouts, portal.profile.accountKind, portal.profile.partnerFeeRules, date);
   const onlyCheckout = datedCheckouts.length === 1 ? datedCheckouts[0] : undefined;
   useEffect(() => { if (onlyCheckout) draft.selectOnlyCheckout(onlyCheckout.id); }, [onlyCheckout?.id, draft.ready, pending, rows]);
@@ -185,7 +186,7 @@ function SalesForm({ client, portal, disabled, refresh, notify, preview }: { cli
     <div className="mandatory"><AlertCircle size={15} /><p><strong>Obrigatório:</strong> Todos os lançamentos de vendas manuais são mandatórios. Suba todas as suas vendas no final do dia ou cadastre cada venda individualmente assim que ocorrer.</p></div>
     <div className={`draft-status ${draft.failed ? 'draft-error' : ''}`}><p aria-live="polite">{draft.message}</p><button type="button" className="button secondary" disabled={!draft.ready || !draft.dirty || draft.clearing || busy || pending || preparing.size > 0} onClick={() => void draft.clear().then(cleared => { if (cleared) setError(''); })}><Trash2 size={14} />Descartar rascunho</button></div>
     {pending && <p className="draft-pending" aria-live="polite">Envio aguardando confirmação. Toque em Confirmar envio para concluir sem duplicar as vendas.</p>}
-    {(client.isDemo || portal.profile.id !== 'demo') && <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main') ?? onlyCheckout} />}
+    {(client.isDemo || portal.profile.id !== 'demo') && <CheckoutCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'main') ?? onlyCheckout} url={checkoutUrl} />}
     {(client.isDemo || portal.profile.id !== 'demo') && portal.checkouts.some(checkout => checkout.id === 'pix') && <ManualPixCard notify={notify} checkout={portal.checkouts.find(checkout => checkout.id === 'pix')} />}
     <form onSubmit={submit}><fieldset disabled={busy || disabled || !draft.ready || draft.clearing}><fieldset disabled={pending}>
       <label className="field-label date-label" htmlFor="sale-date">Data da Venda <span aria-hidden="true">*</span></label><input className="date-input" type="date" id="sale-date" value={date} max={businessToday()} required onChange={event => setDate(event.target.value)} />

@@ -1004,6 +1004,10 @@ var PortalStore = class _PortalStore {
     if (!row) throw new PortalError(401, "Atendente n\xE3o encontrado pelo token informado.");
     return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
+  async checkoutAttendant(id) {
+    const row = await this.sql.prepare("SELECT name FROM attendants WHERE id = ? AND active = 1 AND account_kind = 'attendant'").get(id);
+    return row ? { name: String(row.name) } : null;
+  }
   async checkouts() {
     return (await this.sql.prepare("SELECT * FROM checkouts ORDER BY rowid").all()).map((row) => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }
@@ -1358,6 +1362,11 @@ async function readAudit(store, parameters) {
   }, "read");
 }
 
+// src/checkout-link.ts
+var CHECKOUT_ORIGIN = "https://pagamento.bravuspix.shop";
+var GENERAL_CHECKOUT_URL = `${CHECKOUT_ORIGIN}/checkout`;
+var isCheckoutAttendantId = (id) => /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(id);
+
 // server/http.ts
 var BODY_LIMIT = 12 * 1024 * 1024;
 var json = (response, status, value) => {
@@ -1426,6 +1435,17 @@ function createPortalHandler(store, options = {}) {
         if (url.pathname === "/api/health" && request.method === "GET") {
           await store.health();
           json(response, 200, { status: "ok", push: options.push ? "enabled" : "disabled" });
+          return;
+        }
+        const checkoutAttendantsPath = "/api/public/checkout-attendants";
+        if (url.pathname === checkoutAttendantsPath || url.pathname.startsWith(`${checkoutAttendantsPath}/`)) {
+          const id = url.pathname.slice(checkoutAttendantsPath.length + 1);
+          const notFound = "Checkout individual n\xE3o encontrado.";
+          if (!isCheckoutAttendantId(id)) throw new PortalError(404, notFound);
+          if (request.method !== "GET") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
+          const attendant = await store.checkoutAttendant(id);
+          if (!attendant) throw new PortalError(404, notFound);
+          json(response, 200, attendant);
           return;
         }
         const identity = request.socket.remoteAddress ?? "unknown";

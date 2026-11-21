@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
 import { businessToday } from '../src/domain.ts';
+import { attendantCheckoutUrl } from '../src/checkout-link.ts';
 import { loadAdminKey } from '../server/admin-key.ts';
 import webpush from 'web-push';
 import { createECDH, createHash, randomBytes } from 'node:crypto';
@@ -52,6 +53,24 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
   };
   return { store, a, b, call, submit, push, deliveries };
 }
+test('checkout individual identifica atendentes ativos sem expor o acesso privado', async t => {
+  const { store, a, b, call } = await fixture(t);
+  const partner = await store.createPartner('Parceiro Teste');
+  const lookup = (id: string) => call(`/api/public/checkout-attendants/${id}`, '');
+  assert.equal(attendantCheckoutUrl(a.id), `https://pagamento.bravuspix.shop/a/${a.id}`);
+  assert.notEqual(attendantCheckoutUrl(a.id), attendantCheckoutUrl(b.id));
+  const first = await lookup(a.id);
+  assert.equal(first.status, 200);
+  assert.equal(first.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await first.json(), { name: 'Ana Teste' });
+  assert.deepEqual(await (await lookup(b.id)).json(), { name: 'Bruno Teste' });
+  await store.rotateToken(a.id);
+  assert.deepEqual(await (await lookup(a.id)).json(), { name: 'Ana Teste' });
+  await store.setAttendantActive(a.id, { active: false });
+  for (const id of [a.id, partner.id, '11111111-2222-4333-8444-555555555555', 'invalid-id', tokenA, '']) {
+    assert.equal((await lookup(id)).status, 404);
+  }
+});
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
   const { call, submit } = await fixture(t);
   assert.equal((await call('/api/portal', 'invalid_token_123456')).status, 401);

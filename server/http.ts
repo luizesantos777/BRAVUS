@@ -15,6 +15,7 @@ import type { BackupService } from './backups.ts';
 import { readAudit, readFinancialReport } from './admin-controls.ts';
 import { financialCsv } from '../src/admin-domain.ts';
 import { receiptExtension } from '../src/receipt-types.ts';
+import { isCheckoutAttendantId } from '../src/checkout-link.ts';
 
 const BODY_LIMIT = 12 * 1024 * 1024;
 const json = (response: ServerResponse, status: number, value: unknown) => { response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); response.end(JSON.stringify(value)); };
@@ -59,6 +60,17 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
         }
         if (url.pathname === '/api/health' && request.method === 'GET') { await store.health(); json(response, 200, { status: 'ok', push: options.push ? 'enabled' : 'disabled' }); return; }
+        const checkoutAttendantsPath = '/api/public/checkout-attendants';
+        if (url.pathname === checkoutAttendantsPath || url.pathname.startsWith(`${checkoutAttendantsPath}/`)) {
+          const id = url.pathname.slice(checkoutAttendantsPath.length + 1);
+          const notFound = 'Checkout individual não encontrado.';
+          if (!isCheckoutAttendantId(id)) throw new PortalError(404, notFound);
+          if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
+          const attendant = await store.checkoutAttendant(id);
+          if (!attendant) throw new PortalError(404, notFound);
+          json(response, 200, attendant);
+          return;
+        }
         const identity = request.socket.remoteAddress ?? 'unknown';
         const now = Date.now();
         for (const [key, value] of failedAuth) if (now - value.started > 60_000) failedAuth.delete(key);

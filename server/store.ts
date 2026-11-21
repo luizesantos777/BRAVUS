@@ -461,6 +461,10 @@ export class PortalStore {
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
     return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
   }
+  async checkoutAttendant(id: string): Promise<{ name: string } | null> {
+    const row = await this.sql.prepare("SELECT name FROM attendants WHERE id = ? AND active = 1 AND account_kind = 'attendant'").get(id);
+    return row ? { name: String(row.name) } : null;
+  }
   async checkouts(): Promise<Checkout[]> {
     return (await this.sql.prepare('SELECT * FROM checkouts ORDER BY rowid').all()).map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
   }

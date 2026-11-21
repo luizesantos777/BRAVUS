@@ -680,7 +680,9 @@ test('Checkout Buckpay fica separado nas taxas e calcula a venda sem criar outro
   const after = (await (await page.request.get('/api/portal', { headers: personal })).json()).checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay');
   expect(after).toEqual(before);
   await page.goto(`/#/atendente/${token}`);
-  await expect(page.getByLabel('Link do checkout BRAVUS')).toHaveValue('https://pagamento.bravuspix.shop/checkout');
+  const checkoutLink = `https://pagamento.bravuspix.shop/a/${id}`;
+  await expect(page.getByLabel('Link do checkout Lucro Certo Pay')).toHaveValue(checkoutLink);
+  await expect(page.getByRole('link', { name: 'Abrir checkout' })).toHaveAttribute('href', checkoutLink);
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('100');
   await page.getByLabel('Checkout venda 1', { exact: true }).selectOption({ label: 'Checkout Buckpay' });
   const preview = page.getByLabel('Resumo da venda 1'); await expect(preview).not.toContainText('8,68'); await expect(preview).not.toContainText('4,34'); await expect(preview).toContainText('45,66');

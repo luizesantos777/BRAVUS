@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, checkoutTariffFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, Invitation, PartnerAdsCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
@@ -573,7 +573,7 @@ export class PortalStore {
         : checkouts.find(item => item.id === (sale.provider === 'buckpay' ? 'buckpay' : 'main'));
       if (!checkout) throw new PortalError(503, 'Tarifa do checkout indisponível.');
       // The trusted checkout has already charged this amount. A manual-entry ceiling does not apply to imports.
-      const feeCents = checkoutFee(sale.amountCents, { ...checkout, minAmountCents: 1, maxAmountCents: null });
+      const feeCents = checkoutTariffFee(sale.amountCents, checkout);
       const receipt = store.receiptInput(sale.receipt);
       const batchId = randomUUID(), createdAt = new Date().toISOString();
       await store.sql.prepare('INSERT INTO batches VALUES (?, ?, ?, ?)').run(batchId, profile.id, requestKey, payloadHash);

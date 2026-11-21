@@ -697,10 +697,11 @@ test('Checkout Buckpay fica separado nas taxas e calcula a venda sem criar outro
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath('checkout-buckpay.png'), fullPage: true });
 });
-test('checkout mantém o limite de R$ 1.000 e PIX manual sem exibir tarifas de venda', async ({ page }) => {
+test('limites do lançamento manual não aparecem no cartão de checkout público', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.checkout-limit')).toContainText('1.000,00');
-  await expect(page.locator('.checkout-limit')).not.toContainText('25,00%');
+  const publicCheckout = page.getByRole('region', { name: 'Checkout Lucro Certo Pay' });
+  await expect(publicCheckout.getByRole('link', { name: 'Abrir checkout' })).toBeVisible();
+  await expect(publicCheckout.locator('.checkout-limit')).toBeHidden();
   await expect(page.locator('.manual-pix-limit')).toContainText('5,00');
   await expect(page.locator('.manual-pix-limit')).not.toContainText('%');
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('1000');

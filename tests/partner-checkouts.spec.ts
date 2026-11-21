@@ -30,8 +30,9 @@ test('parceiro vê um único gateway de 12% + R$ 2, recupera rascunho e os outro
   await expect(page.getByLabel('ADS próprio do parceiro', { exact: true })).toContainText('Sem desconto no repasse');
   const select = page.getByLabel('Checkout venda 1', { exact: true });
   await expect(select).toHaveCount(0);
-  await expect(page.locator('.checkout-limit')).not.toContainText('%');
-  await expect(page.locator('.checkout-limit')).toContainText('3.000,00');
+  const publicCheckout = page.getByRole('region', { name: 'Checkout Lucro Certo Pay' });
+  await expect(publicCheckout.getByRole('link', { name: 'Abrir checkout' })).toBeVisible();
+  await expect(publicCheckout.locator('.checkout-limit')).toBeHidden();
   await expect(page.locator('.manual-pix-card')).toHaveCount(0);
   await page.getByLabel('Valor bruto venda 1', { exact: true }).fill('3000,01');
   await expect(page.locator('.fee-validation')).toContainText('3.000,00');
@@ -52,7 +53,8 @@ test('parceiro vê um único gateway de 12% + R$ 2, recupera rascunho e os outro
   await page.goto(`/#/atendente/${normal}`);
   await expect(page.getByRole('heading', { name: 'Portal do Atendente.', exact: true })).toBeVisible();
   await expect(page.locator('.brand-intro-content p')).toHaveText('Acompanhe suas vendas, comissões e repasses.');
-  await expect(page.locator('.checkout-limit')).toContainText('1.000,00');
+  await expect(publicCheckout.getByRole('link', { name: 'Abrir checkout' })).toBeVisible();
+  await expect(publicCheckout).not.toContainText(/1\.000,00|3\.000,00|%/);
   await expect(select.locator('option:not([disabled])')).toHaveCount(3); await expect(page.locator('.manual-pix-card')).toBeVisible();
   await page.goto('/#/admin');
   await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');

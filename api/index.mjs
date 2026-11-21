@@ -186,6 +186,7 @@ var periodLabels = { today: "Hoje", yesterday: "Ontem", week: "\xDAltimos 7 dias
 var pixLabels = { "": "Selecione o tipo", email: "E-mail", cpf: "CPF", cnpj: "CNPJ", phone: "Telefone", random: "Chave aleat\xF3ria" };
 var MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 var MAX_SALE_CENTS = 1e8;
+var MAX_CONFIRMED_CHECKOUT_CENTS = 2147483647;
 var DEFAULT_COMMISSION_BPS = 5e3;
 var PARTNER_GATEWAY_FEE_BPS = 1200;
 var PARTNER_FIXED_FEE_CENTS = 200;
@@ -252,6 +253,9 @@ function checkoutFee(amountCents, checkout) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error("Informe um valor de venda v\xE1lido.");
   if (amountCents < checkout.minAmountCents) throw new Error(`${checkout.name}: valor m\xEDnimo de ${money(checkout.minAmountCents)} por venda.`);
   if (checkout.maxAmountCents != null && amountCents > checkout.maxAmountCents) throw new Error(`${checkout.name}: valor m\xE1ximo de ${money(checkout.maxAmountCents)} por venda.`);
+  return checkoutTariffFee(amountCents, checkout);
+}
+function checkoutTariffFee(amountCents, checkout) {
   const tariff = checkout.higherTier && amountCents > checkout.higherTier.aboveAmountCents ? checkout.higherTier : checkout;
   return Math.floor((amountCents * tariff.feeBps + 5e3) / 1e4) + tariff.fixedFeeCents;
 }
@@ -379,7 +383,7 @@ var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_T
 var PARTNER_PROVIDER_FEE_BPS = 599;
 var PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
 function partnerGatewayCost(amountCents) {
-  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error("Valor inv\xE1lido para calcular o custo do gateway.");
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) throw new Error("Valor inv\xE1lido para calcular o custo do gateway.");
   return Math.floor((amountCents * PARTNER_PROVIDER_FEE_BPS + 5e3) / 1e4) + PARTNER_PROVIDER_FIXED_FEE_CENTS;
 }
 function recordedPartnerGatewayCost(sale) {
@@ -1109,7 +1113,7 @@ var PortalStore = class _PortalStore {
       const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
       const checkout = profile.accountKind === "partner" || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id) ? checkouts[0] : checkouts.find((item) => item.id === (sale.provider === "buckpay" ? "buckpay" : "main"));
       if (!checkout) throw new PortalError(503, "Tarifa do checkout indispon\xEDvel.");
-      const feeCents = checkoutFee(sale.amountCents, { ...checkout, minAmountCents: 1, maxAmountCents: null });
+      const feeCents = checkoutTariffFee(sale.amountCents, checkout);
       const receipt = store.receiptInput(sale.receipt);
       const batchId = randomUUID2(), createdAt = (/* @__PURE__ */ new Date()).toISOString();
       await store.sql.prepare("INSERT INTO batches VALUES (?, ?, ?, ?)").run(batchId, profile.id, requestKey, payloadHash);
@@ -1415,7 +1419,7 @@ function parseVerifiedCheckoutSale(value, expectedOrderId) {
   if (!value || typeof value !== "object") return null;
   const { orderId, accountId, amountCents, provider, date, time, receipt } = value;
   if (orderId !== expectedOrderId || typeof accountId !== "string" || !uuidV4.test(accountId)) return null;
-  if (typeof amountCents !== "number" || !Number.isSafeInteger(amountCents) || amountCents < 600 || amountCents > 3e5) return null;
+  if (typeof amountCents !== "number" || !Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) return null;
   if (typeof provider !== "string" || !/^[a-z0-9_]{1,40}$/.test(provider) || typeof date !== "string" || !validDate(date) || date > businessToday()) return null;
   if (typeof time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !receipt || typeof receipt !== "object") return null;
   const { name, mime, base64 } = receipt;

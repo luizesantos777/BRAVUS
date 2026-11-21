@@ -30,10 +30,10 @@ function CheckoutForm({ checkout, save }: { checkout: Checkout; save: (name: str
   const [aboveAmount, setAboveAmount] = useState(checkout.higherTier ? (checkout.higherTier.aboveAmountCents / 100).toFixed(2) : ''), [aboveFee, setAboveFee] = useState(checkout.higherTier ? String(checkout.higherTier.feeBps / 100) : ''), [aboveFixedFee, setAboveFixedFee] = useState(checkout.higherTier ? (checkout.higherTier.fixedFeeCents / 100).toFixed(2) : '');
   const [busy, setBusy] = useState(false);
   return <form className="admin-checkout" aria-label={`Taxas: ${checkout.name}`} onSubmit={async event => { event.preventDefault(); setBusy(true); try { await save(name, fee, fixedFee, minimum, aboveAmount.trim() ? { aboveAmount, fee: aboveFee, fixedFee: aboveFixedFee } : null); } finally { setBusy(false); } }}>
-    <label>Nome do checkout{checkout.maxAmountCents != null && <small className="checkout-tariff">Limite por venda: {money(checkout.maxAmountCents)}</small>}<input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>
+    <label>Nome do checkout{checkout.maxAmountCents != null && <small className="checkout-tariff">Lançamento manual até {money(checkout.maxAmountCents)}</small>}<input required maxLength={100} value={name} onChange={event => setName(event.target.value)} /></label>
     <label>Taxa variável (%)<input required inputMode="decimal" value={fee} onChange={event => setFee(event.target.value)} /></label>
     <label>Taxa fixa (R$)<input required inputMode="decimal" value={fixedFee} onChange={event => setFixedFee(event.target.value)} /></label>
-    <label>Mínimo por venda (R$)<input required inputMode="decimal" value={minimum} onChange={event => setMinimum(event.target.value)} /></label>
+    <label>Mínimo no lançamento manual (R$)<input required inputMode="decimal" value={minimum} onChange={event => setMinimum(event.target.value)} /></label>
     <label>Faixa inicial até (R$)<input inputMode="decimal" placeholder="Taxa única" value={aboveAmount} onChange={event => setAboveAmount(event.target.value)} /></label>
     {aboveAmount.trim() && <><label>Taxa acima da faixa (%)<input required inputMode="decimal" value={aboveFee} onChange={event => setAboveFee(event.target.value)} /></label><label>Taxa fixa acima da faixa (R$)<input required inputMode="decimal" value={aboveFixedFee} onChange={event => setAboveFixedFee(event.target.value)} /></label></>}
     <button className="button secondary" disabled={busy}>Salvar checkout</button>

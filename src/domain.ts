@@ -36,6 +36,7 @@ export interface Invitation { attendantId: string; accountKind?: AccountKind; na
 export interface DemoData { version: 1; settlementVersion?: 1; manualPayoutsVersion?: 1; submittedBatches?: Record<string, { hash: string; count: number }>; profile: Profile; sales: Sale[]; payouts: Payout[]; costs: DailyCost[]; receipts: Record<string, ReceiptInput> }
 export const MAX_RECEIPT_BYTES = 2 * 1024 * 1024;
 export const MAX_SALE_CENTS = 100_000_000;
+export const MAX_CONFIRMED_CHECKOUT_CENTS = 2_147_483_647;
 export const DEFAULT_COMMISSION_BPS = 5000;
 export const PARTNER_GATEWAY_FEE_BPS = 1200;
 export const PARTNER_FIXED_FEE_CENTS = 200;
@@ -112,13 +113,16 @@ export function checkoutFee(amountCents: number, checkout: Checkout): number {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Informe um valor de venda válido.');
   if (amountCents < checkout.minAmountCents) throw new Error(`${checkout.name}: valor mínimo de ${money(checkout.minAmountCents)} por venda.`);
   if (checkout.maxAmountCents != null && amountCents > checkout.maxAmountCents) throw new Error(`${checkout.name}: valor máximo de ${money(checkout.maxAmountCents)} por venda.`);
+  return checkoutTariffFee(amountCents, checkout);
+}
+export function checkoutTariffFee(amountCents: number, checkout: Checkout): number {
   const tariff = checkout.higherTier && amountCents > checkout.higherTier.aboveAmountCents ? checkout.higherTier : checkout;
   return Math.floor((amountCents * tariff.feeBps + 5000) / 10000) + tariff.fixedFeeCents;
 }
 export function checkoutRateLabel(checkout: Checkout, amountCents?: number): string {
   const label = (tariff: Pick<Checkout, 'feeBps' | 'fixedFeeCents'>) => `${new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(tariff.feeBps / 100)}% + ${money(tariff.fixedFeeCents)} por venda`;
   const tier = checkout.higherTier;
-  const maximum = checkout.maxAmountCents != null ? ` · Até ${money(checkout.maxAmountCents)} por venda` : '';
+  const maximum = checkout.maxAmountCents != null ? ` · Lançamento manual até ${money(checkout.maxAmountCents)}` : '';
   if (!tier) return label(checkout) + maximum;
   const limit = money(tier.aboveAmountCents);
   if (amountCents === undefined) return `Até ${limit}: ${label(checkout)} · Acima de ${limit}: ${label(tier)}${maximum}`;

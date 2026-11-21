@@ -91,7 +91,7 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   };
   const submit = (orderId: string, extra = {}, suppliedProof = proof) => call('/api/integrations/checkout-sales', '', { method: 'POST', body: JSON.stringify({ orderId, proof: suppliedProof, ...extra }) });
 
-  const orderId = register(a.id, 'buckpay', 150_000);
+  const orderId = register(a.id, 'buckpay', 350_000);
   assert.equal((await submit(orderId, { accountId: b.id, amountCents: 1000 })).status, 400);
   assert.equal((await submit(orderId, {}, 'b'.repeat(64))).status, 404);
   assert.equal((await submit(randomUUID())).status, 404);
@@ -106,8 +106,8 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   assert.match(attendantSale.reviewNote, /automaticamente/);
   assert.ok(attendantSale.reviewedAt);
   assert.equal(attendantSale.checkoutId, 'buckpay');
-  assert.equal(attendantSale.amountCents, 150_000);
-  assert.equal(attendantSale.feeCents, 10_654);
+  assert.equal(attendantSale.amountCents, 350_000);
+  assert.equal(attendantSale.feeCents, 24_634);
   assert.equal((await store.sales({ id: b.id })).length, 0);
   assert.deepEqual(Buffer.from((await store.receipt({ id: a.id }, attendantSale.receiptId)).bytes), pdfReceiptBytes());
 
@@ -119,14 +119,17 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   assert.equal((await (await submit(orderId)).json()).duplicate, true);
   assert.equal((await store.sales({ id: a.id }))[0].status, 'rejected');
 
-  const partnerOrder = register(partner.id, 'beehive_card', 100_00);
+  const partnerOrder = register(partner.id, 'beehive_card', 2_147_483_647);
   await store.setAttendantActive(partner.id, { active: false });
   assert.equal((await submit(partnerOrder)).status, 200);
   const partnerSale = (await store.sales({ id: partner.id }))[0];
   assert.equal(partnerSale.status, 'approved');
   assert.equal(partnerSale.checkoutId, 'partner');
-  assert.equal(partnerSale.feeCents, 1400);
-  assert.equal(partnerSale.attendantFeeCents, 1400);
+  assert.equal(partnerSale.amountCents, 2_147_483_647);
+  assert.equal(partnerSale.feeCents, 257_698_238);
+  assert.equal(partnerSale.attendantFeeCents, 257_698_238);
+  assert.equal((await submit(register(b.id, 'atlas', 2_147_483_648))).status, 503);
+  assert.equal((await submit(register(b.id, 'atlas', 0))).status, 503);
 
   const failureOrder = register(b.id, 'atlas', 100_00);
   await store.sql.exec("CREATE TEMP TRIGGER fail_approval BEFORE INSERT ON audit_events WHEN NEW.action = 'sale.approved' BEGIN SELECT RAISE(ABORT, 'synthetic approval failure'); END;");
@@ -137,6 +140,8 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   await store.sql.exec('DROP TRIGGER fail_approval');
   assert.equal((await submit(failureOrder)).status, 200);
   assert.equal((await store.sales({ id: b.id }))[0].status, 'approved');
+  assert.equal((await submit(register(b.id, 'atlas', 1))).status, 200);
+  assert.ok((await store.sales({ id: b.id })).some(sale => sale.amountCents === 1 && sale.status === 'approved'));
 });
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
   const { call, submit } = await fixture(t);

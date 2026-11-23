@@ -1,0 +1,1 @@
+ALTER TABLE `payment_orders` ADD `attendant_id` text;

@@ -1,0 +1,153 @@
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,mkdtempSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import {pathToFileURL} from 'node:url';
+import {build} from 'esbuild';
+
+const db=new DatabaseSync(':memory:');
+for(const p of ['0000_bitter_king_bedlam','0001_stale_reaper','0002_complex_roulette','0003_hot_wrecker','0004_attendant-checkout','0005_checkout-auto-approval'])db.exec(readFileSync('drizzle/'+p+'.sql','utf8'));
+globalThis.__env={ADMIN_EMAIL:'owner@example.test',PAYMENT_VAULT_KEY:Buffer.alloc(32,7).toString('base64'),DB:{prepare(sql){const execute=(args=[])=>({async first(){return db.prepare(sql).get(...args)},async all(){return {results:db.prepare(sql).all(...args)}},async run(){return {meta:{changes:Number(db.prepare(sql).run(...args).changes)}}}});return {...execute(),bind(...args){return execute(args)}}}}};
+globalThis.__headers=new Headers();
+const tmp=mkdtempSync(join(tmpdir(),'bravus-partners-sales-'));
+const plugin={name:'mock',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},x=>({path:x.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},x=>({contents:x.path==='cloudflare:workers'?'export const env=globalThis.__env':'export async function headers(){return globalThis.__headers}',loader:'js'}))}};
+async function load(entry,name){const out=join(tmp,name+'.mjs');await build({entryPoints:[entry],outfile:out,bundle:true,platform:'node',format:'esm',plugins:[plugin]});return import(pathToFileURL(out).href)}
+const partners=await load('lib/partners.ts','partners'),report=await load('lib/sales-report.ts','report'),webhook=await load('lib/sales-webhook.ts','webhook'),payments=await load('lib/payments.ts','payments');
+
+// CRUD de parceiros: validação, duplicidade, renomear, pausar (resolve vira null) e excluir.
+assert.deepEqual(await partners.listPartners(),[]);
+assert.equal((await partners.createPartner('João Petisco!','Nome Ok')).code,400);
+assert.equal((await partners.createPartner('ok','J')).code,400);
+await partners.createPartner('joao-petisco','João Petisco');
+assert.equal(await partners.createPartner('JOAO-PETISCO','Outro'),null);
+assert.equal((await partners.listPartners()).length,1);
+assert.deepEqual(await partners.resolvePartner('joao-petisco'),{slug:'joao-petisco',name:'João Petisco',active:true});
+for(const slug of [null,'','JOAO','a','x'.repeat(41),'joao_petisco'])assert.equal(await partners.resolvePartner(slug),null);
+assert.equal((await partners.renamePartner('ghost','Nome Novo')).code,404);
+await partners.renamePartner('joao-petisco','João Petiscos');
+assert.equal((await partners.listPartners())[0].name,'João Petiscos');
+await partners.setPartnerActive('joao-petisco',false);
+assert.equal(await partners.resolvePartner('joao-petisco'),null);
+assert.equal((await partners.listPartners())[0].active,false);
+await partners.setPartnerActive('joao-petisco',true);
+await partners.createPartner('segundo','Parceiro B');
+assert.equal(await partners.deletePartner('ghost'),null);
+await partners.deletePartner('segundo');
+assert.equal((await partners.listPartners()).length,1);
+
+// Relatórios: junção por nome do parceiro, rótulo de origem e totais.
+const now=Date.now();
+const insert=(o)=>db.prepare('INSERT INTO payment_orders (id,request_id,amount,state,created_at,provider,seller_name,origin) VALUES (?,?,?,?,?,?,?,?)').run(o.id,o.requestId,o.amount,o.state,o.at,'synthetic',o.sellerName??null,o.origin??null);
+const o1={id:crypto.randomUUID(),requestId:'r-1',amount:10000,state:'paid',at:now,sellerName:'João Petiscos'};
+const o2={id:crypto.randomUUID(),requestId:'r-2',amount:5000,state:'test_paid',at:now-60000,sellerName:'João Petiscos',origin:'https://biocamisas.shop'};
+const o3={id:crypto.randomUUID(),requestId:'r-3',amount:7000,state:'paid',at:now-120000};
+const o4={id:crypto.randomUUID(),requestId:'r-4',amount:3000,state:'ready',at:now-180000,sellerName:'João Petiscos'};
+for(const o of [o1,o2,o3,o4])insert(o);
+const filters={since:now-3600000,until:now+3600000};
+let list=await report.salesList(filters);
+assert.equal(list.length,4);
+const byId=Object.fromEntries(list.map(r=>[r.id,r]));
+assert.equal(byId[o1.id].partnerSlug,'joao-petisco');
+assert.equal(byId[o3.id].partnerSlug,null);
+assert.equal(byId[o2.id].originLabel,'Bio Camisas');
+assert.equal(byId[o1.id].originLabel,'Bravus Pix');
+let summary=await report.salesSummary(filters);
+assert.deepEqual(summary,{totalCount:4,paidCount:2,paidAmountCents:17000,testCount:1,testAmountCents:5000,pendingCount:1});
+let byPartner=await report.salesByPartner(filters);
+assert.equal(byPartner.length,2);
+const partnerRow=byPartner.find(t=>t.partnerSlug==='joao-petisco'),soloRow=byPartner.find(t=>t.partnerSlug===null);
+assert.deepEqual(partnerRow,{partnerSlug:'joao-petisco',totalCount:3,paidCount:1,paidAmountCents:10000});
+assert.deepEqual(soloRow,{partnerSlug:null,totalCount:1,paidCount:1,paidAmountCents:7000});
+list=await report.salesList({...filters,partnerName:'João Petiscos'});
+assert.equal(list.length,3);
+list=await report.salesList({...filters,status:'pendente'});
+assert.equal(list.length,1);
+assert.equal(list[0].id,o4.id);
+
+// Webhook: contrato real do portal — Bearer + Idempotency-Key (UUID do pedido) + lote com comprovante PDF.
+let calls=[];
+globalThis.fetch=async(url,init)=>{calls.push({url,init});return Response.json({duplicate:false},{status:200})};
+assert.equal(await webhook.notifyPortalSale(o1.id),false);
+assert.equal(calls.length,0);
+const portalToken='senha-da-integracao-99';
+await payments.saveCredentials('https://portal.example/api/sales',portalToken,'sales_webhook');
+assert.equal(await webhook.notifyPortalSale(o4.id),false);
+assert.equal(await webhook.notifyPortalSale(o1.id),true);
+assert.equal(calls.length,1);
+const first=calls[0];
+assert.equal(first.url,'https://portal.example/api/sales');
+assert.equal(first.init.headers['Authorization'],'Bearer '+portalToken);
+assert.equal(first.init.headers['Idempotency-Key'],o1.id);
+const firstBatch=JSON.parse(first.init.body);
+assert.ok(/^\d{4}-\d{2}-\d{2}$/.test(firstBatch.date));
+assert.equal(firstBatch.sales.length,1);
+assert.ok(/^([01]\d|2[0-3]):[0-5]\d$/.test(firstBatch.sales[0].time));
+assert.equal(firstBatch.sales[0].amount,'100,00');
+assert.ok(typeof firstBatch.sales[0].note==='string'&&firstBatch.sales[0].note.includes(o1.id)&&firstBatch.sales[0].note.length<=500);
+assert.equal(firstBatch.sales[0].receipt.mime,'application/pdf');
+const firstPdf=Buffer.from(firstBatch.sales[0].receipt.base64,'base64').toString('latin1');
+assert.ok(firstPdf.startsWith('%PDF-')&&firstPdf.includes('%%EOF')&&firstPdf.includes(o1.id));
+assert.equal(await webhook.notifyPortalSale(o1.id),true);
+assert.equal(calls.length,1);
+assert.equal(await webhook.sweepPendingSales(),3);
+assert.equal(calls.length,3);
+assert.deepEqual(new Set(calls.map(c=>c.init.headers['Idempotency-Key'])),new Set([o1.id,o2.id,o3.id]));
+const amounts={};
+for(const c of calls)amounts[c.init.headers['Idempotency-Key']]=JSON.parse(c.init.body).sales[0].amount;
+assert.deepEqual(amounts,{[o1.id]:'100,00',[o2.id]:'50,00',[o3.id]:'70,00'});
+const batchById=Object.fromEntries(calls.map(c=>[c.init.headers['Idempotency-Key'],JSON.parse(c.init.body)]));
+assert.ok(batchById[o2.id].sales[0].note.includes('MODO TESTE'));
+const sentFlags=db.prepare('SELECT key FROM payment_settings WHERE key LIKE ?').all('sales_webhook_sent:%');
+assert.equal(sentFlags.length,3);
+assert.equal(await webhook.sweepPendingSales(),3);
+assert.equal(calls.length,3);
+console.log('Partners and sales feed tests passed: partner CRUD, partner attribution, origin labels, totals, portal contract (Bearer, idempotency key, PDF receipt), dedupe and retry sweep.');
+
+const approval=await load('lib/checkout-portal-sales.ts','checkout-portal-sales');
+const verifyRoute=await load('app/api/integrations/checkout-sales/verify/route.ts','checkout-sale-verify');
+const accountId=crypto.randomUUID();
+const createdAt=Number(db.prepare("SELECT value FROM payment_settings WHERE key='portal_checkout_auto_started_at'").get().value)+100;
+const addCheckout=(state,at,amount=21000)=>{
+ const id=crypto.randomUUID();
+ db.prepare('INSERT INTO payment_orders (id,request_id,amount,state,created_at,provider,attendant_id) VALUES (?,?,?,?,?,?,?)')
+   .run(id,crypto.randomUUID(),amount,state,at,'buckpay',accountId);
+ return id;
+};
+const importedAmountCents=300_001;
+const paymentId=addCheckout('paid',createdAt,importedAmountCents);
+for(const state of ['test_paid','ready','refunded'])addCheckout(state,createdAt);
+addCheckout('paid',createdAt-60000);
+const verify=body=>verifyRoute.POST(new Request('https://pagamento.bravuspix.shop/api/integrations/checkout-sales/verify',{
+ method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)
+}));
+assert.equal((await verify({orderId:paymentId,proof:'a'.repeat(64)})).status,404);
+assert.equal((await verify({orderId:paymentId,proof:'x'})).status,400);
+const proofs=[];
+globalThis.fetch=async(url,init)=>{
+ assert.equal(url,'https://bravus-omega.vercel.app/api/integrations/checkout-sales');
+ assert.equal(init.redirect,'manual');
+ const proof=JSON.parse(init.body); proofs.push(proof);
+ assert.deepEqual(Object.keys(proof).sort(),['orderId','proof']);
+ assert.equal(proof.orderId,paymentId);
+ const verification=await verify(proof);
+ assert.equal(verification.status,200);
+ const payment=await verification.json();
+ assert.equal(payment.accountId,accountId);
+ assert.equal(payment.amountCents,importedAmountCents);
+ assert.equal(payment.provider,'buckpay');
+ assert.ok(Buffer.from(payment.receipt.base64,'base64').toString('latin1').startsWith('%PDF-'));
+ return proofs.length===1?new Response(null,{status:503}):Response.json({processed:true});
+};
+await Promise.all([approval.drainCheckoutSales(),approval.drainCheckoutSales()]);
+assert.equal(proofs.length,1);
+assert.equal(db.prepare('SELECT delivered_at FROM checkout_sale_deliveries WHERE order_id=?').get(paymentId).delivered_at,null);
+db.prepare('UPDATE checkout_sale_deliveries SET retry_at=0 WHERE order_id=?').run(paymentId);
+await approval.drainCheckoutSales();
+assert.deepEqual(proofs,[proofs[0],proofs[0]]);
+await approval.drainCheckoutSales();
+assert.equal(proofs.length,2);
+assert.ok(db.prepare('SELECT delivered_at FROM checkout_sale_deliveries WHERE order_id=?').get(paymentId).delivered_at);
+db.prepare("UPDATE payment_orders SET state='refunded' WHERE id=?").run(paymentId);
+assert.equal((await verify(proofs[0])).status,404);
+console.log('Automatic checkout sales verified: proof, authority, eligibility, retries, and refund rejection.');

@@ -1,0 +1,1 @@
+ALTER TABLE `payment_orders` ADD `seller_name` text;

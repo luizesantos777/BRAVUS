@@ -1,0 +1,48 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1788665041426,
+      "tag": "0000_bitter_king_bedlam",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1791036454208,
+      "tag": "0001_stale_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791984870907,
+      "tag": "0002_complex_roulette",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1795220136254,
+      "tag": "0003_hot_wrecker",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1795228640907,
+      "tag": "0004_attendant-checkout",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1795229987475,
+      "tag": "0005_checkout-auto-approval",
+      "breakpoints": true
+    }
+  ]
+}

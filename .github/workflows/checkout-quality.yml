@@ -1,0 +1,38 @@
+name: Checkout quality
+
+on:
+  push:
+    paths:
+      - "checkout/**"
+      - ".github/workflows/checkout-quality.yml"
+  pull_request:
+    paths:
+      - "checkout/**"
+      - ".github/workflows/checkout-quality.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --experimental-strip-types
+    defaults:
+      run:
+        working-directory: checkout
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: npm
+          cache-dependency-path: checkout/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Build, lint, tests, migrations and media checks
+        run: npm run quality:ci

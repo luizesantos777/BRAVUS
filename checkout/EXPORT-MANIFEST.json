@@ -1,0 +1,750 @@
+{
+  "edition": "code-only",
+  "files": [
+    {
+      "path": "bravus-brasil/.env.example",
+      "sha256": "c56dd3c80394286792bd577f546c2a0ada73d029f15b556deaceac4032713170"
+    },
+    {
+      "path": "bravus-brasil/.gitignore",
+      "sha256": "35d940f5e608b2a4ef2a41ecf7263d2d4e3e18aa8aab9a98a57fa57e5607dfa5"
+    },
+    {
+      "path": "bravus-brasil/.npmrc",
+      "sha256": "494e64a8818b6158e89321250500ad5ad018e33ad5cfea06a1cacd2cf4da75fa"
+    },
+    {
+      "path": "bravus-brasil/.openai/hosting.json",
+      "sha256": "4b1e5aa1ad646d9fd58d0061f781bf7354b809d42476c06ec2bf8dc4d4d9c0b1"
+    },
+    {
+      "path": "bravus-brasil/README.md",
+      "sha256": "8d7e2cec7cbd64f13bce7302e854c2020d6a0c02bebf8199230bbe3de831ffd4"
+    },
+    {
+      "path": "bravus-brasil/app/admin/beehive/customer-form.tsx",
+      "sha256": "0381be857767de1e85f38fdcd1bcbd3420985b10522e2a7f45166e00a278760d"
+    },
+    {
+      "path": "bravus-brasil/app/admin/beehive/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/beehive/ui.tsx",
+      "sha256": "80045d7932b269d43bc6ce3d266fc086b4f71675eacdc4fa182bd230236dd415"
+    },
+    {
+      "path": "bravus-brasil/app/admin/eleva/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/eleva/ui.tsx",
+      "sha256": "3f9ae5e442b9f92e2c20fd7ede1092b9f100aebbfcffd12c07bd8f2f21bd9f20"
+    },
+    {
+      "path": "bravus-brasil/app/admin/firebot/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/firebot/ui.tsx",
+      "sha256": "aebeee636124078e42b2e832e56bca10085457d7a038c578b8076b9f6a0d574e"
+    },
+    {
+      "path": "bravus-brasil/app/admin/gateways/access.tsx",
+      "sha256": "535126f10d70136b005a52c67ca5e2efa2fd2d6dd2afc6b421a407b0ab35d7aa"
+    },
+    {
+      "path": "bravus-brasil/app/admin/gateways/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/gateways/ui.tsx",
+      "sha256": "98c3488a6985417d8fe8e277157d7c50dbef10abfb6ede6e7d777b2ef230ff5c"
+    },
+    {
+      "path": "bravus-brasil/app/admin/gestao/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/gestao/ui.tsx",
+      "sha256": "2d8ab00da2ac68cfdc0f3f4afe2bc641a6152eadec20850a2c18e41295f57743"
+    },
+    {
+      "path": "bravus-brasil/app/admin/loja/page.tsx",
+      "sha256": "2c4b911ddef8ec390cb9cb87be3138f97c6b3e64b96e30ab5033961caa9fe15c"
+    },
+    {
+      "path": "bravus-brasil/app/admin/loja/ui.tsx",
+      "sha256": "b3dab4680670e2a95e83da6a412f9b9ad77c6be55eb0d28bca2bda67cbb23018"
+    },
+    {
+      "path": "bravus-brasil/app/admin/poseidon/page.tsx",
+      "sha256": "03b2927cd7506ae45f5ec4274c92994ecfd6c3318565b13aa252bea89123dda6"
+    },
+    {
+      "path": "bravus-brasil/app/admin/poseidon/ui.tsx",
+      "sha256": "e6059fb204c2335061fa0af765a2369aa0ee548f79855f0fc2eebffd22c9a5eb"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/beehive/customers/route.ts",
+      "sha256": "9e2b1c42e358e472ab940cb045831165e8a005a8f0a7c076e3a911ab29e68700"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/beehive/route.ts",
+      "sha256": "6f2758fc60833d81190548fadb9c11f2dca0c4ef8bee8a78513415865cb76f99"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/eleva/route.ts",
+      "sha256": "1bc1a5c66aadd27a38d9f87d9338e531c071dba87a2fc86b22a2b741c1b7539f"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/firebot/route.ts",
+      "sha256": "abb108bd2681324405c33d10921a289a006d31f049a5a1642da6b0e6a0ae365e"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/gateway-access/route.ts",
+      "sha256": "b9b20c3d4c71506082c4f5f01eda53662e11bcce6dc9783638d94bb6309ae6de"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/gateways/route.ts",
+      "sha256": "84746dbece4cf67faac9b31ed3e0cfddc635a2d5e30b9cd1959e56269360d2ee"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/gestao/route.ts",
+      "sha256": "3ea612155193d11680ced26fcdbc117ffc9d1effacef7d2643f925c80c79e625"
+    },
+    {
+      "path": "bravus-brasil/app/api/admin/poseidon/route.ts",
+      "sha256": "206ea5982349a6769de3bcc26d01fe1958ab91c780b7b55eb26e2644c2c8225a"
+    },
+    {
+      "path": "bravus-brasil/app/api/card/[id]/route.ts",
+      "sha256": "e6dc5f5884eee4efcc207e2dc88e89ff17a29a57a7a298b91c2a7c4381f266b0"
+    },
+    {
+      "path": "bravus-brasil/app/api/funnel-access/route.ts",
+      "sha256": "ad219e137a5340b2f4936632508a4cd8ee91f8262282bf528de7378491cd92cc"
+    },
+    {
+      "path": "bravus-brasil/app/api/orders/route.ts",
+      "sha256": "7865ea8b2e035a0fb7dc82a0229b0cf6a110a871c154e52d0af19413a631e447"
+    },
+    {
+      "path": "bravus-brasil/app/api/pay/[id]/route.ts",
+      "sha256": "113f1913307b767960da3e9cc470d8d21d6ac420c58edf0b1102241bab444ec3"
+    },
+    {
+      "path": "bravus-brasil/app/api/settings/route.ts",
+      "sha256": "68b42fb3ac47af241295e780c873064ac6424eb3277fa2d3b74de58a5911f188"
+    },
+    {
+      "path": "bravus-brasil/app/api/store/admin/route.ts",
+      "sha256": "8cc5b3bd7f98ed3d167a01a99699dc624c56dde4321645cb823f00ce8b8189f7"
+    },
+    {
+      "path": "bravus-brasil/app/api/store/contact/route.ts",
+      "sha256": "1c34520ceff4e493c8ef9fab7acef4b53b0b5ec07dc76eb196d51c8453b09bcc"
+    },
+    {
+      "path": "bravus-brasil/app/api/store/orders/route.ts",
+      "sha256": "02b734b73a7a45eb8588f525c6f518a2541fe21e40119fb82f05b7dfdafcddc5"
+    },
+    {
+      "path": "bravus-brasil/app/api/webhooks/beehive/route.ts",
+      "sha256": "197875a26c2b9ccbb523c4f97a05d39e50036c369bb24d43535e57ffeaeee901"
+    },
+    {
+      "path": "bravus-brasil/app/cartao/[id]/page.tsx",
+      "sha256": "c7dc5c69a99b4a41e8a4bf4b54ee1e48f9c5dcd8170e1f73a07c9a4ece821320"
+    },
+    {
+      "path": "bravus-brasil/app/cartao/[id]/ui.tsx",
+      "sha256": "18eb281d2b9b896746e968382f171ccdff631e108bfca49079957c655d582400"
+    },
+    {
+      "path": "bravus-brasil/app/chatgpt-auth.ts",
+      "sha256": "17a965f8948b21510cdf8ecbd70c5fdf58100e10970463f6a8fd2cc4795f8044"
+    },
+    {
+      "path": "bravus-brasil/app/checkout/page.tsx",
+      "sha256": "a437213024304cd6078f1d6e2e0e0de7b6fdf81f1ee04c48df261f9f5886f6e3"
+    },
+    {
+      "path": "bravus-brasil/app/checkout/ui.tsx",
+      "sha256": "56fe8279998c761ed292aa5e522b435b26eddbe1ab5b7ea64b0fa4286897d41e"
+    },
+    {
+      "path": "bravus-brasil/app/funil-2/route.ts",
+      "sha256": "b15c47393586b69a310357a830599d56eaf87c6393761ba761b8a239b5a5fe93"
+    },
+    {
+      "path": "bravus-brasil/app/funil-3/route.ts",
+      "sha256": "17d31cf330643608a729cb4b0ae5d25cf6c5626186f15008f5560ecdba3a5b58"
+    },
+    {
+      "path": "bravus-brasil/app/funil-4/route.ts",
+      "sha256": "e3e984cd443e6bc71983d3321f82d9adfb545d61ff5f879f2ab9e92433077b67"
+    },
+    {
+      "path": "bravus-brasil/app/funnel.js/route.ts",
+      "sha256": "054181f08cb8fcbcb295cedd400a0abd50a10933fccb729900056c4a7aed5531"
+    },
+    {
+      "path": "bravus-brasil/app/funnel2.js/route.ts",
+      "sha256": "8d558bd70fb01360742f86a27903bda0d09bf77f45e97f97190bf98f3165c2e1"
+    },
+    {
+      "path": "bravus-brasil/app/funnel3.js/route.ts",
+      "sha256": "47fd6a84a7f1d16469df4f243e6489385d01fc7a5ffd355edc533d3721ac95dc"
+    },
+    {
+      "path": "bravus-brasil/app/funnel4.js/route.ts",
+      "sha256": "5def43ed1c3ed5415c93c98760e76e1696a862cc66e6f09647c2b22a62e1ceee"
+    },
+    {
+      "path": "bravus-brasil/app/globals.css",
+      "sha256": "e5ec656258917bb090728f6a476f86c97c84d4f67c3ca6ba928e969dc12c7885"
+    },
+    {
+      "path": "bravus-brasil/app/layout.tsx",
+      "sha256": "ebc3dc80a9c6f73322e131736394ce5528c5c970d60d0ba8a71e27f94de2d5c6"
+    },
+    {
+      "path": "bravus-brasil/app/loja/color-preview.tsx",
+      "sha256": "20289423dc209a080149780e7b8caab647e91d6bc1d8a5d87c5b5fa506f07ab1"
+    },
+    {
+      "path": "bravus-brasil/app/loja/page.tsx",
+      "sha256": "15a0028cdff2ab43eb19cc9bcf453f39e7067aba29d4dcdbbdcc7937267a73e2"
+    },
+    {
+      "path": "bravus-brasil/app/loja/store.css",
+      "sha256": "ffd5a2505c36a874550e9e3d8c1e4854d242e353574162a5282ec2bd8598553c"
+    },
+    {
+      "path": "bravus-brasil/app/loja/ui.tsx",
+      "sha256": "249cee949f5b26a153f834269dbcdce5b43497cd33caa3609ec95653d40d011d"
+    },
+    {
+      "path": "bravus-brasil/app/pagar/[id]/page.tsx",
+      "sha256": "a3b1099cc9f86a723debe2df32e6fc6a8e3848083997c449b91ca811fd57fa4c"
+    },
+    {
+      "path": "bravus-brasil/app/pagar/[id]/ui.tsx",
+      "sha256": "406ab7895ee408dee4c7bc44620b2a74694a100e8d45a7451e4044939ed031fb"
+    },
+    {
+      "path": "bravus-brasil/app/route.ts",
+      "sha256": "c06c17efd5a246a47ca99bf447bf961a19692289575740d1ffab6b002cd43e4e"
+    },
+    {
+      "path": "bravus-brasil/build/sites-vite-plugin.ts",
+      "sha256": "81b7cbfaeb970611572256aba0e313425beb3809f6426f63750696c15d9c756b"
+    },
+    {
+      "path": "bravus-brasil/components.json",
+      "sha256": "31f4ca67a4a62572571003d3d5aac85ee6fbfca67a192924bac6b168d95e98fd"
+    },
+    {
+      "path": "bravus-brasil/components/ui/accordion.tsx",
+      "sha256": "a4f153089ba886dfcf73fac26b5c01ca933fa12fbe88df6fb723912bfffdfbb0"
+    },
+    {
+      "path": "bravus-brasil/components/ui/alert-dialog.tsx",
+      "sha256": "9a8d950f2b9b4352d5ebb762fb44d5c28c2d353aa29712071973656a8736e311"
+    },
+    {
+      "path": "bravus-brasil/components/ui/alert.tsx",
+      "sha256": "2cc59b5f7bda91c1670884b1bf46bfc8a2a6f226cef184f5762acc037188885b"
+    },
+    {
+      "path": "bravus-brasil/components/ui/aspect-ratio.tsx",
+      "sha256": "b1c157886236782cb92d8fbcd4749532aaf6d8aabefd6e157ca40358f902f407"
+    },
+    {
+      "path": "bravus-brasil/components/ui/attachment.tsx",
+      "sha256": "ae8a25dd1a896d3964e3ef54d97e51221b418cde287dfd794428b89951c5c790"
+    },
+    {
+      "path": "bravus-brasil/components/ui/avatar.tsx",
+      "sha256": "58a846bf1617b94b9681921db9b8461d0145f311424663d11678a06b6153cb34"
+    },
+    {
+      "path": "bravus-brasil/components/ui/badge.tsx",
+      "sha256": "46a0de5224f6a5d5d63d45246534288518dce888f031064bff925bbc7fe6ad97"
+    },
+    {
+      "path": "bravus-brasil/components/ui/breadcrumb.tsx",
+      "sha256": "d4c0831bba2212e778248f54a6ace6ef378df8bba4616d1abf27787a31eabae5"
+    },
+    {
+      "path": "bravus-brasil/components/ui/bubble.tsx",
+      "sha256": "870cc0c5cfc8a515053f7e41e706a6bd017a909b45f1305fd3b164a52cc4483b"
+    },
+    {
+      "path": "bravus-brasil/components/ui/button-group.tsx",
+      "sha256": "784c89d8ee683e1bc972ae69e6ea8225a7f63abe22aa1b5fc3423ae8a2a399c0"
+    },
+    {
+      "path": "bravus-brasil/components/ui/button.tsx",
+      "sha256": "cc36af0f8b5019c33cc039fbf03bb952a513072b15b55b53c592b78af3e5f4c4"
+    },
+    {
+      "path": "bravus-brasil/components/ui/calendar.tsx",
+      "sha256": "3855fbe0d3f8ad3a4b93071f98b76a9f6782d46ec8b05f5d2ddbee1e4e39bc84"
+    },
+    {
+      "path": "bravus-brasil/components/ui/card.tsx",
+      "sha256": "c48dd3b96be90a7066f1aebf294f0af9d00ebcdc367d5d4aca55429ade570c1c"
+    },
+    {
+      "path": "bravus-brasil/components/ui/carousel.tsx",
+      "sha256": "b7ea0dda3903d972c186f739e23da61f547bc83b5a0bf13b16856577846d5fc3"
+    },
+    {
+      "path": "bravus-brasil/components/ui/chart.tsx",
+      "sha256": "45aa5ea4a386f4fb5b8869ff4bab3a08cf89255190ee322043baf84c3e950b6a"
+    },
+    {
+      "path": "bravus-brasil/components/ui/checkbox.tsx",
+      "sha256": "b23ab9d4deeedf2ac8f512c368361ede681aa383437ef48563a6f9b7dbe95f27"
+    },
+    {
+      "path": "bravus-brasil/components/ui/collapsible.tsx",
+      "sha256": "c6598e5584f4258b5d9fefadbc5ad6a66888ad58729f4b634a0bb2d9c513188b"
+    },
+    {
+      "path": "bravus-brasil/components/ui/combobox.tsx",
+      "sha256": "2d68e78b2dc7e38a085f222dede60a80b4f8229a6e91732c484605e204d46735"
+    },
+    {
+      "path": "bravus-brasil/components/ui/command.tsx",
+      "sha256": "361193df1e3d64a9e9b5048f045264782fcb387aab3f00f2b805fdcbf538b16a"
+    },
+    {
+      "path": "bravus-brasil/components/ui/context-menu.tsx",
+      "sha256": "2cf1fcf59df0649a3e2a126d1df2f639145f6b6bf5689ee54af1f40ab1245017"
+    },
+    {
+      "path": "bravus-brasil/components/ui/dialog.tsx",
+      "sha256": "dce39c6adc47d997bd2567f8b7a72f466b0134715105cd42f9194007b8ecdb14"
+    },
+    {
+      "path": "bravus-brasil/components/ui/direction.tsx",
+      "sha256": "84ae2ad658207f0e0f367978e5508cd8027cd00c29c41d3d13db21a708c3d1e6"
+    },
+    {
+      "path": "bravus-brasil/components/ui/drawer.tsx",
+      "sha256": "cb6eaf58eb0757ca91af284e5d925b89a42ad7eb19cb3f44c575a3487aa9350f"
+    },
+    {
+      "path": "bravus-brasil/components/ui/dropdown-menu.tsx",
+      "sha256": "98f0dcdae38225b73734aceeb9213dd751fea2c72ea520df31003cd133deac8a"
+    },
+    {
+      "path": "bravus-brasil/components/ui/empty.tsx",
+      "sha256": "ae95bdcf367a076ae02e7925f14522a148798f72d9651749c6d55497dba584c0"
+    },
+    {
+      "path": "bravus-brasil/components/ui/field.tsx",
+      "sha256": "ba67d76f017ac059fc86cf8c344e0b2991c4322d3619e125498c19b87f6eefbd"
+    },
+    {
+      "path": "bravus-brasil/components/ui/form.tsx",
+      "sha256": "315b46bb75ab7d1c6061b5d750aa4bedf6e7a455e15e2d7f9182f053d5972b1e"
+    },
+    {
+      "path": "bravus-brasil/components/ui/hover-card.tsx",
+      "sha256": "f5d8df42c59370ec14d61bcc54f7d68e9bb7dfa0d6a872b2f7cffc2aafbf23b8"
+    },
+    {
+      "path": "bravus-brasil/components/ui/input-group.tsx",
+      "sha256": "6afbd58fea4c438e6252dc4568bddc122e84ababead4ad5cee50ace01100c9a0"
+    },
+    {
+      "path": "bravus-brasil/components/ui/input-otp.tsx",
+      "sha256": "161946daa89f0eda2575b9271c0494e35807c4ffb55598a49f67160c17fec299"
+    },
+    {
+      "path": "bravus-brasil/components/ui/input.tsx",
+      "sha256": "8c4612a7c41319ac5049daa3b34b080f9784b6245c17780eb87c127e58e473db"
+    },
+    {
+      "path": "bravus-brasil/components/ui/item.tsx",
+      "sha256": "6e2144d6d87142dbbe56d568810bf546318c8aa661447ebb0d76ebbf382cb45f"
+    },
+    {
+      "path": "bravus-brasil/components/ui/kbd.tsx",
+      "sha256": "6088c3a5432338b1719c17e9b5d0e1fa74fd1f66060f248fc88909d33a82cd13"
+    },
+    {
+      "path": "bravus-brasil/components/ui/label.tsx",
+      "sha256": "a476e41f08b9de5bd447de66a33d8bc2ad18f2fa6b96c064778bab4b6f439f4c"
+    },
+    {
+      "path": "bravus-brasil/components/ui/marker.tsx",
+      "sha256": "3d798763f094b2bb5e7ade2d5cd1b9bab498bc8ca7fd4cfaf4e5835bdedc34a0"
+    },
+    {
+      "path": "bravus-brasil/components/ui/menubar.tsx",
+      "sha256": "9243af8afcea03703398ccd1c2a8c0a87ad6cbaf2bd272fb609f5b79fe46aebb"
+    },
+    {
+      "path": "bravus-brasil/components/ui/message-scroller.tsx",
+      "sha256": "bb7660a248e4e9589c3816c7c1c199ea1381a70d2c8476ae895b567a7a4d86cf"
+    },
+    {
+      "path": "bravus-brasil/components/ui/message.tsx",
+      "sha256": "9d2952bf3b641081f09aa2739535e6bbd1be0a4946789752a2c20d8aaef43185"
+    },
+    {
+      "path": "bravus-brasil/components/ui/native-select.tsx",
+      "sha256": "007516b111fca8c98a6c40c94ab91bb68cc5b52afce1ed1f5e510c3d86e7347c"
+    },
+    {
+      "path": "bravus-brasil/components/ui/navigation-menu.tsx",
+      "sha256": "889d358a77de88e9cb6f39ea4895ea4c76eaf01d731b74e44f1c41e97a78a044"
+    },
+    {
+      "path": "bravus-brasil/components/ui/pagination.tsx",
+      "sha256": "374ad135c3d4ff3ec080a0009cd9745cdd0e12faa89d2b0e86074f11e5127fd1"
+    },
+    {
+      "path": "bravus-brasil/components/ui/popover.tsx",
+      "sha256": "31c350309ff5d3034e6ecf1b0eda75ba8855bdbf987fc7ad6d71f0ef07c5a447"
+    },
+    {
+      "path": "bravus-brasil/components/ui/progress.tsx",
+      "sha256": "c8c26e8f5f041c3cdf4915347dc1d9c022f9448f149990fadcaf303e952fa57d"
+    },
+    {
+      "path": "bravus-brasil/components/ui/radio-group.tsx",
+      "sha256": "fe5ce39636d0818c2bf9c4eebddff893d1225fa2c81b5fa4bb8cbb39a8c913ce"
+    },
+    {
+      "path": "bravus-brasil/components/ui/resizable.tsx",
+      "sha256": "bc63958467aa00557c551bb0d96a5ae4c965c1e1ba2380e595949d933b132f7c"
+    },
+    {
+      "path": "bravus-brasil/components/ui/scroll-area.tsx",
+      "sha256": "8bd9d986b2844c9a87de825c6de4787b6739b36c3dc9a05ccf3eb107160e4043"
+    },
+    {
+      "path": "bravus-brasil/components/ui/select.tsx",
+      "sha256": "0b796a108a4eb5ba52d9ad938b7aea36dc56ae66c703a6d0a23dbc24f96daff3"
+    },
+    {
+      "path": "bravus-brasil/components/ui/separator.tsx",
+      "sha256": "6da346505c8629a4668420d2a5ca48891383bbe0b0ceb14163537c671879427e"
+    },
+    {
+      "path": "bravus-brasil/components/ui/sheet.tsx",
+      "sha256": "63863cf2df8f8973e52b3459ac9bdbf81be1262dbc70eb53d5271ffb03488e16"
+    },
+    {
+      "path": "bravus-brasil/components/ui/sidebar.tsx",
+      "sha256": "4a8d73e7730a2b1fcecfca31299ed26db65c2307b84197a59c6ec7c01c7ad28e"
+    },
+    {
+      "path": "bravus-brasil/components/ui/skeleton.tsx",
+      "sha256": "ba48dd5be5a6a1378bd4e011028654b5bf419f1e7d20ee4b9f8330c1264e7239"
+    },
+    {
+      "path": "bravus-brasil/components/ui/slider.tsx",
+      "sha256": "0e37484f4b416e79ac18c655cac961aefacf6e67085cfc2b320ea8af545635a3"
+    },
+    {
+      "path": "bravus-brasil/components/ui/sonner.tsx",
+      "sha256": "13ccc9b0fe4248e622f83a1d3b2f0566b72b5e04162d7d0c8db8945ecc71b55f"
+    },
+    {
+      "path": "bravus-brasil/components/ui/spinner.tsx",
+      "sha256": "3e6e6e8d37fb4069f8e43e55318f8db06fbc36e6c8be0096da3c9337c1c798b9"
+    },
+    {
+      "path": "bravus-brasil/components/ui/switch.tsx",
+      "sha256": "386d4d4deb39f34126f9700fe9bf5393d238485dd94018bba9d154dda84c62ae"
+    },
+    {
+      "path": "bravus-brasil/components/ui/table.tsx",
+      "sha256": "20e5a7f224959c6b75802995706a97e9da171f693d4b6b1b436388fcd9df96f3"
+    },
+    {
+      "path": "bravus-brasil/components/ui/tabs.tsx",
+      "sha256": "865d0194331b9b2be36723fa79d3575dc83078b4cb941cafee87cb72fc2cff46"
+    },
+    {
+      "path": "bravus-brasil/components/ui/textarea.tsx",
+      "sha256": "253cdeb487c73beaaccdf47fc163e36e7d5b7ae6ddf09a4f64998a109a112979"
+    },
+    {
+      "path": "bravus-brasil/components/ui/toggle-group.tsx",
+      "sha256": "69f643e889e933f05c1439084480d8646f66a161c7d1cf0730ee926382ade35e"
+    },
+    {
+      "path": "bravus-brasil/components/ui/toggle.tsx",
+      "sha256": "ba4d0b0a2b2fee75dc36dfc19e32082e721024b919050c97fd5dc70faa924e16"
+    },
+    {
+      "path": "bravus-brasil/components/ui/tooltip.tsx",
+      "sha256": "a0784eb77831a799fad7991df4f1b666f876201565a80175e1aa68733574a2e4"
+    },
+    {
+      "path": "bravus-brasil/db/index.ts",
+      "sha256": "dc7610b00b918e0ffff1360a63626f16655ced3064b2eaf96095a4101fb14bcd"
+    },
+    {
+      "path": "bravus-brasil/db/schema.ts",
+      "sha256": "a8fcb2e2b1abcf9f90a8d798d6d82d770666ada044bdf4814965bcf5e600d422"
+    },
+    {
+      "path": "bravus-brasil/drizzle.config.ts",
+      "sha256": "af081f7384aaeb0082cf422e29f139d137ca2f6a57c69b2c37b9fb1f8479867b"
+    },
+    {
+      "path": "bravus-brasil/drizzle/0000_bitter_king_bedlam.sql",
+      "sha256": "55b535623cc2297533b3be003a6ca325ba68ba938898b68187dd3e55bd193d3a"
+    },
+    {
+      "path": "bravus-brasil/drizzle/0001_stale_reaper.sql",
+      "sha256": "9cae1ce438a46ca5d5cea9c827d99a33144a73bc544453ccd07260b107369a25"
+    },
+    {
+      "path": "bravus-brasil/drizzle/0002_complex_roulette.sql",
+      "sha256": "831d58401bbe2f3ddb58d3dabb70df6c4731cf03c42d11669ce67da54351c497"
+    },
+    {
+      "path": "bravus-brasil/drizzle/meta/0000_snapshot.json",
+      "sha256": "8c31afca40e3056ef454eec1ebd7109b63e7d229464298cdf951298b08ffc8b7"
+    },
+    {
+      "path": "bravus-brasil/drizzle/meta/0001_snapshot.json",
+      "sha256": "e23f77774dee3aebacb93fea301fd93ecb639a768765cbed90e09862232d492d"
+    },
+    {
+      "path": "bravus-brasil/drizzle/meta/0002_snapshot.json",
+      "sha256": "fff8cbbdd6d3574c629bc797aa06f2fb8b6f80b715472f831a4a3f33b1b51081"
+    },
+    {
+      "path": "bravus-brasil/drizzle/meta/_journal.json",
+      "sha256": "e26786a32bf759c7feb411e65977b074a6e2927be759a00190a9313883dfd89a"
+    },
+    {
+      "path": "bravus-brasil/eslint.config.mjs",
+      "sha256": "f22a254df7d934bbf9be499d3c969a13abb7f7f64c03f5967d0095cad81dfe06"
+    },
+    {
+      "path": "bravus-brasil/examples/d1/app/api/notes/route.ts",
+      "sha256": "a3d4a74fd53b7bf53e2df41f169d9d9d44a8b22aeb6d92f4e754956079af8909"
+    },
+    {
+      "path": "bravus-brasil/examples/d1/db/schema.ts",
+      "sha256": "d89eabd95716ce404f5f7ca2a254220435be8ddce7c899d7ef461ff22ec80454"
+    },
+    {
+      "path": "bravus-brasil/hooks/use-mobile.ts",
+      "sha256": "ad0936f84f1df79d3697bfbff9c18f8ad58431c1cbaf2359c6a853b0fcc9f28b"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel.html",
+      "sha256": "b87f9da4207d6924ea1474e1814c553aa878251ea21cbf0ff133b4c267b21275"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel.js",
+      "sha256": "3847b8b06762bb3180790feb492a6785f003c2b10d6853fed613f28e45998b2b"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel2.html",
+      "sha256": "6aad5035912e6df9b6e5c1edde4b4873b2b71cacf78c17dc45b41e0fb5b48c55"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel2.js",
+      "sha256": "d397c5b72e17afb1d252f1b5de2553808c92eb6d09985a48dfa6ff6f9130de27"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel3.html",
+      "sha256": "0b77117e6167175087a27e5b74a25a59b59ea54f94f7b082fc56e858c40f339c"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel3.js",
+      "sha256": "54f49667eb723c723df8f13fe04dee8fe78f50b4cd659d7fabb7bf2b712c201c"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel4.html",
+      "sha256": "e73b0f365089a364b048aa840bbd5526cf584b2d561377f5cdc77a673f6c6ee7"
+    },
+    {
+      "path": "bravus-brasil/legacy/funnel4.js",
+      "sha256": "d80639be44bdb091c14304266391babc40cb1cb9af5a699da21131e7914ad100"
+    },
+    {
+      "path": "bravus-brasil/lib/beehive-browser.ts",
+      "sha256": "c7de418149c60c9bde17ba750a8ffd77110b3da1113d10f08ad707fa4488dcad"
+    },
+    {
+      "path": "bravus-brasil/lib/beehive-card.ts",
+      "sha256": "0fa588be9df626e69a5efaf526500c150aafa128ceff12b7051ccf6acdb78fec"
+    },
+    {
+      "path": "bravus-brasil/lib/beehive-errors.ts",
+      "sha256": "5177bd8c38520f720abaf69629265d4c0a51efd1ca5fb498455d0b976ccc485e"
+    },
+    {
+      "path": "bravus-brasil/lib/beehive.ts",
+      "sha256": "1ba06b0eec486e8c96016c327afb81e179dd85dd8f5c1c5b1fc43ff42c80610a"
+    },
+    {
+      "path": "bravus-brasil/lib/buckpay.ts",
+      "sha256": "29d492264078a29cc8f5db032bdfeb83a077480a41ecb6d03c426269924c2a0d"
+    },
+    {
+      "path": "bravus-brasil/lib/card-pricing.ts",
+      "sha256": "30defcb11230c4f23b9529934d0fe41c8ecc98b583474a2900ac38ee23c73167"
+    },
+    {
+      "path": "bravus-brasil/lib/catalog-shirts.ts",
+      "sha256": "0065a64a81581f62a8e23799b70f7e033ab0d02c66473023d2b43b2905cc236a"
+    },
+    {
+      "path": "bravus-brasil/lib/checkout-session.ts",
+      "sha256": "8978d196a884b5e12714173675f4944949f2827f54d31fe2af101602a3e3588c"
+    },
+    {
+      "path": "bravus-brasil/lib/eleva.ts",
+      "sha256": "53271acf04a429a39ce4cbe2d330a8f553d2a203e0787369c0f2d018cd328d01"
+    },
+    {
+      "path": "bravus-brasil/lib/firebot.ts",
+      "sha256": "dd6e1fa66ecbdf40edf2a7507b4795005c551a2fc0607e1f9abc916341206d9e"
+    },
+    {
+      "path": "bravus-brasil/lib/funnel-access.ts",
+      "sha256": "cd76b7999af64c15e6333c02cf8b68f9d15f59534d9d7a34b44473e9e0f6b737"
+    },
+    {
+      "path": "bravus-brasil/lib/funnel-session.ts",
+      "sha256": "54578e6396d83b41e113be3f2bd944c0fd23c53a213e3a6d774efeffe37a7c65"
+    },
+    {
+      "path": "bravus-brasil/lib/gateway-access.ts",
+      "sha256": "cb12cb4e4f1d2861598c3da0826033d8e2f3f534f4d8a31fa43365c1fa128489"
+    },
+    {
+      "path": "bravus-brasil/lib/gateways.ts",
+      "sha256": "cbfe3b6f7fd87582447c161f8421d9d07c486d464b8691d79c08b5d8bc35a8e7"
+    },
+    {
+      "path": "bravus-brasil/lib/gestao.ts",
+      "sha256": "27b40b15f98b976a4268fb0ba1488d77a9dc73fe8a89f52518b0b4526255a962"
+    },
+    {
+      "path": "bravus-brasil/lib/payments.ts",
+      "sha256": "e8c791fba2e7e13cd3c6830e888b1dad2a78ca34289911c5f11e83091e2c501a"
+    },
+    {
+      "path": "bravus-brasil/lib/poseidon.ts",
+      "sha256": "3903bfee6880fd5787da2b4fa69853247a7a9a115336af4dbcba3d661f178fc8"
+    },
+    {
+      "path": "bravus-brasil/lib/store-db.ts",
+      "sha256": "cd39209de3bbec1f12fe7d6ea5a86ef19797493d340398b70460a7bb873489c4"
+    },
+    {
+      "path": "bravus-brasil/lib/store.ts",
+      "sha256": "14247a2ad31b92b289461ad5968dc52170aa356fece0755523057e2b9c5b3620"
+    },
+    {
+      "path": "bravus-brasil/lib/utils.ts",
+      "sha256": "53f3d3d070f0a9082934da25b875f9499855c2b0693868dd28be8c23d8730f68"
+    },
+    {
+      "path": "bravus-brasil/next.config.ts",
+      "sha256": "614bce25b089c3f19b1e17a6346c74b858034040154c6621e7d35303004767cc"
+    },
+    {
+      "path": "bravus-brasil/package-lock.json",
+      "sha256": "6b7dc3640719511d0e9ea7b3233c6cb4aa2a70981680d351737a54021f360b3b"
+    },
+    {
+      "path": "bravus-brasil/package.json",
+      "sha256": "96ee7937d6f33e2b9f09c4856ff3454db54d01305fba81092ec5ca16a58da3e0"
+    },
+    {
+      "path": "bravus-brasil/postcss.config.mjs",
+      "sha256": "dfac7ac2d86d326a0e5adb024e7943c181393ed17a5fcb8f0315b24c7da6ddde"
+    },
+    {
+      "path": "bravus-brasil/public/funnel.css",
+      "sha256": "cb9193bee22c1cafa93df80b76f26293a822f00baf977992b62d42c66f70a46c"
+    },
+    {
+      "path": "bravus-brasil/qrcode-browser.d.ts",
+      "sha256": "58cca124fc303a7296ebe8914d0eed75d0b068ed9be9a31a2ad4b3d1a58587eb"
+    },
+    {
+      "path": "bravus-brasil/scripts/build-verified.sh",
+      "sha256": "2ae5329ac860076070c9217a43106a15cb5ecf907a0f7baeb9ef903f76b53c68"
+    },
+    {
+      "path": "bravus-brasil/scripts/install-ci.sh",
+      "sha256": "658c0aefc1d907dafde98ebc288b623ab9d2824a7bb1db055370a339a794a10d"
+    },
+    {
+      "path": "bravus-brasil/scripts/sites-env.sh",
+      "sha256": "df86ebfc27d2f00860036658e933ac0ddd7b5f6879aa5d51218f0863c7e1fb60"
+    },
+    {
+      "path": "bravus-brasil/tests/eleva-worker.test.mjs",
+      "sha256": "0e3d21069d69b0d495ee27599c0d0ca78b2633c228bcc44ffb32233014418ea7"
+    },
+    {
+      "path": "bravus-brasil/tests/firebot-worker.test.mjs",
+      "sha256": "f2fa65c54d30b76dbee298e608996a3c07f9578d851a3793626335c50fcb44e4"
+    },
+    {
+      "path": "bravus-brasil/tests/funnel-access.test.mjs",
+      "sha256": "9c324a91cd5b1aa671783ee8f3a309f9d97ef4b0d9fa5ed7ef4f03b525a3c9e5"
+    },
+    {
+      "path": "bravus-brasil/tests/payments.test.mjs",
+      "sha256": "a53b0878a642c0f964e8eaee709449cfba6de9970dc7b709d219d0fe9cdad8b5"
+    },
+    {
+      "path": "bravus-brasil/tests/poseidon-worker.test.mjs",
+      "sha256": "3f84fa8bc41951be6b9859b7dbb3787dc3f59966b6e3db66d20fb397f3ff5f43"
+    },
+    {
+      "path": "bravus-brasil/tests/store.test.mjs",
+      "sha256": "c682c6ef5eb68897d311738ca2107369b755eac046a881f5a773e49d6b568091"
+    },
+    {
+      "path": "bravus-brasil/tsconfig.json",
+      "sha256": "be18523b23b78b6e1a876ddd107d330f0168bddf09d751b57e0b5edce69c66f3"
+    },
+    {
+      "path": "bravus-brasil/vendor/shadcn-tailwind-4.13.0.LICENSE.md",
+      "sha256": "1564074e13439397221ffd522e2e504d56561994a23d371aa5e3ad43e4f5423f"
+    },
+    {
+      "path": "bravus-brasil/vendor/shadcn-tailwind-4.13.0.css",
+      "sha256": "bc7d83425702955b4cb67cb14ede9d603f9d912376d57a2d81d661094d2a782a"
+    },
+    {
+      "path": "bravus-brasil/vite-env.d.ts",
+      "sha256": "65996936fbb042915f7b74a200fcdde7e410f32a669b1ab9597cfaa4b0faddb5"
+    },
+    {
+      "path": "bravus-brasil/vite.config.ts",
+      "sha256": "43e5f02f727ca043f08ebf34789f330580a7a0cb90f426c92f4a454d066988fc"
+    },
+    {
+      "path": "bravus-brasil/worker/index.ts",
+      "sha256": "2ed36d7fa996e946d9d7695c5925e7760246f6bf8fa35c06f1bc515c087dc450"
+    },
+    {
+      "path": "bravus-brasil/LEIA-ME-CODEX.md",
+      "sha256": "8d7e669a08364b471af7cb0d60e5a0202eb3beb8db40197d6ccc033b72886037"
+    }
+  ],
+  "omitted_media_count": 101
+}

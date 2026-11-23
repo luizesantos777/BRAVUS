@@ -32,5 +32,7 @@ jobs:
           cache-dependency-path: checkout/package-lock.json
       - name: Install dependencies
         run: npm ci
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
       - name: Build, lint, tests, migrations and media checks
         run: npm run quality:ci

@@ -51,7 +51,7 @@ const worker = {
     requestHeaders.set(CHECKOUT_ORIGIN_HEADER, url.origin);
     const response = await handler.fetch(new Request(request, { headers: requestHeaders }), env, ctx);
     const paymentRequest = request.method === "POST"
-      ? /^\/api\/(?:orders|card\/[^/]+|webhooks\/(?:atlas|beehive))\/?$/.test(url.pathname)
+      ? /^\/api\/(?:orders|card\/[^/]+|webhooks\/(?:atlas|beehive|poseidon))\/?$/.test(url.pathname)
       : request.method === "GET" && /^\/api\/(?:pay|card)\/[^/]+\/?$/.test(url.pathname);
     if (paymentRequest && response.ok) ctx.waitUntil(drainCheckoutSales().catch(() => {}));
 
@@ -65,3 +65,4 @@ const worker = {
 };
 
 export default worker;
+

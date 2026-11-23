@@ -1,6 +1,7 @@
 import { refreshBuckPayment } from './buckpay';
 import { readElevaPayment } from './eleva';
 import { refreshGestaoPayment } from './gestao';
+import { readPoseidonPayment } from './poseidon';
 import { database } from './payments';
 
 const RECENT_PAYMENT_MS = 3 * 24 * 60 * 60 * 1000;
@@ -15,13 +16,14 @@ type PendingPayment = {
   checked_at: number;
   transaction_id: string | null;
   attendant_id: string;
-  provider: 'buckpay' | 'eleva' | 'gestao';
+  provider: 'buckpay' | 'eleva' | 'gestao' | 'poseidon';
 };
 
 const refresh = {
   buckpay: refreshBuckPayment,
   eleva: (row: PendingPayment) => readElevaPayment(row, 10_000),
   gestao: refreshGestaoPayment,
+  poseidon: readPoseidonPayment,
 };
 
 export async function reconcileCheckoutPayments(): Promise<void> {
@@ -40,8 +42,8 @@ export async function reconcileCheckoutPayments(): Promise<void> {
     SELECT id, amount, state, checked_at, transaction_id, attendant_id, provider
     FROM payment_orders
     WHERE attendant_id IS NOT NULL AND state = 'ready'
-      AND provider IN ('buckpay', 'eleva', 'gestao')
-      AND (provider = 'buckpay' OR transaction_id IS NOT NULL)
+      AND provider IN ('buckpay', 'eleva', 'gestao', 'poseidon')
+      AND transaction_id IS NOT NULL
       AND created_at >= (SELECT CAST(value AS INTEGER) FROM payment_settings WHERE key = ?)
       AND created_at >= ? AND checked_at < ?
     ORDER BY checked_at ASC, created_at ASC LIMIT 4
@@ -49,3 +51,4 @@ export async function reconcileCheckoutPayments(): Promise<void> {
 
   await Promise.allSettled((results as PendingPayment[]).map(row => refresh[row.provider](row)));
 }
+

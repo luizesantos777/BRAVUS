@@ -5,6 +5,7 @@ import { loadAdminKey } from './admin-key.ts';
 import { loadDatabasePushKeys, PushService } from './push.ts';
 import type { TursoConnection } from './database.ts';
 import { BackupService, privateBlob } from './backups.ts';
+import { GatewayConfigSync } from './gateway-sync.ts';
 
 const BODY_LIMIT = 4 * 1024 * 1024;
 type Environment = Record<string, string | undefined>;
@@ -48,7 +49,14 @@ export function createVercelHandler(options: Options = {}) {
       const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
       const backups = new BackupService(store, env.BLOB_READ_WRITE_TOKEN ? privateBlob(env.BLOB_READ_WRITE_TOKEN) : null, (env.CRON_SECRET?.length ?? 0) >= 32);
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT });
+      const configUrl = env.CHECKOUT_CONFIG_URL ?? 'https://bravus-atendimento-v2.luizlucrocerto.chatgpt.site/api/integrations/portal-config';
+      const gatewaySync = new GatewayConfigSync(configUrl, env.CHECKOUT_CONFIG_TOKEN ?? '', config => store.setGatewayConfig(config));
+      store.setGatewaySyncView(gatewaySync.view());
+      const refreshGatewayConfig = async () => {
+        await gatewaySync.refresh();
+        store.setGatewaySyncView(gatewaySync.view());
+      };
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, refreshGatewayConfig });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 

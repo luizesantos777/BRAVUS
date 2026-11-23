@@ -8,7 +8,7 @@ import type { AlertReason, OperationalSource } from './operational-log';
 const WINDOW_MS = 15 * 60_000;
 const REPEATED_FAILURES = 3;
 const KEY_PREFIX = 'ops:failure:';
-type WebhookSource = 'atlas' | 'beehive' | 'legacy_portal';
+type WebhookSource = 'atlas' | 'beehive' | 'poseidon' | 'legacy_portal';
 type CheckoutAlert = { reason: AlertReason; source?: OperationalSource; count?: number };
 
 async function recordFailure(kind: 'gateway' | 'webhook', source: Gateway | WebhookSource, status?: number, now = Date.now()) {
@@ -76,7 +76,7 @@ export async function checkoutOperationalHealth(now = Date.now()): Promise<{ ok:
       if (counter.window_start !== windowStart || typeof counter.count !== 'number' || counter.count < REPEATED_FAILURES) continue;
       if (kind === 'gateway' && isGateway(source) && monitored.has(source)) {
         add({ reason: 'gateway_unavailable', source, count: counter.count });
-      } else if (kind === 'webhook' && (source === 'atlas' || source === 'beehive' || source === 'legacy_portal')) {
+      } else if (kind === 'webhook' && (source === 'atlas' || source === 'beehive' || source === 'poseidon' || source === 'legacy_portal')) {
         add({ reason: 'webhook_repeated', source, count: counter.count });
       }
     }
@@ -85,3 +85,4 @@ export async function checkoutOperationalHealth(now = Date.now()): Promise<{ ok:
   }
   return { ok: alerts.size === 0, alerts: [...alerts.values()] };
 }
+

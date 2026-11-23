@@ -16,6 +16,8 @@ permissions:
 jobs:
   quality:
     runs-on: ubuntu-latest
+    env:
+      NODE_OPTIONS: --experimental-strip-types
     defaults:
       run:
         working-directory: checkout

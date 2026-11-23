@@ -7,7 +7,7 @@ const PORTAL_SALES_URL = 'https://bravus-omega.vercel.app/api/integrations/check
 const enabledSince = "(SELECT CAST(value AS INTEGER) FROM payment_settings WHERE key='portal_checkout_auto_started_at')";
 const leaseMs = 30_000;
 const retryMaxMs = 30 * 60_000;
-const allowedProviders = ['atlas', 'beehive', 'beehive_card', 'buckpay', 'eleva', 'gestao'];
+const allowedProviders = ['atlas', 'beehive', 'beehive_card', 'buckpay', 'eleva', 'gestao', 'poseidon'];
 const proofRegex = /^[a-f0-9]{64}$/;
 
 export type CheckoutSaleProof = { orderId: string; proof: string };
@@ -87,3 +87,4 @@ export async function drainCheckoutSales(): Promise<void> {
   `).bind(now).all();
   await Promise.allSettled((results as Array<{ id: string }>).map(({ id }) => deliverSale(id, now)));
 }
+

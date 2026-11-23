@@ -6,12 +6,14 @@ import type { DatabaseSync } from 'node:sqlite';
 import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
+import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, checkoutTariffFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
 import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, GatewaySyncView, Invitation, PartnerAdsCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
 import { exclusiveCheckoutId, isExclusiveCheckout, PARTNER_GATEWAY_SEED } from './partner-checkouts.ts';
+import { applyRequestedPartnerTariff } from './partner-tariff-migration.ts';
 import { isPdfReceipt } from '../src/receipt-types.ts';
+import type { VerifiedCheckoutSale } from './checkout-sales.ts';
 
 export class PortalError extends Error { status: number; constructor(status: number, message: string) { super(message); this.status = status; } }
 export interface Authenticated { id: string }
@@ -20,7 +22,21 @@ const systemActor: AuditActor = { id: 'system', name: 'Sistema / terminal' };
 // Used in both the dashboard and the deletion transaction. Any record protects history,
 // even a rejected sale, a cancelled payout, a zero cost or a submitted batch without sales.
 const accountHistorySql = ['sales', 'costs', 'payouts', 'batches', 'receipts'].map(table => `EXISTS (SELECT 1 FROM ${table} WHERE attendant_id = a.id)`).join(' OR ');
-interface AttendantRow { id: string; name: string; account_kind: AccountKind; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
+interface AttendantRow { partner_fee_rules: string; id: string; name: string; account_kind: AccountKind; email: string; phone: string; pix_type: Profile['pixType']; pix_key: string; pix_owner: string; commission_bps: number; photo_url: string; sale_alert_template: string }
+interface RecordedSale {
+  profile: Profile;
+  batchId: string;
+  date: string;
+  time: string;
+  checkout: Checkout;
+  amountCents: number;
+  feeCents: number;
+  note: string;
+  receipt: { name: string; mime: string; bytes: Buffer };
+  createdAt: string;
+  approved?: boolean;
+}
+const approvalNote = 'Pagamento confirmado automaticamente pelo checkout.';
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 const invalid = (message: string): never => { throw new PortalError(400, message); };
 
@@ -28,7 +44,11 @@ export class PortalStore {
   sql: SqlDatabase;
   private gatewayConfig: GatewayConfigSnapshot | null = null;
   private gatewaySyncView: GatewaySyncView | undefined;
-  private constructor(database: SqlDatabase, gatewayConfig: GatewayConfigSnapshot | null = null, gatewaySyncView?: GatewaySyncView) { this.sql = database; this.gatewayConfig = gatewayConfig; this.gatewaySyncView = gatewaySyncView; }
+  private constructor(database: SqlDatabase, gatewayConfig: GatewayConfigSnapshot | null = null, gatewaySyncView?: GatewaySyncView) {
+    this.sql = database;
+    this.gatewayConfig = gatewayConfig;
+    this.gatewaySyncView = gatewaySyncView;
+  }
   static async open(source: string | TursoConnection | SqlDatabase): Promise<PortalStore> {
     const database = typeof source === 'object' && 'prepare' in source ? source : await openDatabase(source);
     const store = new PortalStore(database);
@@ -54,9 +74,7 @@ export class PortalStore {
     this.gatewayConfig = config;
     const limits = config.active.amountLimits?.pix;
     if (!limits) return;
-    const minimum = limits.minCents ?? 1;
-    const maximum = limits.maxCents;
-    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ? WHERE id = 'partner' OR id LIKE 'exclusive_%'").run(minimum, maximum);
+    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ? WHERE id = 'partner' OR id LIKE 'exclusive_%'").run(limits.minCents ?? 1, limits.maxCents);
   }
   setGatewaySyncView(view: GatewaySyncView) { this.gatewaySyncView = view; }
   gatewayConfigSnapshot() { return this.gatewayConfig; }
@@ -71,6 +89,7 @@ export class PortalStore {
       CREATE TABLE IF NOT EXISTS checkouts (id TEXT PRIMARY KEY, name TEXT NOT NULL, fee_bps INTEGER NOT NULL CHECK(fee_bps BETWEEN 0 AND 10000));
       INSERT OR IGNORE INTO checkouts (id, name, fee_bps) VALUES ('main', 'Checkout principal', 0), ('pix', 'PIX manual', 0);
       CREATE TABLE IF NOT EXISTS batches (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), request_key TEXT NOT NULL, payload_hash TEXT NOT NULL, UNIQUE(attendant_id, request_key));
+      CREATE UNIQUE INDEX IF NOT EXISTS batches_checkout_order ON batches(request_key) WHERE request_key GLOB 'sites:*';
       CREATE TABLE IF NOT EXISTS receipts (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), name TEXT NOT NULL, mime TEXT NOT NULL, bytes BLOB NOT NULL);
       CREATE TABLE IF NOT EXISTS sales (id TEXT PRIMARY KEY, attendant_id TEXT NOT NULL REFERENCES attendants(id), batch_id TEXT NOT NULL REFERENCES batches(id), date TEXT NOT NULL, time TEXT NOT NULL, checkout_id TEXT NOT NULL REFERENCES checkouts(id), checkout_name TEXT NOT NULL, amount_cents INTEGER NOT NULL CHECK(amount_cents > 0), fee_cents INTEGER NOT NULL, commission_bps INTEGER NOT NULL, goal_cents INTEGER NOT NULL, note TEXT NOT NULL, receipt_id TEXT NOT NULL REFERENCES receipts(id), created_at TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS sales_attendant_date ON sales(attendant_id, date);
@@ -97,6 +116,7 @@ export class PortalStore {
         (await store.sql.exec("UPDATE payouts SET gateway_fee_cents = withdrawal_fee_cents WHERE status = 'paid'"));
       }
       const profileColumns = new Set((await store.sql.prepare('PRAGMA table_info(attendants)').all()).map(column => column.name));
+      if (!profileColumns.has('partner_fee_rules')) await store.sql.exec("ALTER TABLE attendants ADD COLUMN partner_fee_rules TEXT NOT NULL DEFAULT '[]'");
       if (!profileColumns.has('account_kind')) (await store.sql.exec("ALTER TABLE attendants ADD COLUMN account_kind TEXT NOT NULL DEFAULT 'attendant' CHECK(account_kind IN ('attendant','partner'))"));
       if (!profileColumns.has('photo_url')) (await store.sql.exec("ALTER TABLE attendants ADD COLUMN photo_url TEXT NOT NULL DEFAULT ''"));
       if (!profileColumns.has('sale_alert_template')) (await store.sql.exec("ALTER TABLE attendants ADD COLUMN sale_alert_template TEXT NOT NULL DEFAULT '✅ Venda de {valor} lançada com sucesso!'"));
@@ -188,6 +208,7 @@ export class PortalStore {
       await store.applyPartnerTerms();
       await store.recordPartnerGatewayCosts();
       await store.applyPartnerFixedFee();
+      await applyRequestedPartnerTariff(store.sql);
     });
   }
   /** Runs inside initialization's write transaction, including the audit and marker. */
@@ -254,7 +275,7 @@ export class PortalStore {
   close() { this.sql.close(); }
   async adminDashboard(): Promise<AdminDashboard> {
     return this.sql.transaction(async db => {
-      const rows = await db.prepare(`SELECT id, name, account_kind AS accountKind, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
+      const rows = await db.prepare(`SELECT id, name, account_kind AS accountKind, partner_fee_rules AS partnerFeeRules, active, pix_type AS pixType, pix_key AS pixKey, pix_owner AS pixOwner, commission_bps AS commissionBps, created_at AS createdAt, active = 0 AND NOT (${accountHistorySql}) AS canDelete FROM attendants a ORDER BY created_at DESC`).all();
       // Read all financial records together. Display pagination must never truncate balances.
       const sales = await db.prepare('SELECT attendant_id AS attendantId, date, status, amount_cents AS amountCents, fee_cents AS feeCents, gateway_cost_cents AS gatewayCostCents, attendant_fee_cents AS attendantFeeCents, commission_bps AS commissionBps, commission_mode AS commissionMode FROM sales').all() as unknown as AdminSale[];
       const payouts = await db.prepare(`SELECT p.id, p.attendant_id AS attendantId, a.name AS attendantName, p.amount_cents AS amountCents, p.withdrawal_fee_cents AS withdrawalFeeCents, p.gateway_fee_cents AS gatewayFeeCents, p.status, p.requested_at AS requestedAt, p.paid_at AS paidAt, p.note, p.pix_type AS pixType, p.pix_key AS pixKey, p.pix_owner AS pixOwner FROM payouts p JOIN attendants a ON a.id = p.attendant_id ORDER BY p.requested_at DESC`).all() as unknown as AdminPayout[];
@@ -269,7 +290,7 @@ export class PortalStore {
       const attendants = rows.map(row => {
         const records = ownSales.get(String(row.id)) ?? [];
         const finance = calculateFinance(records, ownCosts.get(String(row.id)) ?? [], ownPayouts.get(String(row.id)) ?? [], 'all', today, row.accountKind as AccountKind);
-        return { ...row, active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...(row.accountKind === 'partner' ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], 'all', today), business: calculatePartnerBusiness(records, 'all', today, this.gatewayConfig?.active.cost) } : {}) };
+        return { ...row, partnerFeeRules: JSON.parse(String(row.partnerFeeRules)), active: row.active === 1, canDelete: row.canDelete === 1, salesCount: records.length, grossCents: records.reduce((sum, sale) => sum + sale.amountCents, 0), finance, ...(row.accountKind === 'partner' ? { marketing: calculateMarketing(finance, ownPartnerAds.get(String(row.id)) ?? [], 'all', today), business: calculatePartnerBusiness(records, 'all', today, this.gatewayConfig?.active.cost) } : {}) };
       }) as unknown as AdminAttendant[];
       return { attendants, payouts, checkouts: await new PortalStore(db, this.gatewayConfig, this.gatewaySyncView).checkouts(), costs: costs.slice(0, 100), pendingSalesCount: sales.filter(sale => sale.status === 'pending').length, todayAdsCents: costs.filter(cost => cost.date === today).reduce((sum, cost) => sum + cost.adsCents, 0), ...(this.gatewaySyncView ? { gatewaySync: this.gatewaySyncView } : {}) };
     }, 'read');
@@ -468,9 +489,13 @@ export class PortalStore {
     return { id: String(row.id) };
   }
   async profile(auth: Authenticated): Promise<Profile> {
-    const row = (await this.sql.prepare('SELECT id, name, account_kind, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?').get(auth.id)) as unknown as AttendantRow;
+    const row = (await this.sql.prepare('SELECT id, name, account_kind, partner_fee_rules, email, phone, pix_type, pix_key, pix_owner, commission_bps, photo_url, sale_alert_template FROM attendants WHERE id = ?').get(auth.id)) as unknown as AttendantRow;
     if (!row) throw new PortalError(401, 'Atendente não encontrado pelo token informado.');
-    return { id: row.id, name: row.name, accountKind: row.account_kind, email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
+    return { id: row.id, name: row.name, accountKind: row.account_kind, partnerFeeRules: JSON.parse(row.partner_fee_rules), email: row.email, phone: row.phone, pixType: row.pix_type, pixKey: row.pix_key, pixOwner: row.pix_owner, commissionBps: row.commission_bps, photoUrl: row.photo_url, saleAlertTemplate: row.sale_alert_template || DEFAULT_SALE_ALERT };
+  }
+  async checkoutAttendant(id: string): Promise<{ name: string; kind: AccountKind } | null> {
+    const row = await this.sql.prepare('SELECT name, account_kind FROM attendants WHERE id = ? AND active = 1').get(id);
+    return row ? { name: String(row.name), kind: row.account_kind === 'partner' ? 'partner' : 'attendant' } : null;
   }
   async checkouts(): Promise<Checkout[]> {
     return (await this.sql.prepare('SELECT * FROM checkouts ORDER BY rowid').all()).map(row => ({ id: String(row.id), name: String(row.name), feeBps: Number(row.fee_bps), fixedFeeCents: Number(row.fixed_fee_cents), minAmountCents: Number(row.min_amount_cents), maxAmountCents: row.max_amount_cents == null ? null : Number(row.max_amount_cents), higherTier: row.tier_above_cents == null ? null : { aboveAmountCents: Number(row.tier_above_cents), feeBps: Number(row.tier_fee_bps), fixedFeeCents: Number(row.tier_fixed_fee_cents) } }));
@@ -484,7 +509,7 @@ export class PortalStore {
   async payouts(auth: Authenticated): Promise<Payout[]> { return (await this.sql.prepare('SELECT id, amount_cents AS amountCents, withdrawal_fee_cents AS withdrawalFeeCents, gateway_fee_cents AS gatewayFeeCents, status, requested_at AS requestedAt, paid_at AS paidAt, note FROM payouts WHERE attendant_id = ? ORDER BY requested_at DESC').all(auth.id)) as unknown as Payout[]; }
   async portal(auth: Authenticated, period: Period = 'today'): Promise<Portal> {
     const profile = (await this.profile(auth)), sales = (await this.sales(auth)), costs = (await this.costs(auth)), payouts = (await this.payouts(auth)), today = businessToday();
-    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind), finance = calculateFinance(sales, costs, payouts, period, today, profile.accountKind);
+    const checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, today), finance = calculateFinance(sales, costs, payouts, period, today, profile.accountKind);
     const partner = profile.accountKind === 'partner' || checkouts.some(checkout => checkout.id === exclusiveCheckoutId(auth.id));
     const ownAds = partner ? (await this.sql.prepare('SELECT date, partner_ads_cents AS adsCents FROM costs WHERE attendant_id = ? AND partner_ads_cents > 0').all(auth.id)).map(row => ({ date: String(row.date), adsCents: Number(row.adsCents) })) : [];
     return { profile, checkouts, sales: sales.filter(sale => inPeriod(sale.date, period, today)).slice(0, 100), payouts, finance, ...(partner ? { marketing: calculateMarketing(finance, ownAds, period, today) } : {}), today };
@@ -534,6 +559,47 @@ export class PortalStore {
     if (!bytes.length || bytes.length > MAX_RECEIPT_BYTES || !(receipt.mime === 'image/png' && png || receipt.mime === 'image/jpeg' && jpeg || receipt.mime === 'image/webp' && webp || receipt.mime === 'application/pdf' && isPdfReceipt(bytes))) return invalid('Use um print PNG, JPG ou WEBP, ou um PDF válido, de até 2 MB.');
     return { name: receipt.name, mime: receipt.mime, bytes };
   }
+  private async insertRecordedSale(sale: RecordedSale): Promise<string> {
+    const { profile, batchId, date, time, checkout, amountCents, feeCents, note, receipt, createdAt, approved } = sale;
+    const receiptId = randomUUID(), id = randomUUID();
+    await this.sql.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, profile.id, receipt.name, receipt.mime, receipt.bytes);
+    await this.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, review_note, reviewed_at, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gross-share-less-fees', ?, ?)").run(id, profile.id, batchId, date, time, checkout.id, checkout.name, amountCents, feeCents, profile.commissionBps, 0, note, receiptId, createdAt, approved ? 'approved' : 'pending', approved ? approvalNote : '', approved ? createdAt : null, allocatedSaleFee(feeCents, profile.accountKind), profile.accountKind === 'partner' ? partnerGatewayCost(amountCents, this.gatewayConfig?.active.cost) : null);
+    return id;
+  }
+  async recordCheckoutSale(sale: VerifiedCheckoutSale): Promise<{ processed: true; duplicate: boolean; saleId: string }> {
+    // The manual submission API does not accept the colon used in this namespace.
+    const requestKey = `sites:${sale.orderId}`;
+    const payloadHash = createHash('sha256').update(JSON.stringify([sale.accountId, sale.amountCents, sale.provider, sale.date, sale.time])).digest('hex');
+    return this.withTransaction(async store => {
+      const previous = await store.sql.prepare("SELECT b.payload_hash, s.id AS sale_id FROM batches b JOIN sales s ON s.batch_id = b.id WHERE b.request_key = ? AND b.request_key GLOB 'sites:*'").get(requestKey);
+      if (previous) {
+        if (previous.payload_hash !== payloadHash) throw new PortalError(409, 'Este pagamento já foi recebido com outros dados.');
+        return { processed: true, duplicate: true, saleId: String(previous.sale_id) };
+      }
+
+      // A payment already attributed by the checkout belongs to that account even after revocation.
+      const auth = { id: sale.accountId };
+      const profile = await store.profile(auth).catch(error => {
+        if (error instanceof PortalError && error.status === 401) throw new PortalError(404, 'Conta do pagamento não encontrada.');
+        throw error;
+      });
+      const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
+      const checkout = profile.accountKind === 'partner' || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id)
+        ? checkouts[0]
+        : checkouts.find(item => item.id === (sale.provider === 'buckpay' ? 'buckpay' : 'main'));
+      if (!checkout) throw new PortalError(503, 'Tarifa do checkout indisponível.');
+      // The trusted checkout has already charged this amount. A manual-entry ceiling does not apply to imports.
+      const feeCents = checkoutTariffFee(sale.amountCents, checkout);
+      const receipt = store.receiptInput(sale.receipt);
+      const batchId = randomUUID(), createdAt = new Date().toISOString();
+      await store.sql.prepare('INSERT INTO batches VALUES (?, ?, ?, ?)').run(batchId, profile.id, requestKey, payloadHash);
+      const saleId = await store.insertRecordedSale({ profile, batchId, date: sale.date, time: sale.time, checkout, amountCents: sale.amountCents, feeCents, note: `Pagamento do checkout ${sale.orderId}.`, receipt, createdAt, approved: true });
+      const actor = { id: 'checkout-sites', name: 'Checkout Lucro Certo Pay' };
+      await store.audit(actor, 'sales.submitted', batchId, profile.name, null, { count: 1, amountCents: sale.amountCents, date: sale.date });
+      await store.audit(actor, 'sale.approved', saleId, profile.name, null, { status: 'approved', note: approvalNote, orderId: sale.orderId, provider: sale.provider });
+      return { processed: true, duplicate: false, saleId };
+    });
+  }
   async recordSales(auth: Authenticated, input: unknown, requestKey: string): Promise<{ duplicate: boolean; count: number }> {
     if (!/^[A-Za-z0-9_-]{12,100}$/.test(requestKey)) invalid('Identificador de envio inválido. Atualize a página.');
     if (!input || typeof input !== 'object') invalid('Lançamento inválido.');
@@ -546,7 +612,7 @@ export class PortalStore {
     const batch = input as SaleBatch;
     if (typeof batch.date !== 'string' || !validDate(batch.date) || batch.date > businessToday()) invalid('Informe uma data válida, até hoje.');
     if (!Array.isArray(batch.sales) || !batch.sales.length || batch.sales.length > 10) invalid('Envie entre 1 e 10 vendas por vez.');
-    const profile = (await this.profile(auth)), checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind);
+    const profile = (await this.profile(auth)), checkouts = accountCheckouts(await this.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, batch.date);
     const normalized = batch.sales.map(row => {
       if (!row || typeof row !== 'object' || typeof row.amount !== 'string' || typeof row.note !== 'string' || row.note.length > 500 || typeof row.time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(row.time)) return invalid('Confira o valor, o horário e a observação de cada venda.');
       const checkout = profile.accountKind === 'partner' ? checkouts[0] : checkouts.find(item => item.id === row.checkoutId);
@@ -563,12 +629,16 @@ export class PortalStore {
       if (existing.payload_hash !== payloadHash) throw new PortalError(409, 'Este envio já foi registrado com outros dados. Confira o histórico e atualize a página antes de lançar novas vendas.');
       return { duplicate: true, count: normalized.length };
     }
+      // Resolve a partner's dated rate under the same write lock as the sales,
+      // so another instance applying the requested rule cannot leave a stale fee.
+      const settlementProfile = profile.accountKind === 'partner' ? await store.profile(auth) : profile;
+      const partnerCheckout = settlementProfile.accountKind === 'partner' ? accountCheckouts(await store.checkoutsFor(auth), 'partner', settlementProfile.partnerFeeRules, batch.date)[0] : undefined;
       const batchId = randomUUID(), createdAt = new Date().toISOString();
       (await store.sql.prepare('INSERT INTO batches VALUES (?, ?, ?, ?)').run(batchId, auth.id, requestKey, payloadHash));
       for (const row of normalized) {
-        const receiptId = randomUUID();
-        (await store.sql.prepare('INSERT INTO receipts VALUES (?, ?, ?, ?, ?)').run(receiptId, auth.id, row.receipt.name, row.receipt.mime, row.receipt.bytes));
-        (await store.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'gross-share-less-fees', ?, ?)").run(randomUUID(), auth.id, batchId, batch.date, row.time, row.checkout.id, row.checkout.name, row.amountCents, row.feeCents, profile.commissionBps, 0, row.note, receiptId, createdAt, allocatedSaleFee(row.feeCents, profile.accountKind), profile.accountKind === 'partner' ? partnerGatewayCost(row.amountCents, store.gatewayConfig?.active.cost) : null));
+        const checkout = partnerCheckout ?? row.checkout;
+        const feeCents = partnerCheckout ? checkoutFee(row.amountCents, checkout) : row.feeCents;
+        await store.insertRecordedSale({ ...row, profile: settlementProfile, batchId, date: batch.date, checkout, feeCents, createdAt });
       }
     await store.audit({ id: auth.id, name: profile.name }, 'sales.submitted', batchId, profile.name, null, { count: normalized.length, amountCents: normalized.reduce((sum, row) => sum + row.amountCents, 0), date: batch.date });
     return { duplicate: false, count: normalized.length };

@@ -1,4 +1,4 @@
-import { inPeriod, MAX_SALE_CENTS, money } from './domain.ts';
+import { inPeriod, MAX_CONFIRMED_CHECKOUT_CENTS, money } from './domain.ts';
 import type { AdminSale, Period } from './domain.ts';
 
 export const PARTNER_PROVIDER_FEE_BPS = 599;
@@ -7,9 +7,9 @@ export type GatewayCostProfile = { basisPoints: number; fixedCents: number; roun
 export interface PartnerBusinessSummary { saleCount: number; partnerFeeCents: number; gatewayCostCents: number; profitCents: number }
 type CostedSale = Pick<AdminSale, 'amountCents' | 'feeCents' | 'gatewayCostCents' | 'status' | 'date'>;
 
-/** Merchant expense, separate from the 12% charged to the partner. Round each transaction. */
+/** Merchant expense, separate from the tariff charged to the partner. Round each transaction. */
 export function partnerGatewayCost(amountCents: number, profile?: GatewayCostProfile | null): number {
-  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_SALE_CENTS) throw new Error('Valor inválido para calcular o custo do gateway.');
+  if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) throw new Error('Valor inválido para calcular o custo do gateway.');
   const basisPoints = profile?.basisPoints ?? PARTNER_PROVIDER_FEE_BPS;
   const fixedCents = profile?.fixedCents ?? PARTNER_PROVIDER_FIXED_FEE_CENTS;
   const rounding = profile?.rounding ?? 'nearest';

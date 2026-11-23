@@ -1,6 +1,6 @@
 import { database, json } from './payments';
 import { cardPlans } from './card-pricing';
-import { formatCheckoutAmount, isCheckoutAmount } from './checkout-amount';
+import { formatCheckoutAmount, isCheckoutAmount, POSEIDON_PIX_MAX_CENTS } from './checkout-amount';
 import type { Gateway } from './gateways';
 
 export type PaymentMethod = 'pix' | 'credit_card';
@@ -14,6 +14,21 @@ export type AmountCheck = {
 
 const settingsKey = (provider: Gateway) => 'gateway_amount_limits:' + provider;
 const noLimits: GatewayAmountLimits = { pix: null, credit_card: null };
+
+function effectiveLimits(provider: Gateway, limits: GatewayAmountLimits): GatewayAmountLimits {
+  if (provider !== 'poseidon') return limits;
+  const configured = limits.pix;
+  // A missing maximum now means R$ 10.000,00 for Poseidon. Keep an operator
+  // defined lower ceiling, while upgrading the old R$ 3.000 ceiling.
+  const configuredMax = configured?.maxCents;
+  const maxCents = configuredMax == null || configuredMax === 300_000
+    ? POSEIDON_PIX_MAX_CENTS
+    : Math.min(configuredMax, POSEIDON_PIX_MAX_CENTS);
+  return {
+    pix: { minCents: configured?.minCents ?? null, maxCents },
+    credit_card: null,
+  };
+}
 
 function normalizeLimits(input: unknown): AmountLimits | null {
   if (input === null) return null;
@@ -37,16 +52,16 @@ export async function gatewayAmountLimits(provider: Gateway): Promise<GatewayAmo
     FROM payment_settings l JOIN payment_settings c ON c.key=?
     WHERE l.key=?
   `).bind(provider, settingsKey(provider)).first();
-  if (!row) return noLimits;
+  if (!row) return effectiveLimits(provider, noLimits);
   const entry = JSON.parse(row.limits);
-  if (entry.credentialRevision !== await credentialRevision(row.credential)) return noLimits;
-  return { pix: normalizeLimits(entry.pix), credit_card: normalizeLimits(entry.credit_card) };
+  if (entry.credentialRevision !== await credentialRevision(row.credential)) return effectiveLimits(provider, noLimits);
+  return effectiveLimits(provider, { pix: normalizeLimits(entry.pix), credit_card: normalizeLimits(entry.credit_card) });
 }
 
 export async function saveGatewayAmountLimits(provider: Gateway, input: unknown): Promise<GatewayAmountLimits> {
   if (!input || typeof input !== 'object') throw new Error('Informe os limites da gateway.');
   const raw = input as Record<string, unknown>;
-  const limits = { pix: normalizeLimits(raw.pix), credit_card: normalizeLimits(raw.credit_card) };
+  const limits = effectiveLimits(provider, { pix: normalizeLimits(raw.pix), credit_card: normalizeLimits(raw.credit_card) });
   if (provider !== 'beehive' && limits.credit_card) throw new Error('Selecione uma gateway com cartão habilitado no checkout.');
   const db = database();
   const credential = await db.prepare('SELECT value FROM payment_settings WHERE key=?').bind(provider).first();
@@ -88,3 +103,4 @@ export async function gatewayAmountCheck(provider: Gateway, method: PaymentMetho
 export function amountLimitResponse(check: AmountCheck) {
   return json({ error: check.message, code: 'AMOUNT_LIMIT', amountCheck: check }, 400);
 }
+

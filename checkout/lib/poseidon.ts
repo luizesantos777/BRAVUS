@@ -1,7 +1,7 @@
 import {recordCreationRejection} from './gateway-failures';
 import QRCode from 'qrcode/lib/browser';
 import {credentials, database, json, PAYMENT_ORIGIN, saveCredentials} from './payments';
-import {INVALID_CHECKOUT_AMOUNT,isCheckoutAmount} from './checkout-amount';
+import {INVALID_CHECKOUT_AMOUNT,isCheckoutAmount,POSEIDON_PIX_MAX_CENTS} from './checkout-amount';
 export const POSEIDON_ORIGIN='https://app.poseidonpay.site/api/v1';
 export class InputError extends Error {}
 const invalid=()=>{throw new InputError('Confira o valor, os dados do comprador.');};
@@ -10,6 +10,7 @@ function digits(value:unknown){if(typeof value!=='string'||!/^[\d\s().+/-]+$/.te
 function documentValid(d:string){if(!/^(\d{11}|\d{14})$/.test(d)||/^(\d)\1+$/.test(d))return false;const check=(base:string,weights:number[])=>{const n=base.split('').reduce((s,c,i)=>s+Number(c)*weights[i],0)%11;return n<2?0:11-n;};if(d.length===11){return check(d.slice(0,9),[10,9,8,7,6,5,4,3,2])===+d[9]&&check(d.slice(0,10),[11,10,9,8,7,6,5,4,3,2])===+d[10];}return check(d.slice(0,12),[5,4,3,2,9,8,7,6,5,4,3,2])===+d[12]&&check(d.slice(0,13),[6,5,4,3,2,9,8,7,6,5,4,3,2])===+d[13];}
 export function physicalOrder(b:any){
  if(!isCheckoutAmount(b.amount))throw new InputError(INVALID_CHECKOUT_AMOUNT);
+ if(b.amount>POSEIDON_PIX_MAX_CENTS)throw new InputError('O PIX da Poseidon deve ser de at\u00e9 R$ 10.000,00.');
  const c=b.customer||{};
  const name=field(c.name,3,150),email=field(c.email,5,254),document=digits(c.cpf),phone=digits(c.phone);
  if(!name.includes(' ')||!/^\S+@\S+\.\S+$/.test(email)||!documentValid(document)||!/^\d{10,11}$/.test(phone))return invalid();
@@ -55,3 +56,4 @@ export async function createPoseidon(b:any,c:{token:string,agent:string}){
  return json({url:PAYMENT_ORIGIN+'/pagar/'+id});
  }catch{try{await db.prepare('UPDATE payment_orders SET state=? WHERE id=? AND state=?').bind('unconfirmed',id,'creating').run();}catch{}return json({error:'A Poseidon não confirmou o resultado da solicitação. Confira no painel Poseidon antes de iniciar outro pedido para evitar cobrança duplicada.'},502);}
 }
+

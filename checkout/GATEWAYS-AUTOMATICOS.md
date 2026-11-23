@@ -18,7 +18,7 @@ As duas funções são independentes e começam desativadas. Os valores usados a
 | Adicionar acima de R$ 1.000,00: Eleva | R$ 1.000,00 continua na Firebot; R$ 1.000,01 usa Eleva |
 | Reserva: Eleva, BuckPay, Firebot | A gateway da faixa é tentada primeiro; as reservas seguem a ordem salva, sem repetir a primeira |
 
-O checkout continua aceitando de R$ 6,00 a R$ 3.000,00. Havendo várias regras correspondentes, vence a de maior limite ultrapassado. Valores são comparados em centavos inteiros. As regras não alteram preços ou taxas.
+Os limites de PIX são verificados por gateway antes do envio. A Poseidon aceita até R$ 10.000,00 por cobrança; as demais gateways conservam os limites cadastrados no painel. Havendo várias regras correspondentes, vence a de maior limite ultrapassado. Valores são comparados em centavos inteiros. As regras não alteram preços ou taxas.
 
 ## Quando uma gateway falha
 
@@ -62,3 +62,4 @@ A Atlas Pags pode ser cadastrada em `/admin/atlas` e selecionada como padrão, f
 ## Cadastro, exclusão e custos
 
 Use **+ Adicionar gateway** para cadastrar as credenciais no próprio painel. A exclusão remove a plataforma das novas cobranças e das regras, preservando consultas antigas. O custo informado é capturado por venda para o relatório privado. Veja [GESTAO-DE-GATEWAYS.md](GESTAO-DE-GATEWAYS.md).
+

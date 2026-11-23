@@ -19,7 +19,7 @@ globalThis.__headers=new Headers();globalThis.__panelCookie='';
 const temp=mkdtempSync(join(tmpdir(),'bravus-tests-'));
 const plugin={name:'runtime-test',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},x=>({path:x.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},x=>({contents:x.path==='cloudflare:workers'?'export const env=globalThis.__env':'export async function headers(){const h=new Headers(globalThis.__headers);if(globalThis.__panelCookie)h.set("cookie",globalThis.__panelCookie);return h}',loader:'js'}))}};
 async function load(entry,name){const out=join(temp,name+'.mjs');await build({entryPoints:[entry],outfile:out,bundle:true,platform:'node',format:'esm',plugins:[plugin]});return import(pathToFileURL(out).href)}
-const settings=await load('app/api/settings/route.ts','settings'),orders=await load('app/api/orders/route.ts','orders'),pay=await load('app/api/pay/[id]/route.ts','pay');
+const settings=await load('app/api/settings/route.ts','settings'),orders=await load('app/api/orders/route.ts','orders'),pay=await load('app/api/pay/[id]/route.ts','pay'),poseidonAmount=await load('lib/gateway-amount-limits.ts','poseidon-amount-limits'),poseidonValidation=await load('lib/poseidon.ts','poseidon-amount-validation');
 const origin='https://bravus-atendimento-v2.luizlucrocerto.chatgpt.site';
 const customOrigin='https://pagamento.bravuspix.shop';
 const request=(body,source=origin)=>new Request(origin+'/api/orders',{method:'POST',headers:{origin:source,'Content-Type':'application/json'},body:JSON.stringify(body)});
@@ -92,6 +92,17 @@ assert.equal((await admin.POST(request({publicKey:'public-poseidon-key',secretKe
 assert.equal((await (await settings.GET(new Request(origin))).json()).provider,'poseidon');
 assert.equal(db.prepare("SELECT count(*) AS count FROM payment_settings WHERE key IN ('buckpay','firebot','poseidon','gestao')").get().count,2);
 assert.ok(!JSON.stringify(db.prepare('SELECT * FROM payment_settings').all()).includes(fireKey));
+assert.equal((await poseidonAmount.gatewayAmountLimits('poseidon')).pix.maxCents,1000000);
+assert.equal((await poseidonAmount.saveGatewayAmountLimits('poseidon',{pix:{minCents:null,maxCents:300000},credit_card:null})).pix.maxCents,1000000);
+assert.equal((await poseidonAmount.gatewayAmountCheck('poseidon','pix',1000000)).status,'within_limits');
+assert.equal((await poseidonAmount.gatewayAmountCheck('poseidon','pix',1000001)).status,'outside_limits');
+assert.equal((await poseidonAmount.gatewayAmountCheck('buckpay','pix',1000001)).status,'without_limits');
+assert.equal((await settings.GET(new Request(origin+'/api/settings?amount=1000000'))).status,200);
+const tooHighPoseidon=await settings.GET(new Request(origin+'/api/settings?amount=1000001'));
+assert.equal(tooHighPoseidon.status,400);assert.equal((await tooHighPoseidon.json()).code,'AMOUNT_LIMIT');
+const validPoseidonBuyer={name:'Comprador de Teste',email:'test@example.test',cpf:'52998224725',phone:'11999999999'};
+assert.equal(poseidonValidation.physicalOrder({amount:1000000,requestId:crypto.randomUUID(),customer:validPoseidonBuyer}).amount,10000);
+assert.throws(()=>poseidonValidation.physicalOrder({amount:1000001,requestId:crypto.randomUUID(),customer:validPoseidonBuyer}),/10\.000/);
 globalThis.fetch=async()=>Response.json({success:false});
 assert.equal((await admin.POST(request({publicKey:'public-poseidon-key',secretKey:'bad-replacement-key'}))).status,503);
 globalThis.__headers=new Headers();globalThis.__panelCookie='';
@@ -483,3 +494,4 @@ assert.equal((await gatewayAdmin.GET(new Request(origin))).status,403);
 globalThis.__panelCookie='';db.prepare("DELETE FROM payment_settings WHERE key='gateway_panel_password'").run();
 assert.equal((await access.POST(request({action:'setup',password:'attacker-pass'}))).status,403);
 console.log('Passed: password-only gateway login, anonymous denial, CSRF, tamper rejection, owner-only bootstrap and unchanged store protection.');
+

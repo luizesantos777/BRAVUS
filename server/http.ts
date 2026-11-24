@@ -36,8 +36,9 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
     request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
   });
 }
-export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string }
+export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string; manualSalesEnabled?: boolean }
 export function createPortalHandler(store: PortalStore, options: PortalHttpOptions = {}) {
+  const manualSalesEnabled = options.manualSalesEnabled === true;
   const failedAuth = new Map<string, { count: number; started: number }>();
   const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
   return async (request: IncomingMessage, response: ServerResponse) => {
@@ -153,6 +154,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         else if (url.pathname === '/api/partner/ads' && request.method === 'GET') json(response, 200, await store.partnerAds(auth, url.searchParams.get('date') ?? ''));
         else if (url.pathname === '/api/partner/ads' && request.method === 'POST') json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === '/api/sales' && request.method === 'POST') {
+          if (!manualSalesEnabled) throw new PortalError(410, 'O lançamento manual de vendas foi desativado. As vendas são aprovadas automaticamente pelo checkout.');
           const batch = await readJson(request, options.bodyLimit), result = (await store.recordSales(auth, batch, String(request.headers['idempotency-key'] ?? '')));
           if (!result.duplicate && options.push) await Promise.allSettled([
             options.push.notifySale(auth, batch as SaleBatch),

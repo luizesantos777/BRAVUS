@@ -29,6 +29,7 @@ class StartupError extends Error {
 interface Options {
   environment?: () => Environment;
   openStore?: (connection: TursoConnection) => Promise<PortalStore>;
+  manualSalesEnabled?: boolean;
 }
 export function createVercelHandler(options: Options = {}) {
   let initialized: Promise<ReturnType<typeof createPortalHandler>> | undefined;
@@ -56,7 +57,7 @@ export function createVercelHandler(options: Options = {}) {
         await gatewaySync.refresh();
         store.setGatewaySyncView(gatewaySync.view());
       };
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, refreshGatewayConfig });
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, refreshGatewayConfig, manualSalesEnabled: options.manualSalesEnabled === true });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 
@@ -66,7 +67,7 @@ export function createVercelHandler(options: Options = {}) {
       const routed = url.searchParams.get('__bravus_path');
       if (routed !== null) {
         if (!/^[a-zA-Z0-9_/-]+(?:\.csv)?$/.test(routed)) {
-          response.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify({ error: 'Recurso não encontrado.' })); return;
+          response.writeHead(404, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' }); response.end(JSON.stringify({ error: 'Recurso nÃ£o encontrado.' })); return;
         }
         url.pathname = '/api/' + routed; url.searchParams.delete('__bravus_path');
         request.url = url.pathname + url.search;
@@ -81,8 +82,9 @@ export function createVercelHandler(options: Options = {}) {
       const missing = missingVariables.length > 0;
       response.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Retry-After': '30' });
       const diagnostics = error instanceof StartupError ? { setupIssue: error.issue, ...(error.databaseCode ? { databaseCode: error.databaseCode } : {}) } : {};
-      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', ...(missing ? { missingVariables } : diagnostics), error: missing ? 'A API precisa da conexão com o banco e da chave administrativa configuradas na hospedagem.' : error instanceof StartupError && error.issue === 'admin_key_invalid' ? 'BRAVUS_ADMIN_KEY deve ter entre 32 e 256 caracteres.' : 'O serviço de atendentes não conseguiu acessar sua configuração ou o banco de dados. Tente novamente em instantes.' }));
+      response.end(JSON.stringify({ status: missing ? 'configuration_required' : 'unavailable', ...(missing ? { missingVariables } : diagnostics), error: missing ? 'A API precisa da conexÃ£o com o banco e da chave administrativa configuradas na hospedagem.' : error instanceof StartupError && error.issue === 'admin_key_invalid' ? 'BRAVUS_ADMIN_KEY deve ter entre 32 e 256 caracteres.' : 'O serviÃ§o de atendentes nÃ£o conseguiu acessar sua configuraÃ§Ã£o ou o banco de dados. Tente novamente em instantes.' }));
     }
   };
 }
 export default createVercelHandler();
+

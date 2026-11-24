@@ -28,7 +28,7 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
       const text = Buffer.isBuffer(prepared) ? prepared.toString('utf8') : typeof prepared === 'string' ? prepared : JSON.stringify(prepared);
       if (Buffer.byteLength(text) > limit) return Promise.reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou arquivos menores por vez.'));
       return Promise.resolve(JSON.parse(text));
-    } catch { return Promise.reject(new PortalError(400, 'O corpo da solicitação deve ser um JSON válido.')); }
+    } catch { return Promise.reject(new PortalError(400, 'O corpo da solicitaÃ§Ã£o deve ser um JSON vÃ¡lido.')); }
   }
   return new Promise((accept, reject) => {
     const parts: Buffer[] = []; let size = 0, rejected = false;
@@ -37,14 +37,15 @@ function readJson(request: IncomingMessage, limit = BODY_LIMIT): Promise<unknown
       if (size > limit) { if (!rejected) reject(new PortalError(413, 'O envio excede o limite. Envie menos vendas ou arquivos menores por vez.')); rejected = true; parts.length = 0; return; }
       if (!rejected) parts.push(part);
     });
-    request.on('end', () => { if (rejected) return; try { accept(JSON.parse(Buffer.concat(parts).toString('utf8'))); } catch { reject(new PortalError(400, 'O corpo da solicitação deve ser um JSON válido.')); } });
-    request.on('error', () => reject(new PortalError(400, 'Não foi possível receber os dados.')));
+    request.on('end', () => { if (rejected) return; try { accept(JSON.parse(Buffer.concat(parts).toString('utf8'))); } catch { reject(new PortalError(400, 'O corpo da solicitaÃ§Ã£o deve ser um JSON vÃ¡lido.')); } });
+    request.on('error', () => reject(new PortalError(400, 'NÃ£o foi possÃ­vel receber os dados.')));
   });
 }
-export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string; refreshGatewayConfig?: () => Promise<void>; verifyCheckoutSale?: CheckoutSaleVerifier }
+export interface PortalHttpOptions { staticDir?: string; allowedOrigins?: string[]; adminKey?: string; push?: PushService; bodyLimit?: number; backups?: BackupService; cronSecret?: string; refreshGatewayConfig?: () => Promise<void>; verifyCheckoutSale?: CheckoutSaleVerifier; manualSalesEnabled?: boolean }
 export function createPortalHandler(store: PortalStore, options: PortalHttpOptions = {}) {
   const failedAuth = new Map<string, { count: number; started: number }>();
   const adminHash = options.adminKey ? createHash('sha256').update(options.adminKey).digest() : null;
+  const manualSalesEnabled = options.manualSalesEnabled === true;
   return async (request: IncomingMessage, response: ServerResponse) => {
     response.setHeader('X-Content-Type-Options', 'nosniff');
     response.setHeader('Referrer-Policy', 'no-referrer');
@@ -56,7 +57,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         const forwardedProtocol = request.headers['x-forwarded-proto'];
         const protocol = forwardedProtocol === 'https' ? 'https' : 'http';
         const sameOrigin = origin === `${protocol}://${request.headers.host}`;
-        if (origin && !sameOrigin && !options.allowedOrigins?.includes(origin)) throw new PortalError(403, 'Origem não permitida para este portal.');
+        if (origin && !sameOrigin && !options.allowedOrigins?.includes(origin)) throw new PortalError(403, 'Origem nÃ£o permitida para este portal.');
         if (origin) { response.setHeader('Access-Control-Allow-Origin', origin); response.setHeader('Vary', 'Origin'); }
         if (request.method === 'OPTIONS') {
           response.writeHead(204, { 'Access-Control-Allow-Headers': 'Authorization, Content-Type, Idempotency-Key', 'Access-Control-Allow-Methods': 'GET, POST, PATCH, DELETE, OPTIONS', 'Access-Control-Max-Age': '600' }); response.end(); return;
@@ -64,24 +65,28 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         if (url.pathname !== '/api/health') await options.refreshGatewayConfig?.().catch(() => undefined);
         if (url.pathname === '/api/health' && request.method === 'GET') { await store.health(); json(response, 200, { status: 'ok', push: options.push ? 'enabled' : 'disabled' }); return; }
         if (url.pathname === '/api/integrations/checkout-sales') {
-          if (request.method !== 'POST') throw new PortalError(405, 'Método não permitido.');
+          if (request.method !== 'POST') throw new PortalError(405, 'MÃ©todo nÃ£o permitido.');
           const claim = parseCheckoutSaleProof(await readJson(request, 1024));
-          if (!claim) throw new PortalError(400, 'Identificação do pagamento inválida.');
+          if (!claim) throw new PortalError(400, 'IdentificaÃ§Ã£o do pagamento invÃ¡lida.');
           let verified: unknown;
           try { verified = await (options.verifyCheckoutSale ?? verifyCheckoutSale)(claim); }
-          catch { throw new PortalError(503, 'Não foi possível consultar o pagamento no checkout.'); }
-          if (verified === null) throw new PortalError(404, 'Pagamento confirmado não encontrado.');
+          catch { throw new PortalError(503, 'NÃ£o foi possÃ­vel consultar o pagamento no checkout.'); }
+          if (verified === null) throw new PortalError(404, 'Pagamento confirmado nÃ£o encontrado.');
           const sale = parseVerifiedCheckoutSale(verified, claim.orderId);
-          if (!sale) throw new PortalError(503, 'O checkout retornou uma confirmação inválida.');
-          json(response, 200, await store.recordCheckoutSale(sale));
+          if (!sale) throw new PortalError(503, 'O checkout retornou uma confirmaÃ§Ã£o invÃ¡lida.');
+          const result = await store.recordCheckoutSale(sale);
+          if (!result.duplicate && options.push && adminHash) await Promise.allSettled([
+            options.push.notifyAdminCheckoutSale(adminHash.toString('hex'), sale),
+          ]);
+          json(response, 200, result);
           return;
         }
         const checkoutAttendantsPath = '/api/public/checkout-attendants';
         if (url.pathname === checkoutAttendantsPath || url.pathname.startsWith(`${checkoutAttendantsPath}/`)) {
           const id = url.pathname.slice(checkoutAttendantsPath.length + 1);
-          const notFound = 'Checkout individual não encontrado.';
+          const notFound = 'Checkout individual nÃ£o encontrado.';
           if (!isCheckoutAttendantId(id)) throw new PortalError(404, notFound);
-          if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
+          if (request.method !== 'GET') throw new PortalError(405, 'MÃ©todo nÃ£o permitido.');
           const attendant = await store.checkoutAttendant(id);
           if (!attendant) throw new PortalError(404, notFound);
           json(response, 200, attendant);
@@ -94,23 +99,23 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         const authorization = request.headers.authorization ?? '';
         if (url.pathname === '/api/cron/backups' || url.pathname === '/api/cron/checkout-sales') {
           const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
-          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest())) throw new PortalError(401, 'Acesso não autorizado.');
-          if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
+          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest())) throw new PortalError(401, 'Acesso nÃ£o autorizado.');
+          if (request.method !== 'GET') throw new PortalError(405, 'MÃ©todo nÃ£o permitido.');
           if (url.pathname === '/api/cron/checkout-sales') {
             try { await wakeCheckoutSales(); }
-            catch { throw new PortalError(503, 'Não foi possível acionar o checkout.'); }
+            catch { throw new PortalError(503, 'NÃ£o foi possÃ­vel acionar o checkout.'); }
             json(response, 200, { triggered: true });
             return;
           }
-          if (!options.backups) throw new PortalError(503, 'Backups ainda não configurados.');
+          if (!options.backups) throw new PortalError(503, 'Backups ainda nÃ£o configurados.');
           json(response, 200, await options.backups.run('daily')); return;
         }
         if (url.pathname.startsWith('/api/admin/')) {
-          if (!adminHash) throw new PortalError(503, 'A administração ainda não foi configurada neste servidor.');
+          if (!adminHash) throw new PortalError(503, 'A administraÃ§Ã£o ainda nÃ£o foi configurada neste servidor.');
           const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
           if (supplied.length < 32 || supplied.length > 256 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), adminHash)) {
             const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now });
-            throw new PortalError(401, 'Chave administrativa inválida.');
+            throw new PortalError(401, 'Chave administrativa invÃ¡lida.');
           }
           const actor = { id: adminHash.toString('hex'), name: 'Administrador' };
           if (url.pathname === '/api/admin/audit' && request.method === 'GET') { json(response, 200, await readAudit(store, url.searchParams)); return; }
@@ -121,7 +126,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
             return;
           }
           if (url.pathname.startsWith('/api/admin/backups')) {
-            if (!options.backups) throw new PortalError(503, 'Backups ainda não configurados.');
+            if (!options.backups) throw new PortalError(503, 'Backups ainda nÃ£o configurados.');
             if (url.pathname === '/api/admin/backups' && request.method === 'GET') json(response, 200, await options.backups.status());
             else if (url.pathname === '/api/admin/backups' && request.method === 'POST') json(response, 201, await options.backups.run('manual'));
             else if (/^\/api\/admin\/backups\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
@@ -130,16 +135,16 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
               const bytes = await options.backups.download(id);
               response.writeHead(200, { 'Content-Type': 'application/gzip', 'Content-Disposition': `attachment; filename="bravus-backup-${id}.json.gz"`, 'Cache-Control': 'private, no-store' });
               await pipeline(Readable.from([bytes]), response);
-            } else throw new PortalError(404, 'Cópia não encontrada.');
+            } else throw new PortalError(404, 'CÃ³pia nÃ£o encontrada.');
             return;
           }
           if (url.pathname.startsWith('/api/admin/push/')) {
-            if (!options.push) throw new PortalError(503, 'As notificações push ainda não estão disponíveis neste servidor.');
+            if (!options.push) throw new PortalError(503, 'As notificaÃ§Ãµes push ainda nÃ£o estÃ£o disponÃ­veis neste servidor.');
             const scope = adminHash.toString('hex');
             if (url.pathname === '/api/admin/push/config' && request.method === 'GET') json(response, 200, await options.push.adminConfig(scope));
             else if (url.pathname === '/api/admin/push/subscriptions' && request.method === 'POST') json(response, 201, await options.push.adminSubscribe(scope, await readJson(request, options.bodyLimit)));
             else if (url.pathname === '/api/admin/push/subscriptions' && request.method === 'DELETE') json(response, 200, await options.push.adminUnsubscribe(scope, await readJson(request, options.bodyLimit)));
-            else throw new PortalError(404, 'Recurso administrativo não encontrado.');
+            else throw new PortalError(404, 'Recurso administrativo nÃ£o encontrado.');
             return;
           }
           const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|cancel))?$/);
@@ -167,9 +172,9 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { (await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
           else if (route?.[1] === 'payouts' && !route[3] && request.method === 'PATCH') {
             const input = await readJson(request, options.bodyLimit) as { status?: unknown; note?: unknown } | null;
-            if (!input || typeof input.status !== 'string' || typeof input.note !== 'string') throw new PortalError(400, 'Informe o status e a observação do pagamento.');
+            if (!input || typeof input.status !== 'string' || typeof input.note !== 'string') throw new PortalError(400, 'Informe o status e a observaÃ§Ã£o do pagamento.');
             (await store.markPayout(route[2], input.status as 'paid' | 'cancelled', input.note, actor)); json(response, 200, { saved: true });
-          } else throw new PortalError(404, 'Recurso administrativo não encontrado.');
+          } else throw new PortalError(404, 'Recurso administrativo nÃ£o encontrado.');
           return;
         }
         let auth;
@@ -177,25 +182,26 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         catch (error) { const count = failedAuth.get(identity); failedAuth.set(identity, { count: (count?.count ?? 0) + 1, started: count?.started ?? now }); throw error; }
         if (url.pathname === '/api/ranking' && request.method === 'GET') {
           const period = url.searchParams.get('period') ?? 'last30';
-          if (!Object.hasOwn(periodLabels, period) && period !== 'last30' && period !== 'custom') throw new PortalError(400, 'Período do ranking inválido.');
+          if (!Object.hasOwn(periodLabels, period) && period !== 'last30' && period !== 'custom') throw new PortalError(400, 'PerÃ­odo do ranking invÃ¡lido.');
           json(response, 200, await store.ranking(auth, period as RankingPeriod, url.searchParams.get('start') ?? '', url.searchParams.get('end') ?? ''));
           return;
         }
         const requestedPeriod = url.searchParams.get('period') ?? 'today';
-        if (!Object.hasOwn(periodLabels, requestedPeriod)) throw new PortalError(400, 'Período inválido.');
+        if (!Object.hasOwn(periodLabels, requestedPeriod)) throw new PortalError(400, 'PerÃ­odo invÃ¡lido.');
         const period = requestedPeriod as Period;
         if (url.pathname.startsWith('/api/push/')) {
-          if (!options.push) throw new PortalError(503, 'As notificações push ainda não estão disponíveis neste servidor.');
+          if (!options.push) throw new PortalError(503, 'As notificaÃ§Ãµes push ainda nÃ£o estÃ£o disponÃ­veis neste servidor.');
           if (url.pathname === '/api/push/config' && request.method === 'GET') json(response, 200, (await options.push.config(auth)));
           else if (url.pathname === '/api/push/subscriptions' && request.method === 'POST') json(response, 201, (await options.push.subscribe(auth, await readJson(request, options.bodyLimit))));
           else if (url.pathname === '/api/push/subscriptions' && request.method === 'DELETE') json(response, 200, (await options.push.unsubscribe(auth, await readJson(request, options.bodyLimit))));
-          else throw new PortalError(404, 'Recurso não encontrado.');
+          else throw new PortalError(404, 'Recurso nÃ£o encontrado.');
         }
         else if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, { ...(await store.portal(auth, period)), maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
         else if (url.pathname === '/api/profile' && request.method === 'PATCH') json(response, 200, (await store.saveProfile(auth, await readJson(request, options.bodyLimit))));
         else if (url.pathname === '/api/partner/ads' && request.method === 'GET') json(response, 200, await store.partnerAds(auth, url.searchParams.get('date') ?? ''));
         else if (url.pathname === '/api/partner/ads' && request.method === 'POST') json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === '/api/sales' && request.method === 'POST') {
+          if (!manualSalesEnabled) throw new PortalError(410, 'O lanÃ§amento manual de vendas foi desativado. As vendas sÃ£o aprovadas automaticamente pelo checkout.');
           const batch = await readJson(request, options.bodyLimit), result = (await store.recordSales(auth, batch, String(request.headers['idempotency-key'] ?? '')));
           if (!result.duplicate && options.push) await Promise.allSettled([
             options.push.notifySale(auth, batch as SaleBatch),
@@ -203,19 +209,19 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           ]);
           json(response, 200, result);
         }
-        else if (url.pathname === '/api/payouts' && request.method === 'POST') throw new PortalError(410, 'As solicitações de repasse foram desativadas. Os pagamentos são registrados manualmente pela administração.');
+        else if (url.pathname === '/api/payouts' && request.method === 'POST') throw new PortalError(410, 'As solicitaÃ§Ãµes de repasse foram desativadas. Os pagamentos sÃ£o registrados manualmente pela administraÃ§Ã£o.');
         else if (/^\/api\/receipts\/[a-zA-Z0-9-]+$/.test(url.pathname) && request.method === 'GET') {
           const receipt = (await store.receipt(auth, url.pathname.split('/').at(-1)!));
           response.writeHead(200, { 'Content-Type': receipt.mime, 'Content-Length': receipt.bytes.byteLength, 'Cache-Control': 'private, no-store', 'Content-Disposition': `inline; filename="comprovante.${receiptExtension(receipt.mime)}"` });
           response.end(receipt.bytes);
-        } else throw new PortalError(404, 'Recurso não encontrado.');
+        } else throw new PortalError(404, 'Recurso nÃ£o encontrado.');
         return;
       }
-      if (request.method !== 'GET' && request.method !== 'HEAD') throw new PortalError(405, 'Método não permitido.');
-      if (!options.staticDir) throw new PortalError(404, 'Interface não disponível. Execute npm run build.');
+      if (request.method !== 'GET' && request.method !== 'HEAD') throw new PortalError(405, 'MÃ©todo nÃ£o permitido.');
+      if (!options.staticDir) throw new PortalError(404, 'Interface nÃ£o disponÃ­vel. Execute npm run build.');
       const root = resolve(options.staticDir);
       const requested = resolve(root, '.' + decodeURIComponent(/^\/parceiro\/?$/.test(url.pathname) ? '/parceiro.html' : url.pathname));
-      if (requested !== root && !requested.startsWith(root + sep)) throw new PortalError(404, 'Página não encontrada.');
+      if (requested !== root && !requested.startsWith(root + sep)) throw new PortalError(404, 'PÃ¡gina nÃ£o encontrada.');
       let filename = requested;
       try { if (!(await stat(filename)).isFile()) filename = resolve(root, 'index.html'); } catch { filename = resolve(root, 'index.html'); }
       const body = await readFile(filename);
@@ -226,10 +232,11 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
     } catch (error) {
       if (response.headersSent) { response.end(); return; }
       const status = error instanceof PortalError ? error.status : 500;
-      json(response, status, { error: status === 500 ? 'Não foi possível concluir a solicitação. Tente novamente.' : (error as Error).message });
+      json(response, status, { error: status === 500 ? 'NÃ£o foi possÃ­vel concluir a solicitaÃ§Ã£o. Tente novamente.' : (error as Error).message });
     }
   };
 }
 export function createPortalServer(store: PortalStore, options: PortalHttpOptions = {}) {
   return createServer(createPortalHandler(store, options));
 }
+

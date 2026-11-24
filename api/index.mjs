@@ -1997,7 +1997,7 @@ function privateBlob(token, signing = { issue: issueSignedToken, url: presignUrl
       await put(pathFor(id), bytes, { access: "private", token, addRandomSuffix: false, allowOverwrite: false, contentType: "application/gzip", cacheControlMaxAge: 60 });
     },
     async read(id) {
-      const result = await get(pathFor(id), { access: "private", token, useCache: false });
+      const result = await get(pathFor(id), { access: "private", token });
       if (!result || result.statusCode !== 200) throw new Error("Backup not found");
       const reader = result.stream.getReader(), parts = [];
       let size = 0;

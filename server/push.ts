@@ -14,13 +14,13 @@ function validatePushKeys(keys: VapidKeys): VapidKeys {
     const ecdh = createECDH('prime256v1'); ecdh.setPrivateKey(Buffer.from(keys.privateKey, 'base64url'));
     if (!ecdh.getPublicKey().equals(Buffer.from(keys.publicKey, 'base64url'))) throw new Error();
     return keys;
-  } catch { throw new Error('Chaves de Web Push inválidas. Preserve o arquivo privado e configure um par de chaves válido no servidor.'); }
+  } catch { throw new Error('Chaves de Web Push invÃ¡lidas. Preserve o arquivo privado e configure um par de chaves vÃ¡lido no servidor.'); }
 }
 
 export function loadPushKeys(filename: string, environment: NodeJS.ProcessEnv = process.env): VapidKeys {
   const publicKey = environment.BRAVUS_PUSH_PUBLIC_KEY, privateKey = environment.BRAVUS_PUSH_PRIVATE_KEY;
   if (publicKey || privateKey) {
-    if (!publicKey || !privateKey) throw new Error('Configure a chave pública e a chave privada do Web Push.');
+    if (!publicKey || !privateKey) throw new Error('Configure a chave pÃºblica e a chave privada do Web Push.');
     return validatePushKeys({ publicKey, privateKey });
   }
   mkdirSync(dirname(filename), { recursive: true, mode: 0o700 });
@@ -48,7 +48,7 @@ function subscriptionTable(target: PushTarget) {
   return target.role === 'admin' ? { table: 'admin_push_subscriptions', column: 'admin_scope' } : { table: 'push_subscriptions', column: 'attendant_id' };
 }
 function validateSubscription(input: unknown): PushSubscription {
-  if (!input || typeof input !== 'object') throw new PortalError(400, 'Inscrição de notificações inválida.');
+  if (!input || typeof input !== 'object') throw new PortalError(400, 'InscriÃ§Ã£o de notificaÃ§Ãµes invÃ¡lida.');
   const data = input as PushSubscription;
   try {
     if (typeof data.endpoint !== 'string' || data.endpoint.length > 4096) throw new Error();
@@ -57,7 +57,7 @@ function validateSubscription(input: unknown): PushSubscription {
     if (url.protocol !== 'https:' || url.username || url.password || url.port || !allowed) throw new Error();
     if (!data.keys || typeof data.keys.p256dh !== 'string' || typeof data.keys.auth !== 'string' || !/^[\w-]{87}$/.test(data.keys.p256dh) || !/^[\w-]{22}$/.test(data.keys.auth) || Buffer.from(data.keys.auth, 'base64url').length !== 16 || Buffer.from(data.keys.p256dh, 'base64url').length !== 65) throw new Error();
     ECDH.convertKey(Buffer.from(data.keys.p256dh, 'base64url'), 'prime256v1');
-  } catch { throw new PortalError(400, 'Use uma inscrição válida do serviço de notificações do navegador.'); }
+  } catch { throw new PortalError(400, 'Use uma inscriÃ§Ã£o vÃ¡lida do serviÃ§o de notificaÃ§Ãµes do navegador.'); }
   return { endpoint: data.endpoint, keys: { p256dh: data.keys.p256dh, auth: data.keys.auth } };
 }
 
@@ -77,7 +77,7 @@ export class PushService {
     return this.store.sql.transaction(async database => {
       const exists = await database.prepare(`SELECT endpoint_hash FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).get(id, target.id);
       const count = Number((await database.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE ${column} = ?`).get(target.id))!.count);
-      if (!exists && count >= 5) throw new PortalError(400, 'O limite é de cinco aparelhos por acesso.');
+      if (!exists && count >= 5) throw new PortalError(400, 'O limite Ã© de cinco aparelhos por acesso.');
       await database.prepare(`INSERT INTO ${table} (endpoint_hash, ${column}, subscription) VALUES (?, ?, ?) ON CONFLICT(endpoint_hash) DO UPDATE SET ${column} = excluded.${column}, subscription = excluded.subscription`).run(id, target.id, JSON.stringify(data));
       return { id };
     });
@@ -85,7 +85,7 @@ export class PushService {
   private async unsubscribeFor(target: PushTarget, input: unknown) {
     const { table, column } = subscriptionTable(target);
     const id = (input as { id?: unknown } | null)?.id;
-    if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new PortalError(400, 'Inscrição inválida.');
+    if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id)) throw new PortalError(400, 'InscriÃ§Ã£o invÃ¡lida.');
     await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(id, target.id);
     return { saved: true };
   }
@@ -99,11 +99,18 @@ export class PushService {
     const active = (await this.store.sql.prepare('SELECT id FROM attendants WHERE id = ? AND active = 1').get(auth.id));
     if (!active) return;
     const profile = (await this.store.profile(auth)), amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'Lucro Certo Pay · Nova venda aprovada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
+    await this.sendTo({ role: 'attendant', id: auth.id }, { title: 'Lucro Certo Pay Â· Nova venda aprovada', body: renderSaleAlert(profile.saleAlertTemplate, amount, batch.sales.length, profile.name) });
   }
   async notifyAdminSale(scope: string, auth: Authenticated, batch: SaleBatch) {
     const amount = batch.sales.reduce((sum, sale) => sum + amountToCents(sale.amount), 0);
-    await this.sendTo({ role: 'admin', id: scope }, { title: 'Lucro Certo Pay · Nova venda aprovada', body: `Você recebeu ${money(amount)}`, target: 'admin', tag: `bravus-admin-venda-${randomUUID()}` });
+    await this.notifyAdminAmount(scope, amount);
+  }
+  async notifyAdminCheckoutSale(scope: string, sale: { amountCents: number }) {
+    if (!Number.isSafeInteger(sale.amountCents) || sale.amountCents <= 0) return;
+    await this.notifyAdminAmount(scope, sale.amountCents);
+  }
+  private async notifyAdminAmount(scope: string, amount: number) {
+    await this.sendTo({ role: 'admin', id: scope }, { title: 'Lucro Certo Pay Â· Nova venda aprovada', body: `VocÃª recebeu ${money(amount)}`, target: 'admin', tag: `bravus-admin-venda-${randomUUID()}` });
   }
   private async sendTo(target: PushTarget, message: { title: string; body: string; target?: 'admin'; tag?: string }) {
     const { table, column } = subscriptionTable(target), payload = JSON.stringify(message);
@@ -118,3 +125,4 @@ export class PushService {
     }));
   }
 }
+

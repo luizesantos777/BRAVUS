@@ -28,6 +28,7 @@ class StartupError extends Error {
 interface Options {
   environment?: () => Environment;
   openStore?: (connection: TursoConnection) => Promise<PortalStore>;
+  manualSalesEnabled?: boolean;
 }
 export function createVercelHandler(options: Options = {}) {
   let initialized: Promise<ReturnType<typeof createPortalHandler>> | undefined;
@@ -48,7 +49,7 @@ export function createVercelHandler(options: Options = {}) {
       const push = new PushService(store, await loadDatabasePushKeys(store, env));
       const allowedOrigins = (env.BRAVUS_ALLOWED_ORIGINS ?? '').split(',').map(value => value.trim()).filter(Boolean);
       const backups = new BackupService(store, env.BLOB_READ_WRITE_TOKEN ? privateBlob(env.BLOB_READ_WRITE_TOKEN) : null, (env.CRON_SECRET?.length ?? 0) >= 32);
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT });
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, manualSalesEnabled: options.manualSalesEnabled === true });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 

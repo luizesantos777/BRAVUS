@@ -6,7 +6,7 @@ import { loadDatabasePushKeys, loadPushKeys, PushService } from './push.ts';
 import { BackupService, privateBlob, privateFolder } from './backups.ts';
 
 const port = Number(process.env.PORT ?? '3001');
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT deve ser uma porta vÃ¡lida.');
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT deve ser uma porta válida.');
 const databasePath = process.env.BRAVUS_DB_PATH ?? resolve('.bravus/portal.sqlite');
 const remote = !!(process.env.TURSO_DATABASE_URL || process.env.TURSO_AUTH_TOKEN);
 if (remote && (!process.env.TURSO_DATABASE_URL || !process.env.TURSO_AUTH_TOKEN || !process.env.BRAVUS_ADMIN_KEY)) throw new Error('Configure TURSO_DATABASE_URL, TURSO_AUTH_TOKEN e BRAVUS_ADMIN_KEY para usar o banco remoto.');
@@ -20,9 +20,8 @@ const server = createPortalServer(store, { staticDir: resolve('dist'), allowedOr
 const backupTimer = setInterval(() => { void backups.run('daily').catch(() => undefined); }, 60 * 60_000); backupTimer.unref();
 server.listen(port, '0.0.0.0', () => {
   console.log(`BRAVUS API e interface iniciadas na porta ${port}.`);
-  console.log(process.env.BRAVUS_ADMIN_KEY ? 'AdministraÃ§Ã£o configurada pela variÃ¡vel privada BRAVUS_ADMIN_KEY.' : `Chave administrativa privada disponÃ­vel em ${adminKeyPath}. Seu valor nÃ£o Ã© exibido nos logs.`);
+  console.log(process.env.BRAVUS_ADMIN_KEY ? 'Administração configurada pela variável privada BRAVUS_ADMIN_KEY.' : `Chave administrativa privada disponível em ${adminKeyPath}. Seu valor não é exibido nos logs.`);
   void backups.run('daily').catch(() => undefined);
 });
 const close = () => { clearInterval(backupTimer); server.close(() => { store.close(); process.exit(0); }); };
 process.on('SIGTERM', close); process.on('SIGINT', close);
-

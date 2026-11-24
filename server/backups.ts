@@ -16,7 +16,7 @@ type EncodedValue = string | number | null | { binary: string };
 interface Archive { format: 'bravus-backup'; version: 1; createdAt: string; backupId?: string; tables: { name: string; columns: string[]; rows: EncodedValue[][] }[] }
 const hash = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
 const pathFor = (id: string) => {
-  if (!/^(daily-\d{4}-\d{2}-\d{2}(?:-[a-f0-9-]{36})?|manual-[a-f0-9-]{36})$/.test(id)) throw new PortalError(400, 'Identificador do backup invÃ¡lido.');
+  if (!/^(daily-\d{4}-\d{2}-\d{2}(?:-[a-f0-9-]{36})?|manual-[a-f0-9-]{36})$/.test(id)) throw new PortalError(400, 'Identificador do backup inválido.');
   return `bravus-backups/${id}.json.gz`;
 };
 
@@ -33,7 +33,7 @@ export async function createArchive(store: PortalStore, backupId?: string): Prom
         throw new Error('Unsupported backup value');
       }));
       const table = { name, columns, rows }; size += Buffer.byteLength(JSON.stringify(table));
-      if (size > MAX_BYTES) throw new PortalError(413, 'A cÃ³pia ultrapassou o limite de 128 MB. O armazenamento precisa ser ampliado.');
+      if (size > MAX_BYTES) throw new PortalError(413, 'A cópia ultrapassou o limite de 128 MB. O armazenamento precisa ser ampliado.');
       tables.push(table);
     }
     return { format: 'bravus-backup', version: 1, createdAt: new Date().toISOString(), ...(backupId ? { backupId } : {}), tables } satisfies Archive;
@@ -138,7 +138,7 @@ export class BackupService {
   constructor(store: PortalStore, storage: BackupStorage | null, scheduled = false) { this.store = store; this.storage = storage; this.scheduled = scheduled; }
   async status(): Promise<BackupStatus> {
     const records = await this.store.sql.prepare('SELECT id, kind, status, started_at AS startedAt, verified_at AS verifiedAt, size_bytes AS sizeBytes, error FROM backup_runs ORDER BY started_at DESC LIMIT 50').all() as unknown as BackupRecord[];
-    return { configured: this.storage !== null, destination: this.storage?.destination ?? 'unconfigured', scheduled: this.scheduled, automatic: !this.storage ? 'Aguardando armazenamento privado' : this.scheduled ? 'Todos os dias, Ã s 03h de BrasÃ­lia' : 'Uma cÃ³pia por dia ao abrir o painel', retentionDays: 30, records };
+    return { configured: this.storage !== null, destination: this.storage?.destination ?? 'unconfigured', scheduled: this.scheduled, automatic: !this.storage ? 'Aguardando armazenamento privado' : this.scheduled ? 'Todos os dias, às 03h de Brasília' : 'Uma cópia por dia ao abrir o painel', retentionDays: 30, records };
   }
   async run(kind: 'daily' | 'manual', now = new Date()): Promise<BackupRecord> {
     if (!this.storage) throw new PortalError(503, 'Conecte um armazenamento Blob privado ao projeto na Vercel para ativar os backups.');
@@ -148,8 +148,8 @@ export class BackupService {
     const existing = await this.store.sql.transaction(async db => {
       const previous = day ? await db.prepare("SELECT id FROM backup_runs WHERE day_key = ? AND status = 'verified'").get(day) : undefined;
       if (previous) { id = String(previous.id); return true; }
-      if (await db.prepare("SELECT id FROM backup_runs WHERE status = 'running' AND started_at > ?").get(new Date(now.getTime() - 10 * 60_000).toISOString())) throw new PortalError(409, 'Uma cÃ³pia de seguranÃ§a jÃ¡ estÃ¡ em andamento. Aguarde a conclusÃ£o.');
-      await db.prepare("UPDATE backup_runs SET status = 'failed', error = 'A cÃ³pia foi interrompida. Tente novamente.' WHERE status = 'running'").run();
+      if (await db.prepare("SELECT id FROM backup_runs WHERE status = 'running' AND started_at > ?").get(new Date(now.getTime() - 10 * 60_000).toISOString())) throw new PortalError(409, 'Uma cópia de segurança já está em andamento. Aguarde a conclusão.');
+      await db.prepare("UPDATE backup_runs SET status = 'failed', error = 'A cópia foi interrompida. Tente novamente.' WHERE status = 'running'").run();
       await db.prepare("INSERT INTO backup_runs (id, kind, status, started_at, day_key) VALUES (?, ?, 'running', ?, ?)").run(id, kind, startedAt, day);
       return false;
     });
@@ -162,7 +162,7 @@ export class BackupService {
         await verifyArchive(downloaded);
         await this.store.sql.prepare("UPDATE backup_runs SET status = 'verified', verified_at = ?, size_bytes = ?, sha256 = ? WHERE id = ?").run(new Date().toISOString(), downloaded.length, checksum, id);
       } catch {
-        const message = 'NÃ£o foi possÃ­vel criar e verificar esta cÃ³pia. O Ãºltimo backup vÃ¡lido foi preservado.';
+        const message = 'Não foi possível criar e verificar esta cópia. O último backup válido foi preservado.';
         await this.store.sql.prepare("UPDATE backup_runs SET status = 'failed', error = ? WHERE id = ?").run(message, id);
         throw new PortalError(503, message);
       }
@@ -177,22 +177,21 @@ export class BackupService {
   async download(id: string): Promise<Buffer> {
     pathFor(id);
     const record = await this.store.sql.prepare("SELECT sha256 FROM backup_runs WHERE id = ? AND status = 'verified'").get(id);
-    if (!this.storage || !record) throw new PortalError(404, 'CÃ³pia verificada nÃ£o encontrada.');
+    if (!this.storage || !record) throw new PortalError(404, 'Cópia verificada não encontrada.');
     try {
       const bytes = await this.storage.read(id);
       if (hash(bytes) !== record.sha256) throw new Error('Backup checksum mismatch');
       return bytes;
-    } catch { throw new PortalError(503, 'NÃ£o foi possÃ­vel conferir a integridade desta cÃ³pia. Tente novamente ou use outra cÃ³pia verificada.'); }
+    } catch { throw new PortalError(503, 'Não foi possível conferir a integridade desta cópia. Tente novamente ou use outra cópia verificada.'); }
   }
   async downloadUrl(id: string): Promise<string | null> {
     pathFor(id);
     if (!this.storage?.downloadUrl) return null;
-    if (!await this.store.sql.prepare("SELECT id FROM backup_runs WHERE id = ? AND status = 'verified'").get(id)) throw new PortalError(404, 'CÃ³pia verificada nÃ£o encontrada.');
+    if (!await this.store.sql.prepare("SELECT id FROM backup_runs WHERE id = ? AND status = 'verified'").get(id)) throw new PortalError(404, 'Cópia verificada não encontrada.');
     try {
       const url = new URL(await this.storage.downloadUrl(id));
       if (url.protocol !== 'https:' || !url.hostname.endsWith('.blob.vercel-storage.com') || url.username || url.password) throw new Error('Invalid private download');
       return url.href;
-    } catch { throw new PortalError(503, 'NÃ£o foi possÃ­vel autorizar o download privado. Tente novamente.'); }
+    } catch { throw new PortalError(503, 'Não foi possível autorizar o download privado. Tente novamente.'); }
   }
 }
-

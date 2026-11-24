@@ -2314,4 +2314,3 @@ export {
   createVercelHandler,
   vercel_default as default
 };
-

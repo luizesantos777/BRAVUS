@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import { PortalStore } from '../server/store.ts';
 import { createVercelHandler } from '../server/vercel.ts';
 
-test('a API implantada na Vercel bloqueia o lanÃ§amento manual de vendas', async t => {
+test('a API implantada na Vercel bloqueia o lançamento manual de vendas', async t => {
   const token = 'fixture_manual_disabled_012345678901234567890123456789';
   const store = await PortalStore.open(':memory:');
   await store.createAttendant('Atendente automÃ¡tico', 1000, token);
@@ -32,6 +32,9 @@ test('a API implantada na Vercel bloqueia o lanÃ§amento manual de vendas', asy
     body: JSON.stringify({ date: '2026-11-23', sales: [] }),
   });
   assert.equal(response.status, 410);
-  assert.match((await response.json()).error, /lanÃ§amento manual.*foi desativado/i);
+  assert.match((await response.json()).error, /lançamento manual.*foi desativado/i);
+  const view = await fetch(base + '/api/portal?period=all', { headers: { Authorization: `Bearer ${token}` } });
+  assert.equal(view.status, 200, await view.clone().text());
+  assert.equal((await view.json() as { manualSales?: boolean }).manualSales, false);
 });
 

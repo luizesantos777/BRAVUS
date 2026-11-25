@@ -57,7 +57,7 @@ export function createVercelHandler(options: Options = {}) {
         await gatewaySync.refresh();
         store.setGatewaySyncView(gatewaySync.view());
       };
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, refreshGatewayConfig, manualSalesEnabled: options.manualSalesEnabled === true });
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT, refreshGatewayConfig, manualSalesEnabled: options.manualSalesEnabled === true || env.BRAVUS_MANUAL_SALES === '1' });
     } catch { store.close(); throw new StartupError('configuration_invalid'); }
   }
 

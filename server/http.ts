@@ -196,7 +196,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           else if (url.pathname === '/api/push/subscriptions' && request.method === 'DELETE') json(response, 200, (await options.push.unsubscribe(auth, await readJson(request, options.bodyLimit))));
           else throw new PortalError(404, 'Recurso não encontrado.');
         }
-        else if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, { ...(await store.portal(auth, period)), maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
+        else if (url.pathname === '/api/portal' && request.method === 'GET') json(response, 200, { ...(await store.portal(auth, period)), manualSales: manualSalesEnabled, maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
         else if (url.pathname === '/api/profile' && request.method === 'PATCH') json(response, 200, (await store.saveProfile(auth, await readJson(request, options.bodyLimit))));
         else if (url.pathname === '/api/partner/ads' && request.method === 'GET') json(response, 200, await store.partnerAds(auth, url.searchParams.get('date') ?? ''));
         else if (url.pathname === '/api/partner/ads' && request.method === 'POST') json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));

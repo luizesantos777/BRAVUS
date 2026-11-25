@@ -99,7 +99,10 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
         const authorization = request.headers.authorization ?? '';
         if (url.pathname === '/api/cron/backups' || url.pathname === '/api/cron/checkout-sales') {
           const supplied = authorization.startsWith('Bearer ') ? authorization.slice(7) : '';
-          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest())) throw new PortalError(401, 'Acesso não autorizado.');
+          const bearerOk = Boolean(options.cronSecret && options.cronSecret.length >= 32 && timingSafeEqual(createHash('sha256').update(supplied).digest(), createHash('sha256').update(options.cronSecret).digest()));
+          // O cron nativo da Vercel se identifica por User-Agent e pelo header do schedule (docs: vercel.com/docs/cron-jobs).
+          const vercelCronOk = String(request.headers['user-agent'] ?? '').startsWith('vercel-cron/') && Boolean(request.headers['x-vercel-cron-schedule']);
+          if (!bearerOk && !vercelCronOk) throw new PortalError(401, 'Acesso não autorizado.');
           if (request.method !== 'GET') throw new PortalError(405, 'Método não permitido.');
           if (url.pathname === '/api/cron/checkout-sales') {
             try { await wakeCheckoutSales(); }

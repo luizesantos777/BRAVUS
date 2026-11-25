@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -26,6 +27,14 @@ async function serve(t: TestContext, handler: ReturnType<typeof createVercelHand
   t.after(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   return (path: string, key = '', init: RequestInit = {}) => fetch(base + path, { ...init, headers: { ...(key ? { Authorization: `Bearer ${key}` } : {}), 'Content-Type': 'application/json', ...init.headers } });
+}
+async function disposeCloud(stores: PortalStore[], directory: string) {
+  for (const store of stores) {
+    try { await store.sql.exec('PRAGMA wal_checkpoint(TRUNCATE)'); } catch { /* best effort before closing a file client */ }
+    store.close();
+  }
+  try { rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+  catch (error) { if (process.platform !== 'win32') throw error; }
 }
 test('Vercel sem configuração responde 503 em JSON e nunca cria um banco temporário', async t => {
   let opened = 0;
@@ -64,8 +73,8 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
     await client.execute('PRAGMA journal_mode = WAL');
     const store = await PortalStore.open(libsqlDatabase(client)); stores.push(store); return store;
   };
-  t.after(() => { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); });
-  const call = await serve(t, createVercelHandler({ environment: () => env, openStore }));
+  t.after(() => disposeCloud(stores, directory));
+  const call = await serve(t, createVercelHandler({ environment: () => env, openStore, manualSalesEnabled: true }));
   assert.equal((await call('/api?__bravus_path=health')).status, 200);
   assert.equal((await call('/api?__bravus_path=admin/dashboard', token)).status, 401);
   const account = await call('/api?__bravus_path=admin/attendants', adminKey, { method: 'POST', body: JSON.stringify({ name: 'Atendente real de teste', token }) });
@@ -86,7 +95,7 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
   await call('/api/profile', token, { method: 'PATCH', body: JSON.stringify({ name: 'Atendente de teste', email: '', phone: '', pixType: 'email', pixKey: 'cloud@example.com', pixOwner: 'Teste' }) });
   portal = await (await call('/api/portal', token)).json(); assert.equal(portal.finance.availableCents, 3950);
   // A separate serverless instance opens the same database and reads the persisted account and sale.
-  const second = await serve(t, createVercelHandler({ environment: () => env, openStore }));
+  const second = await serve(t, createVercelHandler({ environment: () => env, openStore, manualSalesEnabled: true }));
   assert.equal((await (await second('/api/portal', token)).json()).finance.availableCents, 3950);
   assert.equal((await call('/api/payouts', token, { method: 'POST', body: JSON.stringify({ amount: '39.50' }) })).status, 410);
   const payout = (api: typeof call) => api('/api/admin/payouts', adminKey, { method: 'POST', headers: { 'Idempotency-Key': 'fixture_manual_cloud_0123456789' }, body: JSON.stringify({ attendantId: created.attendantId, amount: '39.50', note: 'Pagamento sintético' }) });
@@ -110,7 +119,7 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
 });
 test('handler aceita corpo já interpretado pela Vercel e aplica o limite de envio', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-body-'));
-  const store = await PortalStore.open(join(directory, 'body.sqlite')); t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  const store = await PortalStore.open(join(directory, 'body.sqlite')); t.after(() => { store.close(); removeTempDir(directory); });
   const handler = createVercelHandler({ environment: () => env, openStore: async () => store });
   const call = await serve(t, async (request, response) => {
     (request as typeof request & { body?: unknown }).body = request.headers['x-fixture-large'] ? { name: 'x'.repeat(4 * 1024 * 1024) } : { name: 'Atendente pelo corpo da Vercel', token };
@@ -127,7 +136,7 @@ test('push da Vercel é ativado sem variáveis extras e mantém chave e inscriç
     const store = await PortalStore.open(libsqlDatabase(createClient({ url: `file:${file}`, intMode: 'number', timeout: 0 })));
     stores.push(store); return store;
   };
-  t.after(() => { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => disposeCloud(stores, directory));
   const first = await serve(t, createVercelHandler({ environment: () => env, openStore }));
   const second = await serve(t, createVercelHandler({ environment: () => env, openStore }));
   for (const response of await Promise.all([first('/api/health'), second('/api/health')])) assert.deepEqual(await response.json(), { status: 'ok', push: 'enabled' });
@@ -167,7 +176,7 @@ test('instâncias libSQL concorrentes inicializam o esquema uma vez sem perder d
     const account = await stores[0].adminCreateAttendant({ name: 'Conta persistente', token });
     assert.equal((await stores[1].profile(await stores[1].authenticate(token))).id, account.attendantId);
     assert.deepEqual((await stores[1].checkouts()).map(checkout => checkout.id).sort(), ['buckpay', 'main', 'partner', 'pix']);
-  } finally { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { await disposeCloud(stores, directory); }
 });
 test('artefato implantado na Vercel carrega sem TypeScript e sem credenciais no build', () => {
   const script = `import handler from './api/index.mjs'; import {createServer} from 'node:http'; const server=createServer(handler); await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve)); const response=await fetch('http://127.0.0.1:'+server.address().port+'/api/health'); const body=await response.json(); server.closeAllConnections(); await new Promise(resolve=>server.close(resolve)); if(response.status!==503||body.status!=='configuration_required') throw new Error('Resposta inesperada'); process.stdout.write('artifact-ok');`;

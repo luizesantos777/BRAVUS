@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -93,7 +94,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: novas taxas
     await store.recordManualPayout({ attendantId: first.id, amount: '1', note: 'Sem saque' }, 'fixture_fixed_new_payment');
     const paid = (await store.payouts(auth)).find(item => item.note === 'Sem saque')!;
     assert.equal(paid.withdrawalFeeCents, 0);assert.equal(paid.gatewayFeeCents, 0);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('falha no recálculo reverte snapshots, auditoria e marcador; nova tentativa conclui', async () => {
@@ -111,7 +112,7 @@ test('falha no recálculo reverte snapshots, auditoria e marcador; nova tentativ
     } finally { raw.close(); }
     store = await PortalStore.open(file);assert.equal((await store.sales({ id: account.id }))[0].feeCents, 1400);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.sale_tariff_updated' }))).total, 1);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('backup anterior conserva os registros na restauração e aplica 12% + R$ 2 ao reiniciar a API', async () => {
@@ -128,5 +129,5 @@ test('backup anterior conserva os registros na restauração e aplica 12% + R$ 2
     assert.equal((await restored.sales(auth))[0].feeCents, 1400);
     assert.equal((await restored.adminSales('all', account.id)).sales[0].gatewayCostCents, 777);
     assert.equal((await readAudit(restored, new URLSearchParams({ action: 'partner.sale_tariff_updated' }))).total, 1);
-  } finally { source.close();restored.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { source.close();restored.close();removeTempDir(directory); }
 });

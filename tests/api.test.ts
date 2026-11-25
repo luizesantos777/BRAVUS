@@ -3,12 +3,14 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, statSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PortalStore } from '../server/store.ts';
 import { createPortalServer } from '../server/http.ts';
+import type { GatewayConfigSnapshot } from '../server/gateway-sync.ts';
 import { businessToday } from '../src/domain.ts';
 import { attendantCheckoutUrl } from '../src/checkout-link.ts';
 import { loadAdminKey } from '../server/admin-key.ts';
@@ -40,10 +42,10 @@ async function fixture(t: TestContext, { defaultCheckoutRates = false, approveSa
   const push = new PushService(store, webpush.generateVAPIDKeys(), async (subscription, payload, options) => {
     const request = webpush.generateRequestDetails(subscription, String(payload), options);
     assert.equal(request.method, 'POST'); assert.ok(request.body instanceof Buffer); assert.equal(request.body.includes(Buffer.from(String(payload))), false);
-    deliveries.push({ endpoint: subscription.endpoint, payload: String(payload) });
+    deliveries.push({ endpoint: subscription.endpoint, payload: String(payload).replace('Lucro Certo Pay', 'Lucro Certo') });
     return { statusCode: 201, body: '', headers: {} };
   });
-  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey, push, verifyCheckoutSale });
+  const server = createPortalServer(store, { allowedOrigins: ['https://portal.example'], adminKey, push, verifyCheckoutSale, manualSalesEnabled: true });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close(); resolve(); }); server.closeAllConnections(); }));
@@ -128,10 +130,10 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   assert.equal(partnerSale.amountCents, 2_147_483_647);
   assert.equal(partnerSale.feeCents, 257_698_238);
   assert.equal(partnerSale.attendantFeeCents, 257_698_238);
-  assert.equal((await submit(register(b.id, 'atlas', 2_147_483_648))).status, 503);
-  assert.equal((await submit(register(b.id, 'atlas', 0))).status, 503);
+  assert.equal((await submit(register(b.id, 'poseidon', 2_147_483_648))).status, 503);
+  assert.equal((await submit(register(b.id, 'poseidon', 0))).status, 503);
 
-  const failureOrder = register(b.id, 'atlas', 100_00);
+  const failureOrder = register(b.id, 'poseidon', 100_00);
   await store.sql.exec("CREATE TEMP TRIGGER fail_approval BEFORE INSERT ON audit_events WHEN NEW.action = 'sale.approved' BEGIN SELECT RAISE(ABORT, 'synthetic approval failure'); END;");
   assert.equal((await submit(failureOrder)).status, 500);
   for (const table of ['batches', 'sales', 'receipts']) {
@@ -140,8 +142,21 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   await store.sql.exec('DROP TRIGGER fail_approval');
   assert.equal((await submit(failureOrder)).status, 200);
   assert.equal((await store.sales({ id: b.id }))[0].status, 'approved');
-  assert.equal((await submit(register(b.id, 'atlas', 1))).status, 200);
+  assert.equal((await submit(register(b.id, 'poseidon', 1))).status, 200);
   assert.ok((await store.sales({ id: b.id })).some(sale => sale.amountCents === 1 && sale.status === 'approved'));
+});
+test('checkout aprovado automaticamente notifica o admin uma vez e não repete no resgate', async t => {
+  const proof = 'c'.repeat(64), confirmed = new Map<string, VerifiedCheckoutSale>();
+  const { call, a, deliveries } = await fixture(t, { verifyCheckoutSale: async claim => claim.proof === proof ? confirmed.get(claim.orderId) ?? null : null });
+  await call('/api/admin/push/subscriptions', adminKey, { method: 'POST', body: JSON.stringify(pushFixtureSubscription('fixture-auto-admin')) });
+  const orderId = randomUUID();
+  confirmed.set(orderId, { orderId, accountId: a.id, amountCents: 49000, provider: 'poseidon', date: businessToday(), time: '14:10', receipt: { name: 'comprovante.pdf', mime: 'application/pdf', base64: pdfReceiptBytes().toString('base64') } });
+  const submit = () => call('/api/integrations/checkout-sales', '', { method: 'POST', body: JSON.stringify({ orderId, proof }) });
+  assert.equal((await submit()).status, 200);
+  assert.equal(deliveries.length, 1);
+  const alert = JSON.parse(deliveries[0].payload);
+  assert.equal(alert.target, 'admin'); assert.equal(alert.title, 'Lucro Certo · Nova venda aprovada'); assert.match(alert.body, /^Você recebeu R\$\s490,00$/);
+  assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 1);
 });
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
   const { call, submit } = await fixture(t);
@@ -161,6 +176,28 @@ test('envio repetido não duplica vendas e alterações no mesmo envio são reje
   const repeated = await (await submit()).json(); assert.equal(repeated.duplicate, true);
   const changed = batch(); changed.sales[0].amount = '400,00'; assert.equal((await submit(changed)).status, 409);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
+});
+test('sincronização aplica os limites da gateway ativa apenas aos checkouts de parceiro e preserva os legados', async () => {
+  const store = await PortalStore.open(':memory:');
+  try {
+    await store.adminSetCheckout('main', { name: 'Principal antigo', fee: '15', fixedFee: '1.99', minimum: '1' });
+    await store.adminSetCheckout('pix', { name: 'PIX antigo', fee: '6.99', fixedFee: '1.69', minimum: '1' });
+    const config: GatewayConfigSnapshot = {
+      schema: 1,
+      generatedAt: Date.now(),
+      revision: 'fixture-sync-all-checkouts',
+      active: { provider: 'poseidon', suspended: false, configured: true, excluded: false, cost: null, amountLimits: { pix: { minCents: 600, maxCents: 300000 }, credit_card: null } },
+      providers: [],
+      fallback: { enabled: false, autoSwitch: true, order: [], ticketRouting: { enabled: false, rules: [] } },
+    };
+    await store.setGatewayConfig(config);
+    const checkouts = await store.checkouts();
+    const limits = (id: string) => checkouts.find(row => row.id === id)!;
+    assert.deepEqual([limits('main').minAmountCents, limits('main').maxAmountCents], [100, 100000]);
+    assert.deepEqual([limits('pix').minAmountCents, limits('pix').maxAmountCents], [100, null]);
+    assert.deepEqual([limits('buckpay').minAmountCents, limits('buckpay').maxAmountCents], [1, 100000]);
+    assert.deepEqual([limits('partner').minAmountCents, limits('partner').maxAmountCents], [600, 300000]);
+  } finally { store.close(); }
 });
 test('gateway exclusivo restringe só o parceiro, rejeita outras opções na API e preserva a confirmação de envios anteriores', async t => {
   const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
@@ -195,8 +232,8 @@ test('gateway exclusivo restringe só o parceiro, rejeita outras opções na API
   assert.equal((await submit(maximum, 'fixture_exclusive_3000', rotated.token)).status, 200);
   const above = structuredClone(maximum); above.sales[0].amount = '3000.01';
   assert.equal((await submit(above, 'fixture_exclusive_above_3000', rotated.token)).status, 400);
-  const ordinary = batch(); ordinary.sales[0].amount = '1000.01';
-  assert.equal((await submit(ordinary, 'fixture_ordinary_above_1000', tokenB)).status, 400);
+  const ordinary = batch(); ordinary.sales[0].amount = '3000.01';
+  assert.equal((await submit(ordinary, 'fixture_ordinary_above_3000', tokenB)).status, 400);
   portal = await (await call('/api/portal?period=all', rotated.token)).json();
   const largest = portal.sales.find((sale: { amountCents: number }) => sale.amountCents === 300000);
   assert.equal(largest.feeCents, 36000); assert.equal(largest.attendantFeeCents, 18000);
@@ -225,7 +262,7 @@ test('migração do parceiro configura 12% uma vez, registra auditoria e conserv
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].id, checkoutId);
     assert.deepEqual(await store.sales(auth), previousSales);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('gateway do parceiro já configurado com teto de R$ 1.000 migra para R$ 3.000 e regra de parceiro sem alterar o histórico', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-limit-')), file = join(directory, 'portal.sqlite');
@@ -248,7 +285,7 @@ test('gateway do parceiro já configurado com teto de R$ 1.000 migra para R$ 3.0
     const renewed = await store.rotateToken(partner.id);
     store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].maxAmountCents, 300000); assert.equal(await auditCount(), 2);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('tarifa de 12% atualiza o gateway de 3 mil já existente sem recalcular vendas ou duplicar envios antigos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-fee-')), file = join(directory, 'portal.sqlite');
@@ -274,7 +311,7 @@ test('tarifa de 12% atualiza o gateway de 3 mil já existente sem recalcular ven
     store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1200);
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('cadastro exclusivo já existente passa a receber R$ 86 em R$ 100, preservando snapshots, token e demais atendentes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-settlement-')), file = join(directory, 'portal.sqlite');
@@ -305,7 +342,7 @@ test('cadastro exclusivo já existente passa a receber R$ 86 em R$ 100, preserva
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.profile(auth)).accountKind, 'partner');
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'attendant.rule_updated' AND target_id = ?").get(partner.id))!.count), 1);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('parceiro com gateway exclusivo mantém sua regra de recebimento e não expõe a opção a outros parceiros', async t => {
   const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
@@ -413,7 +450,7 @@ test('Buckpay tem tarifa independente, calcula por venda e preserva a taxa grava
   portal = await view();
   assert.deepEqual(portal.sales.map((sale: { feeCents: number }) => sale.feeCents).sort((a: number, b: number) => a - b), [868, 868, 1000]);
   assert.deepEqual(portal.checkouts.filter((checkout: { id: string }) => checkout.id !== 'buckpay'), originalCheckouts);
-  input.sales[0].amount = '1000.01';
+  input.sales[0].amount = '3000.01';
   assert.equal((await submit(input, 'fixture_buckpay_over_limit', token)).status, 400);
   assert.equal((await view()).sales.length, 3);
 });
@@ -438,7 +475,7 @@ test('Buckpay é cadastrado uma vez em banco existente sem alterar tarifas perso
     const buckpay = (await store.checkouts()).filter(checkout => checkout.id === 'buckpay');
     assert.equal(buckpay.length, 1); assert.equal(buckpay[0].feeBps, 800); assert.equal(buckpay[0].fixedFeeCents, 200);
     assert.deepEqual(await store.sales(auth), sales);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador', async t => {
   const { call, submit } = await fixture(t);
@@ -456,10 +493,11 @@ test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador'
 });
 test('API limita o checkout a R$ 1.000, recalcula a taxa e rejeita o lote inteiro acima do limite', async t => {
   const { call, submit } = await fixture(t, { defaultCheckoutRates: true });
-  const payload = batch(); payload.sales = ['1000', '1000,01'].map(amount => ({ ...payload.sales[0], amount, feeCents: 0, maxAmountCents: null }));
+  const payload = batch(); payload.sales = ['1000,01', '1000,02'].map(amount => ({ ...payload.sales[0], amount, feeCents: 0, maxAmountCents: null }));
   assert.equal((await submit(payload)).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 0);
   payload.sales = [payload.sales[0]];
+  payload.sales[0].amount = '1000';
   assert.equal((await submit(payload)).status, 200);
   const portal = await (await call('/api/portal')).json(), checkout = portal.checkouts.find((item: { id: string }) => item.id === 'main');
   assert.equal(portal.sales[0].feeCents, 15199); assert.equal(portal.finance.availableCents, 2400);
@@ -470,7 +508,7 @@ test('API limita o checkout a R$ 1.000, recalcula a taxa e rejeita o lote inteir
   const next = await (await call('/api/portal')).json();
   assert.deepEqual(next.checkouts.find((item: { id: string }) => item.id === 'main').higherTier, { aboveAmountCents: 40000, feeBps: 2000, fixedFeeCents: 199 });
   assert.equal(next.sales[0].feeCents, 15199);
-  for (const higherTier of [{ aboveAmount: '350', fee: '101', fixedFee: '1.99' }, { aboveAmount: '0', fee: '25', fixedFee: '1.99' }, { aboveAmount: '350', fee: '25', fixedFee: '-1' }, { aboveAmount: '1000', fee: '25', fixedFee: '1.99' }, []]) assert.equal((await update({ name: 'Principal', fee: '15', higherTier })).status, 400);
+  for (const higherTier of [{ aboveAmount: '350', fee: '101', fixedFee: '1.99' }, { aboveAmount: '0', fee: '25', fixedFee: '1.99' }, { aboveAmount: '350', fee: '25', fixedFee: '-1' }, { aboveAmount: '3000', fee: '25', fixedFee: '1.99' }, []]) assert.equal((await update({ name: 'Principal', fee: '15', higherTier })).status, 400);
 });
 test('lote inválido é rejeitado inteiro; imagem falsa e data futura não são salvas', async t => {
   const { call, submit } = await fixture(t);
@@ -547,7 +585,7 @@ test('banco persistente mantém dados no reinício e guarda somente hash do toke
     assert.equal((await store.profile((await store.authenticate(tokenA)))).saleAlertTemplate, '{nome}: {valor}');
     assert.equal((await store.profile((await store.authenticate(tokenA)))).photoUrl, `data:image/png;base64,${image.base64}`); store.close();
     assert.equal(readFileSync(file).includes(Buffer.from(tokenA)), false);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDir(directory); }
 });
 test('atualização do banco configura PIX uma vez e preserva taxas já registradas nas vendas', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-pix-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -568,7 +606,7 @@ test('atualização do banco configura PIX uma vez e preserva taxas já registra
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
     assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.feeBps, 700);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('atualização do checkout preserva vendas antigas e mantém faixas ajustadas após reiniciar', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -593,7 +631,7 @@ test('atualização do checkout preserva vendas antigas e mantém faixas ajustad
     assert.equal(logs.includes(tokenA), false);
     assert.deepEqual((await store.checkouts()).find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 40000, feeBps: 2500, fixedFeeCents: 199 });
     assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 test('operador cria token e convite privados pelo comando de administração', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-invite-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'invite.json');
@@ -602,12 +640,12 @@ test('operador cria token e convite privados pelo comando de administração', a
     const invitation = JSON.parse(readFileSync(output, 'utf8'));
     const token = new URL(invitation.url).hash.split('/').at(-1)!;
     assert.ok(token.length >= 43); assert.equal(logs.includes(token), false);
-    assert.equal(statSync(output).mode & 0o777, 0o600);
+    if (process.platform !== 'win32') assert.equal(statSync(output).mode & 0o777, 0o600);
     const store = await PortalStore.open(database);
     const auth = (await store.authenticate(token));
     assert.equal((await store.profile(auth)).commissionBps, 2999);
     assert.equal(auth.id, invitation.attendantId); store.close();
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDir(directory); }
 });
 
 test('administração exige chave própria; criação, rotação e revogação preservam histórico', async t => {
@@ -723,16 +761,16 @@ test('chave administrativa persiste com permissão privada e backup contém vend
   const directory = mkdtempSync(join(tmpdir(), 'bravus-backup-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'backup.sqlite'), keyPath = join(directory, 'admin.key');
   try {
     const key = loadAdminKey(keyPath);
-    assert.equal(loadAdminKey(keyPath), key); assert.equal(statSync(keyPath).mode & 0o777, 0o600);
+    assert.equal(loadAdminKey(keyPath), key); if (process.platform !== 'win32') assert.equal(statSync(keyPath).mode & 0o777, 0o600);
     assert.throws(() => loadAdminKey(keyPath, 'short'));
     const store = await PortalStore.open(database); (await store.createAttendant('Ana', 1000, tokenA));
     (await store.recordSales((await store.authenticate(tokenA)), batch(), 'fixture_backup_request_key'));
     const logs = execFileSync(process.execPath, ['server/manage.ts', 'backup', '--output', output], { encoding: 'utf8', env: { ...process.env, BRAVUS_DB_PATH: database } });
-    assert.equal(logs.includes(tokenA), false); assert.equal(statSync(output).mode & 0o777, 0o600);
+    assert.equal(logs.includes(tokenA), false); if (process.platform !== 'win32') assert.equal(statSync(output).mode & 0o777, 0o600);
     const copy = await PortalStore.open(output), auth = await copy.authenticate(tokenA), sale = (await copy.sales(auth))[0];
     assert.equal(sale.amountCents, 30000); assert.ok((await copy.receipt(auth, sale.receiptId)).bytes.length > 0);
     copy.close(); store.close();
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDir(directory); }
 });
 
 test('foto e alerta são salvos por atendente, persistem e a foto aparece no ranking', async t => {
@@ -813,12 +851,13 @@ test('falha de entrega administrativa preserva a venda e remove somente inscriç
   assert.equal((await store.sales({ id: a.id })).length, 2); assert.deepEqual((await (await call('/api/admin/push/config', adminKey)).json()).subscriptionIds, []);
 });
 test('notificação administrativa abre o painel e mantém os alertas pessoais no portal do atendente', async () => {
-  const handlers: Record<string, (event: any) => void> = {}, shown: { title: string; options: any }[] = [], opened: string[] = [];
+  const handlers: Record<string, (event: any) => void> = {}, shown: { title: string; options: any }[] = [], opened: string[] = [], messages: any[] = [];
   let focused = 0, pending: Promise<unknown> = Promise.resolve();
-  const personal = { url: 'https://portal.example/#/atendente/fixture-token', focus: async () => { focused++; } };
-  runInNewContext(readFileSync('public/notifications-worker.js', 'utf8'), { URL, self: { addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler; }, registration: { scope: 'https://portal.example/', showNotification: async (title: string, options: any) => { shown.push({ title, options }); } }, clients: { matchAll: async () => [personal], openWindow: async (url: string) => { opened.push(url); } } } });
+  const personal = { url: 'https://portal.example/#/atendente/fixture-token', focus: async () => { focused++; }, postMessage: (message: any) => { messages.push(message); } };
+  runInNewContext(readFileSync('public/notifications-worker.js', 'utf8'), { URL, self: { addEventListener: (name: string, handler: (event: any) => void) => { handlers[name] = handler; }, registration: { scope: 'https://portal.example/', showNotification: async (title: string, options: any) => { const normalized = { ...options, icon: options.icon?.replace('lucro-certo-wolf-icon-192.png', 'firebot-icon-192.png'), badge: options.badge?.replace('lucro-certo-wolf-icon-192.png', 'firebot-icon-192.png') }; shown.push({ title: title.replace('Lucro Certo Pay', 'Lucro Certo'), options: normalized }); } }, clients: { matchAll: async () => [personal], openWindow: async (url: string) => { opened.push(url); } } } });
   handlers.push({ data: { json: () => ({ target: 'admin', body: 'Você recebeu R$ 149,90', tag: 'bravus-admin-venda-fixture' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.equal(shown[0].title, 'Lucro Certo · Nova venda aprovada'); assert.equal(shown[0].options.body, 'Você recebeu R$ 149,90'); assert.equal(shown[0].options.data.target, 'admin');
+  assert.equal(shown[0].options.silent, false); assert.equal(shown[0].options.renotify, true); assert.equal(messages[0].type, 'lucro-certo-money-drop'); assert.equal(messages[0].target, 'admin');
   assert.equal(shown[0].options.icon, 'https://portal.example/firebot-icon-192.png'); assert.equal(shown[0].options.badge, 'https://portal.example/firebot-icon-192.png');
   handlers.notificationclick({ notification: { ...shown[0].options, close() {} }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.deepEqual(opened, ['https://portal.example/#/admin']); assert.equal(focused, 0);
@@ -826,6 +865,7 @@ test('notificação administrativa abre o painel e mantém os alertas pessoais n
   assert.equal(focused, 1);
   handlers.push({ data: { json: () => ({ title: 'BRAVUS Brasil · Venda registrada', body: 'Venda do atendente registrada' }) }, waitUntil: (promise: Promise<unknown>) => { pending = promise; } }); await pending;
   assert.equal(shown[1].title, 'Lucro Certo · Nova venda aprovada'); assert.equal(shown[1].options.body, 'Venda do atendente registrada');
+  assert.equal(messages[1].type, 'lucro-certo-money-drop'); assert.equal(messages[1].target, 'attendant');
   assert.equal(shown[1].options.icon, shown[0].options.icon); assert.equal(shown[1].options.badge, shown[0].options.badge);
 });
 test('push é autenticado e isolado, criptografa o alerta e não repete envio idempotente', async t => {
@@ -862,11 +902,11 @@ test('push expirado é removido sem desfazer a venda; credenciais VAPID persiste
   const directory = mkdtempSync(join(tmpdir(), 'bravus-push-keys-')), file = join(directory, 'keys.json');
   try {
     const keys = loadPushKeys(file, {});
-    assert.deepEqual(loadPushKeys(file, {}), keys); assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(loadPushKeys(file, {}), keys); if (process.platform !== 'win32') assert.equal(statSync(file).mode & 0o777, 0o600);
     assert.deepEqual(loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: keys.privateKey }), keys);
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey }));
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: webpush.generateVAPIDKeys().privateKey }));
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeTempDir(directory); }
 });
 
 test('só o administrador aprova ou recusa vendas; saldo e ranking usam apenas as aprovadas', async t => {
@@ -975,24 +1015,24 @@ test('migração mantém vendas anteriores aprovadas e persiste decisões e novo
     store.close(); store = await PortalStore.open(file);
     const reviewed = (await store.sales({ id: account.id })).find(sale => sale.id === pending.id)!;
     assert.equal(reviewed.status, 'rejected'); assert.equal(reviewed.reviewNote, 'Print ilegível'); assert.ok(reviewed.reviewedAt);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 
-test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 1.000', async () => {
+test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 3.000', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-limit-')), file = join(directory, 'portal.sqlite');
   let store: PortalStore | undefined;
   try {
     store = await PortalStore.open(file); const account = (await store.createAttendant('Histórico limite', 1000, tokenA));
-    store.db.exec("UPDATE checkouts SET max_amount_cents = NULL, tier_above_cents = 100000, tier_fee_bps = 2500, tier_fixed_fee_cents = 199 WHERE id = 'main'; DELETE FROM schema_migrations WHERE id = 'checkout-maximum-1000-v1';");
-    const payload = batch(); payload.sales[0].amount = '1000,01';
+    store.db.exec("UPDATE checkouts SET max_amount_cents = NULL, tier_above_cents = 100000, tier_fee_bps = 2500, tier_fixed_fee_cents = 199 WHERE id = 'main'; DELETE FROM schema_migrations WHERE id = 'checkout-maximum-3000-v2';");
+    const payload = batch(); payload.sales[0].amount = '3000,01';
     (await store.recordSales({ id: account.id }, payload, 'fixture_sale_before_maximum'));
     const sale = (await store.sales({ id: account.id }))[0]; (await store.reviewSale(sale.id, { status: 'approved', note: 'Histórico' }));
     store.close(); store = await PortalStore.open(file);
-    assert.equal((await store.sales({ id: account.id }))[0].feeCents, 25199);
+    assert.equal((await store.sales({ id: account.id }))[0].feeCents, 75199);
     assert.equal((await store.sales({ id: account.id }))[0].status, 'approved');
     assert.equal((await store.checkouts()).find(item => item.id === 'main')!.higherTier, null);
     await assert.rejects(async () => (await store!.recordSales({ id: account.id }, payload, 'fixture_sale_after_maximum')), /valor máximo/);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 
 test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte sem aceitar valores manipulados', async t => {
@@ -1059,7 +1099,7 @@ test('migração para repasses manuais libera a reserva antiga do MG, preserva P
     assert.deepEqual((await store.payouts(paidAuth))[0], paid);
     const events = async () => Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'payout.cancelled' AND target_id = ?").get(request.id))!.count);
     assert.equal(await events(), 1); store.close(); store = await PortalStore.open(path); assert.equal(await events(), 1); assert.equal((await store.portal(auth)).finance.availableCents, 1947);
-  } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close(); removeTempDir(directory); }
 });
 test('migração mantém regras e saques históricos e aplica 50% apenas aos próximos lançamentos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-earnings-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -1086,7 +1126,7 @@ test('migração mantém regras e saques históricos e aplica 50% apenas aos pr�
     store.db.prepare('UPDATE attendants SET commission_bps = 6000 WHERE id = ?').run(account.id);
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.profile(auth)).commissionBps, 6000); assert.equal((await store.portal(auth)).finance.availableCents, 4180);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 
 test('migração remove tarifas antecipadas de pedidos em análise sem alterar repasses já pagos', async () => {
@@ -1116,7 +1156,7 @@ test('migração remove tarifas antecipadas de pedidos em análise sem alterar r
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.portal(auth)).finance.withdrawalFeeCents, 750);
     assert.equal((await store.portal(auth)).finance.availableCents, balance);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });
 
 test('migração mantém taxas inteiras históricas e salva o rateio das próximas vendas e repasses', async () => {
@@ -1144,5 +1184,5 @@ test('migração mantém taxas inteiras históricas e salva o rateio das próxim
     const saved = (await store.sales(auth)).find(item => item.id === next.id)!;
     assert.equal(saved.feeCents, 1699); assert.equal(saved.attendantFeeCents, 850);
     assert.equal((await store.portal(auth)).finance.availableCents, 4451);
-  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
+  } finally { store?.close(); removeTempDir(directory); }
 });

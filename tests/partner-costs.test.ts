@@ -3,7 +3,8 @@ import test from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
@@ -77,7 +78,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: custo hist�
     await store.rotateToken(account.id);store.close();store = await open();
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 3);
     assert.equal((await privateSales(store, account.id)).find(sale => sale.id === pending.id)!.gatewayCostCents, 777);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('falha de migração desfaz custo e auditoria juntos, permitindo nova tentativa', async () => {
@@ -97,12 +98,12 @@ test('falha de migração desfaz custo e auditoria juntos, permitindo nova tenta
     } finally { raw.close(); }
     store = await PortalStore.open(file);assert.equal((await privateSales(store, account.id))[0].gatewayCostCents, 798);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 1);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('API guarda custo por venda, ignora custo adulterado e mantém margem privada no admin', async t => {
   const store = await PortalStore.open(':memory:'), token = 'fixture_provider_cost_token_01234567890123456789', key = 'fixture_provider_admin_01234567890123456789';
-  const account = await store.createPartner('Parceiro API', token), server = createPortalServer(store, { adminKey: key });server.listen(0, '127.0.0.1');await once(server, 'listening');
+  const account = await store.createPartner('Parceiro API', token), server = createPortalServer(store, { adminKey: key, manualSalesEnabled: true });server.listen(0, '127.0.0.1');await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close();resolve(); });server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const submit = () => fetch(base + '/api/sales', { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', 'Idempotency-Key': 'fixture_provider_five_sales' }, body: JSON.stringify(batch(['100', '100', '100', '100', '100'])) });
@@ -138,5 +139,5 @@ test('backups preservam custo salvo e aceitam arquivos antigos sem a coluna de c
     assert.equal((await privateSales(old, account.id))[0].gatewayCostCents, 798);
     assert.equal((await readAudit(old, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 1);
     assert.equal((await old.sales({ id: account.id }))[0].feeCents, 1400);
-  } finally { source.close();full.close();old.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { source.close();full.close();old.close();removeTempDir(directory); }
 });

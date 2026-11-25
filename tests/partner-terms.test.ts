@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
@@ -91,7 +92,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: migra todas
     assert.equal((await store.payouts({ id: first.id })).find(p => p.id === legacyPending.id)!.gatewayFeeCents, 0);
     await assert.rejects(store.adminSetCheckout('partner', { name: 'Alteração indevida', fee: '0' }), /padrão de 12%/);
     await assert.rejects(store.adminSetCheckout(checkoutId, { name: 'Alteração indevida', fee: '0' }), /padrão de 12%/);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('falha durante recálculo desfaz taxas, auditoria e marcador antes de tentar novamente', async () => {
@@ -113,7 +114,7 @@ test('falha durante recálculo desfaz taxas, auditoria e marcador antes de tenta
     } finally { raw.close(); }
     store = await PortalStore.open(file);assert.equal((await store.sales({ id: account.id }))[0].feeCents, 1200);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.sale_repriced' }))).total, 1);
-  } finally { store.close();rmSync(directory, { recursive: true, force: true }); }
+  } finally { store.close();removeTempDir(directory); }
 });
 
 test('parceiros têm saque zero, sem permitir valores inválidos nem retirar taxas históricas reais', () => {

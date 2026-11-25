@@ -17,7 +17,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: PDF origina
   const store = driver === 'sqlite' ? await PortalStore.open(':memory:') : await PortalStore.open(libsqlDatabase(createClient({ url: 'file::memory:', intMode: 'number' })));
   const key = 'fixture_pdf_admin_01234567890123456789', token = 'fixture_pdf_attendant_01234567890123456789', otherToken = 'fixture_pdf_other_01234567890123456789';
   const account = await store.createPartner('Parceiro PDF', token);await store.createAttendant('Outra conta', 5000, otherToken);
-  const server = createPortalServer(store, { adminKey: key });server.listen(0, '127.0.0.1');await once(server, 'listening');
+  const server = createPortalServer(store, { adminKey: key, manualSalesEnabled: true });server.listen(0, '127.0.0.1');await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close();resolve(); });server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const input = { date: businessToday(), sales: [{ amount: '100', time: '12:00', note: 'PDF de teste', receipt }] };

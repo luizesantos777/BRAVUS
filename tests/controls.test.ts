@@ -1,7 +1,8 @@
 import test from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, statSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
@@ -28,7 +29,7 @@ const receipt = { name: 'print.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAA
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-controls-')), store = await PortalStore.open(':memory:');
   const account = await store.createAttendant('Ana', 5000, token), auth = { id: account.id };
-  t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => { store.close(); removeTempDir(directory); });
   async function sale(amount = '100', checkoutId = 'main', requestKey = 'fixture_controls_batch_01') {
     await store.recordSales(auth, { date: businessToday(), sales: [{ amount, checkoutId, time: '12:00', note: '', receipt }] }, requestKey);
     return (await store.sales(auth)).find(sale => sale.status === 'pending')!;
@@ -118,7 +119,9 @@ test('backup privado faz recuperação real e preserva vendas, comprovantes, tok
   await store.setCosts(auth.id, businessToday(), 1000, 0, actor);
   const keys = await loadDatabasePushKeys(store, {}), folder = join(directory, 'backups'), service = new BackupService(store, privateFolder(folder));
   const record = await service.run('daily'); assert.equal(record.status, 'verified'); assert.ok(record.verifiedAt); assert.ok(record.sizeBytes > 0);
-  assert.equal(statSync(join(folder, record.id + '.json.gz')).mode & 0o777, 0o600); assert.equal(statSync(folder).mode & 0o777, 0o700);
+  // No Windows os bits de modo não refletem as ACLs NTFS; a checagem estrita vale para POSIX.
+  const fileMode = statSync(join(folder, record.id + '.json.gz')).mode & 0o777, dirMode = statSync(folder).mode & 0o777;
+  if (process.platform === 'win32') { assert.ok(fileMode & 0o200); assert.ok(dirMode & 0o200); } else { assert.equal(fileMode, 0o600); assert.equal(dirMode, 0o700); }
   assert.deepEqual(await service.run('daily'), record); assert.equal((await service.status()).records.length, 1);
   const bytes = await service.download(record.id), restored = await PortalStore.open(':memory:');
   try {
@@ -133,7 +136,8 @@ test('backup privado faz recuperação real e preserva vendas, comprovantes, tok
   } finally { restored.close(); }
   const input = join(directory, 'download.json.gz'), output = join(directory, 'recovered.sqlite'); writeFileSync(input, bytes, { mode: 0o600 });
   execFileSync(process.execPath, ['server/manage.ts', 'restore-backup', '--input', input, '--output', output]);
-  assert.equal(statSync(output).mode & 0o777, 0o600);
+  const restoredMode = statSync(output).mode & 0o777;
+  if (process.platform === 'win32') assert.ok(restoredMode & 0o200); else assert.equal(restoredMode, 0o600);
   const before = readFileSync(output);
   assert.notEqual(spawnSync(process.execPath, ['server/manage.ts', 'restore-backup', '--input', input, '--output', output]).status, 0);
   assert.deepEqual(readFileSync(output), before);
@@ -191,7 +195,7 @@ test('Blob autoriza somente leitura da cópia exata por dois minutos e mantém o
 
 test('libSQL mantém a visão do backup e os relatórios entre instâncias e impede cópias simultâneas', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-controls-libsql-')), file = join(directory, 'source.sqlite'), stores: PortalStore[] = [];
-  t.after(() => { for (const store of stores) store.close(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => { for (const store of stores) store.close(); removeTempDir(directory); });
   for (let index = 0; index < 2; index++) {
     const client = createClient({ url: 'file:' + file, timeout: 0 }); await client.execute('PRAGMA journal_mode = WAL');
     stores.push(await PortalStore.open(libsqlDatabase(client)));
@@ -212,7 +216,7 @@ test('link temporário do Blob só é autorizado para administrador e cópia ver
   const { store, directory } = await fixture(t);
   let privateUrl = 'https://fixture.private.blob.vercel-storage.com/copy.json.gz?signature=fixture';
   const service = new BackupService(store, { ...privateFolder(join(directory, 'objects')), async downloadUrl() { return privateUrl; } });
-  const record = await service.run('manual'), server = createPortalServer(store, { adminKey, backups: service });
+  const record = await service.run('manual'), server = createPortalServer(store, { adminKey, backups: service, manualSalesEnabled: true });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/admin/backups/`;
@@ -228,7 +232,7 @@ test('link temporário do Blob só é autorizado para administrador e cópia ver
 test('relatórios, histórico e backups exigem administrador; cron exige segredo e cópia diária é idempotente', async t => {
   const { store, directory } = await fixture(t), cronSecret = 'fixture_cron_secret_012345678901234567890123456789';
   const backups = new BackupService(store, privateFolder(join(directory, 'private')), true);
-  const server = createPortalServer(store, { adminKey, backups, cronSecret }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const server = createPortalServer(store, { adminKey, backups, cronSecret, manualSalesEnabled: true }); server.listen(0, '127.0.0.1'); await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => resolve()); server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, today = businessToday();
   const call = (path: string, key = '', init: RequestInit = {}) => fetch(base + path, { ...init, headers: { Authorization: 'Bearer ' + key, ...init.headers } });

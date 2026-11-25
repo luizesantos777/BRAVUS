@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
@@ -63,7 +64,7 @@ for(const driver of ['sqlite','libsql'] as const)test(driver+': migração isola
   const audit=await store.sql.prepare("SELECT * FROM audit_events WHERE action IN ('partner.tariff_changed','partner.dated_sale_repriced') ORDER BY id").all();assert.equal(audit.length,4);
   assert.ok(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id=?').get(REQUESTED_PARTNER_TARIFF.migration));store.close();store=await open();assert.deepEqual(await store.sql.prepare("SELECT * FROM audit_events WHERE action IN ('partner.tariff_changed','partner.dated_sale_repriced') ORDER BY id").all(),audit);
   const recovered=await PortalStore.open(':memory:');try{await restoreArchive(await createArchive(store),recovered);assert.deepEqual((await recovered.profile({id:partner.id})).partnerFeeRules,rules);assert.deepEqual((await recovered.sales({id:partner.id})).map(row=>({...row})),(await store.sales({id:partner.id})).map(row=>({...row})));}finally{recovered.close();}
- }finally{store.close();rmSync(dir,{recursive:true,force:true});}
+ }finally{store.close();removeTempDir(dir);}
 });
 
 test('não escolhe entre nomes duplicados, não aplica a novos cadastros e não altera um atendente comum chamado Parceiro',async()=>{
@@ -117,5 +118,5 @@ for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital rec
   const audit=await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all();
   await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
   assert.deepEqual(await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all(),audit);
- } finally {store.close();rmSync(dir,{recursive:true,force:true});}
+ } finally {store.close();removeTempDir(dir);}
 });

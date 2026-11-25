@@ -65,7 +65,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: admin confe
 
 test('lucro inclui ADS antigos além da paginação; a conta do parceiro não acessa o admin', async t => {
   const store = await PortalStore.open(':memory:'), partner = await store.createPartner('Parceiro histórico', token), auth = { id: partner.id };
-  const server = createPortalServer(store, { adminKey: key });server.listen(0, '127.0.0.1');await once(server, 'listening');
+  const server = createPortalServer(store, { adminKey: key, manualSalesEnabled: true });server.listen(0, '127.0.0.1');await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close();resolve(); });server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const call = (path: string, credential: string) => fetch(base + path, { headers: { Authorization: `Bearer ${credential}` } });

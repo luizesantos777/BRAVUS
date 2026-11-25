@@ -3,7 +3,8 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
@@ -26,12 +27,12 @@ async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partners-'));
   const store = await PortalStore.open(join(directory, 'portal.sqlite'));
   const attendant = await store.createAttendant('Atendente comum', 5000, attendantToken);
-  const server = createPortalServer(store, { adminKey });
+  const server = createPortalServer(store, { adminKey, manualSalesEnabled: true });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => {
-    server.close(() => { store.close(); rmSync(directory, { recursive: true, force: true }); resolve(); });
+    server.close(() => { store.close(); removeTempDir(directory); resolve(); });
     server.closeAllConnections();
   }));
 
@@ -224,7 +225,7 @@ test('backup anterior sem account_kind restaura contas como atendentes e conserv
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partners-legacy-'));
   const source = await PortalStore.open(join(directory, 'legacy.sqlite'));
   const restored = await PortalStore.open(':memory:');
-  t.after(() => { source.close(); restored.close(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(() => { source.close(); restored.close(); removeTempDir(directory); });
   const account = await source.createAttendant('Conta anterior aos parceiros', 5000, attendantToken);
   const auth = await source.authenticate(attendantToken);
   await source.recordSales(auth, batch(), 'fixture_partner_legacy_sale');

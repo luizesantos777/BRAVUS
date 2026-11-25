@@ -40,7 +40,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: API recalcu
   await sale(b.id, '500', 0);await sale(c.id, '600', 0);await sale(inactive.id, '1000', 0);await sale(partner.id, '3000', 0);
   await store.setAttendantActive(inactive.id, { active: false });
   await sale(future.id, '1000', 0);await store.sql.prepare('UPDATE sales SET date=? WHERE attendant_id=?').run(shift(today, 1), future.id);
-  const server = createPortalServer(store);server.listen(0, '127.0.0.1');await once(server, 'listening');
+  const server = createPortalServer(store, { manualSalesEnabled: true });server.listen(0, '127.0.0.1');await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close();resolve(); });server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, call = (query = '', token = a.token, path = '/api/ranking') => fetch(base + path + query, { headers: { Authorization: `Bearer ${token}` } });
   const daily = await (await call('?period=today')).json();assert.deepEqual(daily.map((row: { id: string }) => row.id), [partner.id, c.id, b.id, a.id]);assert.equal(daily[3].grossCents, 10000);

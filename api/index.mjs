@@ -190,7 +190,7 @@ var MAX_CONFIRMED_CHECKOUT_CENTS = 2147483647;
 var DEFAULT_COMMISSION_BPS = 5e3;
 var PARTNER_GATEWAY_FEE_BPS = 1200;
 var PARTNER_FIXED_FEE_CENTS = 200;
-var PARTNER_CHECKOUT = { id: "partner", name: "Gateway do parceiro", feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, minAmountCents: 600, maxAmountCents: 3e5, higherTier: null };
+var PARTNER_CHECKOUT = { id: "partner", name: "Gateway do parceiro", feeBps: PARTNER_GATEWAY_FEE_BPS, fixedFeeCents: PARTNER_FIXED_FEE_CENTS, minAmountCents: 1, maxAmountCents: 3e5, higherTier: null };
 var GATEWAY_WITHDRAWAL_FEE_CENTS = 500;
 var ATTENDANT_GATEWAY_FEE_BPS = 5e3;
 var ATTENDANT_WITHDRAWAL_FEE_CENTS = 250;
@@ -259,8 +259,8 @@ function checkoutTariffFee(amountCents, checkout) {
   const tariff = checkout.higherTier && amountCents > checkout.higherTier.aboveAmountCents ? checkout.higherTier : checkout;
   return Math.floor((amountCents * tariff.feeBps + 5e3) / 1e4) + tariff.fixedFeeCents;
 }
-var MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 600, higherTier: null, maxAmountCents: 3e5 };
-var CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 600, higherTier: null, maxAmountCents: 3e5 };
+var MANUAL_PIX_TARIFF = { feeBps: 699, fixedFeeCents: 169, minAmountCents: 500, higherTier: null, maxAmountCents: null };
+var CHECKOUT_PIX_TARIFF = { feeBps: 1500, fixedFeeCents: 199, minAmountCents: 1, higherTier: null, maxAmountCents: 1e5 };
 var BUCKPAY_TARIFF = { ...CHECKOUT_PIX_TARIFF, feeBps: 699, fixedFeeCents: 169 };
 function percentageToBps(value) {
   if (!/^\d{1,3}(?:[.,]\d{1,2})?$/.test(value.trim())) throw new Error("Informe um percentual entre 0 e 100, com at\xE9 duas casas decimais.");
@@ -380,16 +380,13 @@ function validateProfile(value) {
 var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }, { id: "buckpay", name: "Checkout Buckpay", ...BUCKPAY_TARIFF }];
 
 // src/partner-business.ts
-var PARTNER_PROVIDER_FEE_BPS = 300;
-var PARTNER_PROVIDER_FIXED_FEE_CENTS = 100;
-var LEGACY_PARTNER_PROVIDER_FEE_BPS = 599;
-var LEGACY_PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
+var PARTNER_PROVIDER_FEE_BPS = 599;
+var PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
 function partnerGatewayCost(amountCents, profile) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) throw new Error("Valor inv\xE1lido para calcular o custo do gateway.");
-  const current = profile?.basisPoints === LEGACY_PARTNER_PROVIDER_FEE_BPS && profile.fixedCents === LEGACY_PARTNER_PROVIDER_FIXED_FEE_CENTS ? { ...profile, basisPoints: PARTNER_PROVIDER_FEE_BPS, fixedCents: PARTNER_PROVIDER_FIXED_FEE_CENTS } : profile;
-  const basisPoints = current?.basisPoints ?? PARTNER_PROVIDER_FEE_BPS;
-  const fixedCents = current?.fixedCents ?? PARTNER_PROVIDER_FIXED_FEE_CENTS;
-  const rounding = current?.rounding ?? "nearest";
+  const basisPoints = profile?.basisPoints ?? PARTNER_PROVIDER_FEE_BPS;
+  const fixedCents = profile?.fixedCents ?? PARTNER_PROVIDER_FIXED_FEE_CENTS;
+  const rounding = profile?.rounding ?? "nearest";
   const variable = rounding === "up" ? Math.floor((amountCents * basisPoints + 9999) / 1e4) : Math.floor((amountCents * basisPoints + 5e3) / 1e4);
   return variable + fixedCents;
 }
@@ -595,7 +592,7 @@ var PortalStore = class _PortalStore {
     this.gatewayConfig = config;
     const limits2 = config.active.amountLimits?.pix;
     if (!limits2) return;
-    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?").run(Math.max(600, Number(limits2.minCents ?? 600)), limits2.maxCents);
+    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ? WHERE id = 'partner' OR id LIKE 'exclusive_%'").run(limits2.minCents ?? 1, limits2.maxCents);
   }
   setGatewaySyncView(view) {
     this.gatewaySyncView = view;
@@ -706,10 +703,6 @@ var PortalStore = class _PortalStore {
           await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.feeMigration);
         }
       }
-      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("checkout-amount-contract-v1")) {
-        await store.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL").run(CHECKOUT_PIX_TARIFF.minAmountCents, CHECKOUT_PIX_TARIFF.maxAmountCents);
-        await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-amount-contract-v1");
-      }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
         await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("attendant-gross-share-50-v1");
@@ -770,7 +763,7 @@ var PortalStore = class _PortalStore {
     await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
   }
   async recordPartnerGatewayCosts() {
-    const migration = "partner-provider-cost-300-100-2026-11-24-v1";
+    const migration = "partner-provider-cost-599-199-2026-11-11-v1";
     if (await this.sql.prepare("SELECT id FROM schema_migrations WHERE id=?").get(migration)) return;
     const fee = `CAST((amount_cents * ${PARTNER_PROVIDER_FEE_BPS} + 5000) / 10000 AS INTEGER) + ${PARTNER_PROVIDER_FIXED_FEE_CENTS}`;
     const where = "gateway_cost_cents IS NULL AND attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner')";
@@ -1582,7 +1575,9 @@ function createPortalHandler(store, options = {}) {
         const authorization = request.headers.authorization ?? "";
         if (url.pathname === "/api/cron/backups" || url.pathname === "/api/cron/checkout-sales") {
           const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
-          if (!options.cronSecret || options.cronSecret.length < 32 || !timingSafeEqual(createHash2("sha256").update(supplied).digest(), createHash2("sha256").update(options.cronSecret).digest())) throw new PortalError(401, "Acesso n\xE3o autorizado.");
+          const bearerOk = Boolean(options.cronSecret && options.cronSecret.length >= 32 && timingSafeEqual(createHash2("sha256").update(supplied).digest(), createHash2("sha256").update(options.cronSecret).digest()));
+          const vercelCronOk = String(request.headers["user-agent"] ?? "").startsWith("vercel-cron/") && Boolean(request.headers["x-vercel-cron-schedule"]);
+          if (!bearerOk && !vercelCronOk) throw new PortalError(401, "Acesso n\xE3o autorizado.");
           if (request.method !== "GET") throw new PortalError(405, "M\xE9todo n\xE3o permitido.");
           if (url.pathname === "/api/cron/checkout-sales") {
             try {
@@ -1702,7 +1697,7 @@ function createPortalHandler(store, options = {}) {
           else if (url.pathname === "/api/push/subscriptions" && request.method === "POST") json(response, 201, await options.push.subscribe(auth, await readJson(request, options.bodyLimit)));
           else if (url.pathname === "/api/push/subscriptions" && request.method === "DELETE") json(response, 200, await options.push.unsubscribe(auth, await readJson(request, options.bodyLimit)));
           else throw new PortalError(404, "Recurso n\xE3o encontrado.");
-        } else if (url.pathname === "/api/portal" && request.method === "GET") json(response, 200, { ...await store.portal(auth, period), maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
+        } else if (url.pathname === "/api/portal" && request.method === "GET") json(response, 200, { ...await store.portal(auth, period), manualSales: manualSalesEnabled, maxRequestBytes: options.bodyLimit ?? BODY_LIMIT });
         else if (url.pathname === "/api/profile" && request.method === "PATCH") json(response, 200, await store.saveProfile(auth, await readJson(request, options.bodyLimit)));
         else if (url.pathname === "/api/partner/ads" && request.method === "GET") json(response, 200, await store.partnerAds(auth, url.searchParams.get("date") ?? ""));
         else if (url.pathname === "/api/partner/ads" && request.method === "POST") json(response, 200, await store.savePartnerAds(auth, await readJson(request, options.bodyLimit)));
@@ -1775,6 +1770,7 @@ import webpush from "web-push";
 import { createHash as createHash3, createECDH, ECDH, randomUUID as randomUUID3 } from "node:crypto";
 import { chmodSync as chmodSync3, mkdirSync as mkdirSync3, readFileSync as readFileSync2, writeFileSync as writeFileSync2 } from "node:fs";
 import { dirname as dirname3 } from "node:path";
+var PUSH_DELIVERY_TIMEOUT_MS = 1e4;
 function validatePushKeys(keys) {
   try {
     if (typeof keys.publicKey !== "string" || typeof keys.privateKey !== "string" || !/^[\w-]{87}$/.test(keys.publicKey) || !/^[\w-]{43}$/.test(keys.privateKey)) throw new Error();
@@ -1902,7 +1898,12 @@ var PushService = class {
     const rows2 = await this.store.sql.prepare(`SELECT endpoint_hash, subscription FROM ${table} WHERE ${column} = ?`).all(target.id);
     await Promise.allSettled(rows2.map(async (row) => {
       try {
-        await this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? "https://github.com/luizesantos777/BRAVUS" }, TTL: 600, timeout: 5e3, ...process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {} });
+        const delivery = this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? "https://github.com/luizesantos777/BRAVUS" }, TTL: 600, timeout: 5e3, ...process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {} });
+        delivery.catch(() => void 0);
+        await Promise.race([delivery, new Promise((_, reject) => {
+          const timer = setTimeout(() => reject(new Error("Entrega de notifica\xE7\xE3o expirada.")), PUSH_DELIVERY_TIMEOUT_MS);
+          timer.unref();
+        })]);
       } catch (error) {
         if ([404, 410].includes(error.statusCode ?? 0)) await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(String(row.endpoint_hash), target.id);
       }
@@ -2118,7 +2119,6 @@ function gatewaySyncView(config, status) {
   };
 }
 var isIntegerOrNull = (value) => value === null || Number.isSafeInteger(value);
-var MIN_SYNC_TOKEN_LENGTH = 32;
 function cost(value) {
   if (value === null || value === void 0) return null;
   if (!value || typeof value !== "object") throw new Error("Custo de gateway invalido.");
@@ -2182,14 +2182,14 @@ var GatewayConfigSync = class {
     this.apply = apply;
   }
   status() {
-    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return { configured: false, state: "not_configured", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null };
+    if (!this.url || !this.token) return { configured: false, state: "not_configured", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null };
     return { configured: true, state: this.lastError ? this.snapshot ? "stale" : "error" : "synced", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: this.lastError };
   }
   view() {
     return gatewaySyncView(this.snapshot, this.status());
   }
   async refresh() {
-    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return;
+    if (!this.url || !this.token) return;
     if (this.running) return this.running;
     if (Date.now() < this.nextAttempt) return;
     this.nextAttempt = Date.now() + 3e4;
@@ -2269,7 +2269,7 @@ function createVercelHandler(options = {}) {
         await gatewaySync.refresh();
         store.setGatewaySyncView(gatewaySync.view());
       };
-      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT2, refreshGatewayConfig, manualSalesEnabled: options.manualSalesEnabled === true });
+      return createPortalHandler(store, { adminKey, allowedOrigins, push, backups, cronSecret: env.CRON_SECRET, bodyLimit: BODY_LIMIT2, refreshGatewayConfig, manualSalesEnabled: options.manualSalesEnabled === true || env.BRAVUS_MANUAL_SALES === "1" });
     } catch {
       store.close();
       throw new StartupError("configuration_invalid");

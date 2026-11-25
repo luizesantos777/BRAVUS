@@ -90,7 +90,7 @@ test('falha na auditoria reverte a exclusão do cadastro, do gateway e da inscri
 test('API exige a chave administrativa, valida o estado atual e registra uma única exclusão concorrente', async t => {
   const store = await PortalStore.open(':memory:'), key = 'fixture_delete_admin_01234567890123456789';
   const target = await store.createPartner('Parceiro revogado'), caller = await store.createAttendant('Atendente sem poderes', 5000);
-  const server = createPortalServer(store, { adminKey: key });server.listen(0, '127.0.0.1');await once(server, 'listening');
+  const server = createPortalServer(store, { adminKey: key, manualSalesEnabled: true });server.listen(0, '127.0.0.1');await once(server, 'listening');
   t.after(() => new Promise<void>(resolve => { server.close(() => { store.close();resolve(); });server.closeAllConnections(); }));
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`, remove = (credential: string) => fetch(`${base}/api/admin/attendants/${target.id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${credential}` } });
   for (const credential of ['', caller.token, target.token]) assert.equal((await remove(credential)).status, 401);

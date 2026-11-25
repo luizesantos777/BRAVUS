@@ -14,7 +14,7 @@ test('percentuais mantêm duas casas decimais sem erro de ponto flutuante', () =
 });
 test('PIX manual aplica 6,99% mais R$ 1,69 em todas as faixas, arredondando cada venda em centavos', () => {
   const pix = demoCheckouts.find(checkout => checkout.id === 'pix')!;
-  for (const [gross, fee] of [[500, 204], [1599, 281], [1600, 281], [1999, 309], [2000, 309], [19999, 1567], [20000, 1567], [29999, 2266], [30000, 2266], [10000, 868], [19700, 1546]]) assert.equal(checkoutFee(gross, pix), fee);
+  for (const [gross, fee] of [[600, 211], [1599, 281], [1600, 281], [1999, 309], [2000, 309], [19999, 1567], [20000, 1567], [29999, 2266], [30000, 2266], [10000, 868], [19700, 1546]]) assert.equal(checkoutFee(gross, pix), fee);
   assert.equal(checkoutFee(1000, pix) + checkoutFee(1000, pix), 478);
   assert.equal(checkoutFee(2000, pix), 309);
   assert.throws(() => checkoutFee(499, pix), /valor mínimo/);

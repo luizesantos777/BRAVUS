@@ -139,9 +139,9 @@ export class PortalStore {
         (await store.sql.prepare('UPDATE checkouts SET fee_bps = ?, fixed_fee_cents = ?, min_amount_cents = ? WHERE id = ?').run(tariff.feeBps, tariff.fixedFeeCents, tariff.minAmountCents, 'main'));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-pix-tiered-tariff-v1'));
       }
-      if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-maximum-1000-v1'))) {
+      if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-maximum-3000-v2'))) {
         (await store.sql.prepare('UPDATE checkouts SET max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL WHERE id = ?').run(CHECKOUT_PIX_TARIFF.maxAmountCents, 'main'));
-        (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-maximum-1000-v1'));
+        (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-maximum-3000-v2'));
       }
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-buckpay-v1'))) {
         await store.sql.prepare('INSERT OR IGNORE INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run('buckpay', 'Checkout Buckpay', BUCKPAY_TARIFF.feeBps, BUCKPAY_TARIFF.fixedFeeCents, BUCKPAY_TARIFF.minAmountCents, BUCKPAY_TARIFF.maxAmountCents);

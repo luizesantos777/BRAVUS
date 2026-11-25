@@ -8,6 +8,9 @@ import type { SaleBatch } from '../src/domain.ts';
 import { PortalError, PortalStore } from './store.ts';
 import type { Authenticated } from './store.ts';
 
+/** Teto absoluto de entrega de push; a rede não pode pendurar o handler além disso. */
+const PUSH_DELIVERY_TIMEOUT_MS = 10_000;
+
 function validatePushKeys(keys: VapidKeys): VapidKeys {
   try {
     if (typeof keys.publicKey !== 'string' || typeof keys.privateKey !== 'string' || !/^[\w-]{87}$/.test(keys.publicKey) || !/^[\w-]{43}$/.test(keys.privateKey)) throw new Error();
@@ -117,7 +120,10 @@ export class PushService {
     const rows = await this.store.sql.prepare(`SELECT endpoint_hash, subscription FROM ${table} WHERE ${column} = ?`).all(target.id);
     await Promise.allSettled(rows.map(async row => {
       try {
-        await this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? 'https://github.com/luizesantos777/BRAVUS' }, TTL: 600, timeout: 5000, ...(process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {}) });
+        // O web-push já limita o socket a 5s; este teto extra protege contra redes que não respondem em nenhum prazo.
+        const delivery = this.sender(JSON.parse(String(row.subscription)), payload, { vapidDetails: { ...this.keys, subject: process.env.BRAVUS_PUSH_SUBJECT ?? 'https://github.com/luizesantos777/BRAVUS' }, TTL: 600, timeout: 5000, ...(process.env.HTTPS_PROXY ? { proxy: process.env.HTTPS_PROXY } : {}) });
+        delivery.catch(() => undefined);
+        await Promise.race([delivery, new Promise<never>((_, reject) => { const timer = setTimeout(() => reject(new Error('Entrega de notificação expirada.')), PUSH_DELIVERY_TIMEOUT_MS); timer.unref(); })]);
       } catch (error) {
         if ([404, 410].includes((error as { statusCode?: number }).statusCode ?? 0)) await this.store.sql.prepare(`DELETE FROM ${table} WHERE endpoint_hash = ? AND ${column} = ?`).run(String(row.endpoint_hash), target.id);
         // A push delivery failure never changes an already committed sale or exposes subscription credentials.

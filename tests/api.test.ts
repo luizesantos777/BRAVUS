@@ -64,8 +64,8 @@ test('checkout individual identifica atendentes e parceiros ativos sem expor o a
   const lookup = (id: string) => call(`/api/public/checkout-attendants/${id}`, '');
   assert.equal(attendantCheckoutUrl(a.id, 'attendant'), `https://pagamento.bravuspix.shop/a/${a.id}`);
   assert.notEqual(attendantCheckoutUrl(a.id, 'attendant'), attendantCheckoutUrl(b.id, 'attendant'));
-  assert.equal(attendantCheckoutUrl(partner.id, 'partner'), `https://biocamisas.shop/a/${partner.id}`);
-  assert.equal(attendantCheckoutUrl(anotherPartner.id, 'partner'), `https://biocamisas.shop/a/${anotherPartner.id}`);
+assert.equal(attendantCheckoutUrl(partner.id, 'partner'), `https://raizbruta.shop/a/${partner.id}`);
+assert.equal(attendantCheckoutUrl(anotherPartner.id, 'partner'), `https://raizbruta.shop/a/${anotherPartner.id}`);
   assert.notEqual(attendantCheckoutUrl(partner.id, 'partner'), attendantCheckoutUrl(anotherPartner.id, 'partner'));
   const first = await lookup(a.id);
   assert.equal(first.status, 200);

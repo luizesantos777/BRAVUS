@@ -9,7 +9,7 @@ import { createVercelHandler } from '../server/vercel.ts';
 test('a API implantada na Vercel bloqueia o lançamento manual de vendas', async t => {
   const token = 'fixture_manual_disabled_012345678901234567890123456789';
   const store = await PortalStore.open(':memory:');
-  await store.createAttendant('Atendente automÃ¡tico', 1000, token);
+  await store.createAttendant('Atendente automático', 1000, token);
   const handler = createVercelHandler({
     environment: () => ({
       TURSO_DATABASE_URL: 'libsql://fixture.invalid',

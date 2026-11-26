@@ -19,18 +19,18 @@ for (const platform of ['desktop', 'mobile']) {
     await store.sql.prepare('INSERT INTO checkouts (id, name, fee_bps, fixed_fee_cents, min_amount_cents, max_amount_cents) VALUES (?, ?, ?, ?, ?, ?)').run(exclusiveCheckoutId(partner.id), 'Gateway exclusivo', 1200, 0, 1, 300000);
   }
   (await store.createAttendant(`Atendente ${platform}`, 5000, `fixture_${platform}_primary_01234567890123456789`));
-  (await store.createAttendant(`RevisÃ£o ${platform}`, 5000, `fixture_${platform}_review_01234567890123456789`));
+  (await store.createAttendant(`Revisão ${platform}`, 5000, `fixture_${platform}_review_01234567890123456789`));
   (await store.createAttendant(`Outro ${platform}`, 5000, `fixture_${platform}_other_01234567890123456789`));
-  (await store.createAttendant(`NotificaÃ§Ãµes ${platform}`, 5000, `fixture_${platform}_notify_01234567890123456789`));
+  (await store.createAttendant(`Notificações ${platform}`, 5000, `fixture_${platform}_notify_01234567890123456789`));
   (await store.createAttendant(`Alertas do administrador ${platform}`, 5000, `fixture_${platform}_owner_notify_01234567890123456789`));
   (await store.createAttendant(`iPhone ${platform}`, 5000, `fixture_${platform}_ios_notify_01234567890123456789`));
-  (await store.createAttendant(`GestÃ£o ${platform}`, 5000, `fixture_${platform}_controls_01234567890123456789`));
+  (await store.createAttendant(`Gestão ${platform}`, 5000, `fixture_${platform}_controls_01234567890123456789`));
   (await store.createAttendant(`Vendas ao vivo ${platform}`, 5000, `fixture_${platform}_live_01234567890123456789`));
 }
 const push = new PushService(store, await loadDatabasePushKeys(store, {}), async () => ({ statusCode: 201, body: '', headers: {} }));
 const backups = new BackupService(store, privateFolder(join(directory, 'backups')));
 const server = createPortalServer(store, { staticDir: resolve('dist'), adminKey: 'fixture_browser_admin_012345678901234567890123456789', push, backups, manualSalesEnabled: true });
-server.listen(4173, '127.0.0.1', () => console.log('Servidor temporÃ¡rio dos testes do portal disponÃ­vel.'));
+server.listen(4173, '127.0.0.1', () => console.log('Servidor temporário dos testes do portal disponível.'));
 const close = () => server.close(() => { store.close(); rmSync(directory, { recursive: true, force: true }); process.exit(0); });
 process.on('SIGTERM', close); process.on('SIGINT', close);
 

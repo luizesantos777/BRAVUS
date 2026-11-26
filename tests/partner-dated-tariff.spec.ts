@@ -20,6 +20,6 @@ test('parceiro vê a prévia da data correta e o admin distingue a tarifa atual 
  const card=page.locator('.attendant-balance').filter({has:page.getByRole('heading',{name:`Parceiro tarifa por data ${info.project.name}`,exact:true})});
  await expect(card.locator('.checkout-tariff')).toContainText('14%');await expect(card.locator('.checkout-tariff')).toContainText('13/11/2026');
  const value=(label:string)=>card.locator('dl > div').filter({has:page.locator('dt').filter({hasText:label})}).locator('dd');
- await expect(value('Taxas das vendas (conforme a data)')).toContainText('30,00');await expect(value('Valor do parceiro após as taxas de venda')).toContainText('170,00');await expect(value('Lucro BRAVUS nas taxas')).toContainText('14,04');
+  await expect(value('Taxas das vendas (conforme a data)')).toContainText('30,00');await expect(value('Valor do parceiro após as taxas de venda')).toContainText('170,00');await expect(value('Lucro Lucro Certo Pay nas taxas')).toContainText('22,00');
  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 });

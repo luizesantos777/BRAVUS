@@ -4,7 +4,6 @@ import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
@@ -16,20 +15,23 @@ import { createArchive, restoreArchive } from '../server/backups.ts';
 import { readAudit, readFinancialReport } from '../server/admin-controls.ts';
 import { businessToday } from '../src/domain.ts';
 import { calculatePartnerBusiness, partnerGatewayCost, recordedPartnerGatewayCost } from '../src/partner-business.ts';
+import { disposeTestStore } from './test-cleanup.ts';
 
-const today = businessToday(), migration = 'partner-provider-cost-599-199-2026-11-11-v1';
+const today = businessToday(), migration = 'partner-provider-cost-300-100-2026-11-24-v1';
 const receipt = { name: 'custo.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
 const batch = (amounts: string[], checkoutId?: string) => ({ date: today, sales: amounts.map(amount => ({ amount, checkoutId, time: '12:00', note: 'Transação sintética', receipt, gatewayCostCents: 0 })) });
 const privateSales = async (store: PortalStore, id: string) => (await store.adminSales('all', id)).sales;
 
-test('5,99% + R$ 1,99 é um custo por transação; vendas pequenas podem ter margem negativa', () => {
-  for (const [amount, expected] of [[10000, 798], [21900, 1511], [50000, 3194], [300000, 18169], [500, 229], [5, 199]]) assert.equal(partnerGatewayCost(amount), expected);
+test('3% + R$ 1,00 é um custo por transação; vendas pequenas podem ter margem negativa', () => {
+  for (const [amount, expected] of [[10000, 400], [21900, 757], [50000, 1600], [300000, 9100], [500, 115], [5, 100]]) assert.equal(partnerGatewayCost(amount), expected);
+  assert.equal(partnerGatewayCost(10000, { basisPoints: 599, fixedCents: 199, rounding: 'nearest' }), 400);
+  assert.equal(partnerGatewayCost(10000, { basisPoints: 700, fixedCents: 200, rounding: 'nearest' }), 900);
   for (const amount of [0, -1, 1.1, NaN, Infinity]) assert.throws(() => partnerGatewayCost(amount));
   const five = calculatePartnerBusiness(Array.from({ length: 5 }, () => ({ amountCents: 10000, feeCents: 1200, status: 'approved' as const, date: today })), 'all', today);
-  assert.deepEqual(five, { saleCount: 5, partnerFeeCents: 6000, gatewayCostCents: 3990, profitCents: 2010 });
+  assert.deepEqual(five, { saleCount: 5, partnerFeeCents: 6000, gatewayCostCents: 2000, profitCents: 4000 });
   const one = calculatePartnerBusiness([{ amountCents: 50000, feeCents: 6000, status: 'approved', date: today }], 'all', today);
-  assert.equal(one.gatewayCostCents, 3194);assert.equal(one.profitCents, 2806);
-  assert.equal(calculatePartnerBusiness([{ amountCents: 500, feeCents: 60, status: 'approved', date: today }], 'all', today).profitCents, -169);
+  assert.equal(one.gatewayCostCents, 1600);assert.equal(one.profitCents, 4400);
+  assert.equal(calculatePartnerBusiness([{ amountCents: 500, feeCents: 60, status: 'approved', date: today }], 'all', today).profitCents, -55);
   assert.equal(recordedPartnerGatewayCost({ amountCents: 10000, gatewayCostCents: 777 }), 777);
   assert.equal(recordedPartnerGatewayCost({ amountCents: 10000, gatewayCostCents: 0 }), 0);
 });
@@ -40,11 +42,11 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: custo hist�
   let store = await open();
   try {
     const account = await store.createPartner('Parceiro custo'), auth = { id: account.id }, ordinary = await store.createAttendant('Atendente original', 5000);
-    await store.recordSales(auth, batch(['219', '100', '5', '50']), 'fixture_provider_cost_history');
+    await store.recordSales(auth, batch(['219', '100', '6', '50']), 'fixture_provider_cost_history');
     const initial = await store.sales(auth);
     for (const sale of initial) {
       if (sale.amountCents === 21900 || sale.amountCents === 5000) await store.reviewSale(sale.id, { status: 'approved', note: 'Original' });
-      if (sale.amountCents === 500) await store.reviewSale(sale.id, { status: 'rejected', note: 'Original' });
+      if (sale.amountCents === 600) await store.reviewSale(sale.id, { status: 'rejected', note: 'Original' });
     }
     await store.cancelSale(initial.find(sale => sale.amountCents === 5000)!.id, { note: 'Cancelamento original' });
     await store.recordSales({ id: ordinary.id }, batch(['100'], 'main'), 'fixture_provider_cost_ordinary');
@@ -60,25 +62,25 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: custo hist�
     await store.sql.prepare('DELETE FROM schema_migrations WHERE id=?').run(migration);
     store.close();store = await open();
     const sales = await privateSales(store, account.id);
-    assert.equal(sales.find(sale => sale.amountCents === 21900)!.gatewayCostCents, 1511);
-    assert.equal(sales.find(sale => sale.amountCents === 500)!.gatewayCostCents, 229);
-    assert.equal(sales.find(sale => sale.amountCents === 5000)!.gatewayCostCents, 499);
+    assert.equal(sales.find(sale => sale.amountCents === 21900)!.gatewayCostCents, 757);
+    assert.equal(sales.find(sale => sale.amountCents === 600)!.gatewayCostCents, 118);
+    assert.equal(sales.find(sale => sale.amountCents === 5000)!.gatewayCostCents, 250);
     assert.equal(sales.find(sale => sale.id === pending.id)!.gatewayCostCents, 777);
     assert.equal((await privateSales(store, ordinary.id))[0].gatewayCostCents, null);
     assert.deepEqual(await store.portal(auth, 'all'), publicBefore);
     assert.deepEqual(await store.portal({ id: ordinary.id }, 'all'), ordinaryBefore);
     assert.deepEqual(await store.receipt(auth, initial[0].receiptId), receiptBefore);
     const accountAdmin = (await store.adminDashboard()).attendants.find(row => row.id === account.id)!;
-    assert.deepEqual(accountAdmin.business, { saleCount: 1, partnerFeeCents: 2828, gatewayCostCents: 1511, profitCents: 1317 });
+    assert.deepEqual(accountAdmin.business, { saleCount: 1, partnerFeeCents: 2828, gatewayCostCents: 757, profitCents: 2071 });
     const report = await readFinancialReport(store, today, today, account.id);
-    assert.equal(report.totals.gatewayFeeCents, 2828);assert.equal(report.totals.gatewayCostCents, 1511);assert.equal(report.totals.businessProfitCents, 1317);
-    assert.equal(report.totals.netCommissionCents, 19072);assert.equal(report.totals.cashMovementCents, 18389);
+    assert.equal(report.totals.gatewayFeeCents, 2828);assert.equal(report.totals.gatewayCostCents, 757);assert.equal(report.totals.businessProfitCents, 2071);
+    assert.equal(report.totals.netCommissionCents, 19072);assert.equal(report.totals.cashMovementCents, 19143);
     const audits = await readAudit(store, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }));assert.equal(audits.total, 3);
-    assert.ok(audits.entries.every(row => row.before?.gatewayCostCents === null && row.after?.feeBps === 599 && row.after?.fixedFeeCents === 199));
+    assert.ok(audits.entries.every(row => row.before?.gatewayCostCents === null && row.after?.feeBps === 300 && row.after?.fixedFeeCents === 100));
     await store.rotateToken(account.id);store.close();store = await open();
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 3);
     assert.equal((await privateSales(store, account.id)).find(sale => sale.id === pending.id)!.gatewayCostCents, 777);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('falha de migração desfaz custo e auditoria juntos, permitindo nova tentativa', async () => {
@@ -96,9 +98,9 @@ test('falha de migração desfaz custo e auditoria juntos, permitindo nova tenta
       assert.equal(raw.prepare('SELECT COUNT(*) AS n FROM schema_migrations WHERE id=?').get(migration)!.n, 0);
       raw.exec('DROP TRIGGER stop_cost');
     } finally { raw.close(); }
-    store = await PortalStore.open(file);assert.equal((await privateSales(store, account.id))[0].gatewayCostCents, 798);
+    store = await PortalStore.open(file);assert.equal((await privateSales(store, account.id))[0].gatewayCostCents, 400);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 1);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('API guarda custo por venda, ignora custo adulterado e mantém margem privada no admin', async t => {
@@ -112,12 +114,12 @@ test('API guarda custo por venda, ignora custo adulterado e mantém margem priva
   const call = (path: string, credential: string) => fetch(base + path, { headers: { Authorization: `Bearer ${credential}` } });
   for (const path of ['/api/portal?period=all', '/api/portal?period=today']) {
     const response = await call(path, token);assert.equal(response.status, 200);const data = await response.json();
-    assert.ok(!JSON.stringify(data).includes('gatewayCostCents'));assert.ok(!JSON.stringify(data).includes('partnerFeeCents'));
+    assert.ok(!JSON.stringify(data).includes('gatewayCostCents'));assert.ok(!JSON.stringify(data).includes('partnerFeeCents'));assert.ok(!JSON.stringify(data).includes('3% + R$ 1,00'));
   }
   const adminResponse = await call('/api/admin/dashboard', key);assert.equal(adminResponse.status, 200);
-  const admin = await adminResponse.json();assert.deepEqual(admin.attendants[0].business, { saleCount: 5, partnerFeeCents: 7000, gatewayCostCents: 3990, profitCents: 3010 });
+  const admin = await adminResponse.json();assert.deepEqual(admin.attendants[0].business, { saleCount: 5, partnerFeeCents: 7000, gatewayCostCents: 2000, profitCents: 5000 });
   assert.equal(admin.attendants[0].finance.availableCents, 43000);
-  assert.ok((await privateSales(store, account.id)).every(sale => sale.gatewayCostCents === 798));
+  assert.ok((await privateSales(store, account.id)).every(sale => sale.gatewayCostCents === 400));
   assert.equal((await call('/api/admin/dashboard', token)).status, 401);
 });
 
@@ -136,8 +138,8 @@ test('backups preservam custo salvo e aceitam arquivos antigos sem a coluna de c
     await restoreArchive(gzipSync(JSON.stringify(archive)), old);
     assert.equal((await privateSales(old, account.id))[0].gatewayCostCents, null);
     old.close();old = await PortalStore.open(destinationFile);
-    assert.equal((await privateSales(old, account.id))[0].gatewayCostCents, 798);
+    assert.equal((await privateSales(old, account.id))[0].gatewayCostCents, 400);
     assert.equal((await readAudit(old, new URLSearchParams({ action: 'partner.gateway_cost_recorded' }))).total, 1);
     assert.equal((await old.sales({ id: account.id }))[0].feeCents, 1400);
-  } finally { source.close();full.close();old.close();removeTempDir(directory); }
+  } finally { source.close();full.close();await disposeTestStore(old, directory); }
 });

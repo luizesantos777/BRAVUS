@@ -33,7 +33,7 @@ export default function PartnerAds({ client, report, period, disabled, refresh, 
         <article className={`metric partner-roi ${report.roiPercent != null && report.roiPercent < 0 ? 'negative' : ''}`} aria-label="ROI do parceiro"><h3>ROI</h3><strong>{roi}</strong><small>{report.roiPercent == null ? 'Informe um custo de ADS para calcular' : 'Retorno sobre o investimento em ADS'}</small></article>
       </div>
       <p className="payout-help">ADS pagos por você: <strong>{money(report.ownAdsCents)}</strong>.</p>
-      <p className="partner-roi-rule">ROI = (seu valor nas vendas aprovadas − ADS do período) ÷ ADS do período × 100. Vendas em análise, vendas canceladas, ajustes e repasses não entram neste cálculo.</p>
+      <p className="partner-roi-rule">ROI = (seu valor nas vendas aprovadas − ADS do período) ÷ ADS do período × 100. Pendências históricas, vendas canceladas, ajustes e repasses não entram neste cálculo.</p>
     </>}
     <form className="partner-ads-form" onSubmit={async event => {
       event.preventDefault(); if (!ready || submitting.current || disabled) return;

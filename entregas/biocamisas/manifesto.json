@@ -29,21 +29,9 @@
       "bytes": 3796,
       "sha256": "0fc74f67f932d13474ee56b620ce830eaaa510081e52734ddd71a7fa2b03fdb6"
     },
-    "BioCamisas_Atualizacao.patch": {
-      "bytes": 55353,
-      "sha256": "e7671785e155d99abc092c9c990fa3ad66e44e8c0b51584673dca3f61d1de5d2"
-    },
-    "BioCamisas_Atualizacao.zip": {
-      "bytes": 34553,
-      "sha256": "86732b17966bb4557539cbca17a635cfd6d86545f1acb2fe246c379b58d2cfda"
-    },
-    "BioCamisas_Checkout_Completo.zip": {
-      "bytes": 388713,
-      "sha256": "7ee245af3c3aad3b01069195c5ba314c44b35b1236cb6e4b2b9535c96bd45b15"
-    },
     "README.md": {
-      "bytes": 2846,
-      "sha256": "2874626f4efa41cfa5d670c9c696dc4da7a72829e40cfc1ae7d49a103e2a14b6"
+      "bytes": 2760,
+      "sha256": "617821b5bf5b114b22d750b3303a31e926a1268581a42a9211f7117b34cd064a"
     },
     "cartao-mobile.png": {
       "bytes": 131760,

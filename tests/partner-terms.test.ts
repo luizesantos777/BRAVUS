@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtempSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
@@ -11,6 +10,7 @@ import { libsqlDatabase } from '../server/turso-database.ts';
 import { exclusiveCheckoutId } from '../server/partner-checkouts.ts';
 import { readAudit, readFinancialReport } from '../server/admin-controls.ts';
 import { businessToday, PARTNER_CHECKOUT, saleEarnings, withdrawalFees, validatePayoutAmount, payoutExpectedNet } from '../src/domain.ts';
+import { disposeTestStore } from './test-cleanup.ts';
 
 const migration = 'partners-twelve-percent-history-2026-11-11-v1';
 const receipt = { name: 'historico.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII=' };
@@ -29,7 +29,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: migra todas
     const ordinary = await store.createAttendant('Atendente', 5000, token('ordinary'));
     const checkoutId = exclusiveCheckoutId(legacy.id);
     await store.sql.prepare('INSERT INTO checkouts (id,name,fee_bps,fixed_fee_cents,min_amount_cents,max_amount_cents) VALUES (?,?,1000,169,1,300000)').run(checkoutId, 'Gateway legado');
-    const originalBatch = batch(['100', '199.99', '0.05', '55', '88']);
+    const originalBatch = batch(['100', '199.99', '6', '55', '88']);
     await store.recordSales({ id: first.id }, originalBatch, 'fixture_terms_original_batch');
     let firstSales = await store.sales({ id: first.id });
     for (const sale of firstSales.filter(sale => [10000, 19999, 8800].includes(sale.amountCents))) await store.reviewSale(sale.id, { status: 'approved', note: 'Aprovação original' });
@@ -92,7 +92,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: migra todas
     assert.equal((await store.payouts({ id: first.id })).find(p => p.id === legacyPending.id)!.gatewayFeeCents, 0);
     await assert.rejects(store.adminSetCheckout('partner', { name: 'Alteração indevida', fee: '0' }), /padrão de 12%/);
     await assert.rejects(store.adminSetCheckout(checkoutId, { name: 'Alteração indevida', fee: '0' }), /padrão de 12%/);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('falha durante recálculo desfaz taxas, auditoria e marcador antes de tentar novamente', async () => {
@@ -114,7 +114,7 @@ test('falha durante recálculo desfaz taxas, auditoria e marcador antes de tenta
     } finally { raw.close(); }
     store = await PortalStore.open(file);assert.equal((await store.sales({ id: account.id }))[0].feeCents, 1200);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.sale_repriced' }))).total, 1);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('parceiros têm saque zero, sem permitir valores inválidos nem retirar taxas históricas reais', () => {

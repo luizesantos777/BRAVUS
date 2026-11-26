@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -10,6 +9,7 @@ import { PortalStore } from '../server/store.ts';
 import { libsqlDatabase } from '../server/turso-database.ts';
 import { createArchive, restoreArchive } from '../server/backups.ts';
 import { readAudit, readFinancialReport } from '../server/admin-controls.ts';
+import { disposeTestStore } from './test-cleanup.ts';
 import { businessToday, checkoutFee, PARTNER_CHECKOUT, saleEarnings } from '../src/domain.ts';
 
 const migration = 'partners-twelve-percent-plus-two-history-2026-11-12-v1';
@@ -20,7 +20,7 @@ test('parceiro paga 12% + R$ 2 em cada venda, sem agregar tickets nem limitar pe
   assert.equal(checkoutFee(10000, PARTNER_CHECKOUT), 1400);
   assert.equal(checkoutFee(21900, PARTNER_CHECKOUT), 2828);
   assert.equal(checkoutFee(300000, PARTNER_CHECKOUT), 36200);
-  assert.equal(checkoutFee(5, PARTNER_CHECKOUT), 201);
+  assert.equal(checkoutFee(600, PARTNER_CHECKOUT), 272);
   assert.equal(Array.from({ length: 5 }, () => checkoutFee(10000, PARTNER_CHECKOUT)).reduce((a, b) => a + b), 7000);
   assert.equal(checkoutFee(50000, PARTNER_CHECKOUT), 6200);
 });
@@ -32,7 +32,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: novas taxas
   try {
     const first = await store.createPartner('Parceiro ativo'), second = await store.createPartner('Parceiro revogado');
     const normal = await store.createAttendant('Atendente preservado', 3700), auth = { id: first.id };
-    const input = batch(['100', '219', '0.05', '50', '88']);
+    const input = batch(['100', '219', '6', '50', '88']);
     await store.recordSales(auth, input, 'fixture_fixed_original_batch');
     const initial = await store.sales(auth);
     for (const sale of initial.filter(sale => [10000, 21900, 8800].includes(sale.amountCents))) await store.reviewSale(sale.id, { status: 'approved', note: 'Conferência original' });
@@ -80,9 +80,9 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: novas taxas
     assert.equal(publicData.finance.commissionCents, 27672);assert.equal(publicData.finance.availableCents, 25472);
     assert.equal(publicData.marketing!.profitCents, 23672);assert.equal(publicData.marketing!.ownAdsCents, 3000);
     assert.ok(!JSON.stringify(publicData).includes('gatewayCostCents'));
-    const small = publicData.sales.find(sale => sale.amountCents === 5)!;assert.equal(saleEarnings(small), -196);
+    const small = publicData.sales.find(sale => sale.amountCents === 600)!;assert.equal(saleEarnings(small), 328);
     const report = await readFinancialReport(store, businessToday(), businessToday(), first.id);
-    assert.equal(report.totals.gatewayFeeCents, 4228);assert.equal(report.totals.gatewayCostCents, 1575);assert.equal(report.totals.businessProfitCents, 2403);
+    assert.equal(report.totals.gatewayFeeCents, 4228);assert.equal(report.totals.gatewayCostCents, 1177);assert.equal(report.totals.businessProfitCents, 2801);
     assert.equal(report.totals.paidPayoutNetCents, 1750);
     const audits = await readAudit(store, new URLSearchParams({ action: 'partner.sale_tariff_updated' }));assert.equal(audits.total, 7);
     assert.ok(audits.entries.every(entry => Number(entry.after?.feeCents) - Number(entry.before?.feeCents) === 200));
@@ -94,7 +94,7 @@ for (const driver of ['sqlite', 'libsql'] as const) test(`${driver}: novas taxas
     await store.recordManualPayout({ attendantId: first.id, amount: '1', note: 'Sem saque' }, 'fixture_fixed_new_payment');
     const paid = (await store.payouts(auth)).find(item => item.note === 'Sem saque')!;
     assert.equal(paid.withdrawalFeeCents, 0);assert.equal(paid.gatewayFeeCents, 0);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('falha no recálculo reverte snapshots, auditoria e marcador; nova tentativa conclui', async () => {
@@ -112,7 +112,7 @@ test('falha no recálculo reverte snapshots, auditoria e marcador; nova tentativ
     } finally { raw.close(); }
     store = await PortalStore.open(file);assert.equal((await store.sales({ id: account.id }))[0].feeCents, 1400);
     assert.equal((await readAudit(store, new URLSearchParams({ action: 'partner.sale_tariff_updated' }))).total, 1);
-  } finally { store.close();removeTempDir(directory); }
+  } finally { await disposeTestStore(store, directory); }
 });
 
 test('backup anterior conserva os registros na restauração e aplica 12% + R$ 2 ao reiniciar a API', async () => {
@@ -129,5 +129,5 @@ test('backup anterior conserva os registros na restauração e aplica 12% + R$ 2
     assert.equal((await restored.sales(auth))[0].feeCents, 1400);
     assert.equal((await restored.adminSales('all', account.id)).sales[0].gatewayCostCents, 777);
     assert.equal((await readAudit(restored, new URLSearchParams({ action: 'partner.sale_tariff_updated' }))).total, 1);
-  } finally { source.close();restored.close();removeTempDir(directory); }
+  } finally { source.close(); await disposeTestStore(restored, directory); }
 });

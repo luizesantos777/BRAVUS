@@ -5,6 +5,7 @@ const Admin = React.lazy(() => import('./Admin.tsx'));
 const Tracking = React.lazy(() => import('./Tracking.tsx'));
 import { publicAssetUrl } from './pwa.ts';
 import { applyPageMetadata } from './page-metadata.ts';
+import { playMoneyDropSound, unlockMoneyDropSound } from './notifications.ts';
 import './styles.css';
 import './brand.css';
 import './profile.css';
@@ -21,6 +22,20 @@ function Router() {
   const [page, setPage] = React.useState(currentPage);
   const admin = page === 'admin';
   const tracking = page === 'tracking';
+  React.useEffect(() => {
+    const unlock = () => unlockMoneyDropSound();
+    window.addEventListener('pointerdown', unlock, { passive: true });
+    window.addEventListener('keydown', unlock, { passive: true });
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
+  }, []);
+  React.useEffect(() => {
+    if (!admin || !('serviceWorker' in navigator)) return;
+    const onMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'lucro-certo-money-drop' && event.data.target === 'admin') playMoneyDropSound();
+    };
+    navigator.serviceWorker.addEventListener('message', onMessage);
+    return () => navigator.serviceWorker.removeEventListener('message', onMessage);
+  }, [admin]);
   React.useEffect(() => {
     // Update an already-installed worker without asking permission or replacing its subscription.
     if (tracking || !('serviceWorker' in navigator)) return;

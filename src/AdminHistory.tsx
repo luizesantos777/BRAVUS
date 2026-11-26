@@ -11,7 +11,7 @@ function display(key: string, value: unknown) {
   if ((key === 'reviewedAt' || key === 'cancelledAt') && typeof value === 'string' && Number.isFinite(new Date(value).getTime())) return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short', timeZone: 'America/Sao_Paulo' }).format(new Date(value));
   if (typeof value === 'boolean') return key === 'active' ? value ? 'Ativo' : 'Revogado' : value ? 'Sim' : 'Não';
   if (typeof value === 'number') return key.endsWith('Cents') ? money(value) : key.endsWith('Bps') ? `${value / 100}%` : String(value);
-  return ({ approved: 'Aprovada', pending: 'Em análise', rejected: 'Recusada', paid: 'Pago', cancelled: 'Cancelado' } as Record<string, string>)[String(value)] ?? String(value);
+  return ({ approved: 'Aprovada', pending: 'Pendência histórica', rejected: 'Recusada', paid: 'Pago', cancelled: 'Cancelado' } as Record<string, string>)[String(value)] ?? String(value);
 }
 export default function AdminHistory({ client }: { client: AdminClient }) {
   const today = businessToday(), [start, setStart] = useState(today.slice(0, 8) + '01'), [end, setEnd] = useState(today), [action, setAction] = useState('');

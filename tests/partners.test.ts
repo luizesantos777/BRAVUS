@@ -3,8 +3,7 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync, gunzipSync } from 'node:zlib';
@@ -32,7 +31,7 @@ async function fixture(t: TestContext) {
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   t.after(() => new Promise<void>(resolve => {
-    server.close(() => { store.close(); removeTempDir(directory); resolve(); });
+    server.close(() => { store.close(); rmSync(directory, { recursive: true, force: true }); resolve(); });
     server.closeAllConnections();
   }));
 
@@ -102,14 +101,14 @@ test('parceiro recebe R$ 86 por venda de R$ 100; tarifas e divisão dos atendent
 
 test('API arredonda 12% + R$ 2 por venda, ignora taxas adulteradas e mantém idempotência e limites', async t => {
   const { portal, submit, approve } = await fixture(t);
-  const payload = batch(['0.05', '0.15', '100']);
+  const payload = batch(['6', '15', '100']);
   const tampered = {
     ...payload, accountKind: 'attendant', commissionBps: 0,
     sales: payload.sales.map(sale => ({ ...sale, feeCents: 0, feeBps: 0, fixedFeeCents: 9999, attendantFeeCents: 0, commissionBps: 5000, commissionMode: 'net-share', maxAmountCents: null })),
   };
   assert.equal((await submit(tampered)).status, 200);
   let view = await portal();
-  assert.deepEqual(view.sales.map(sale => [sale.amountCents, sale.feeCents, sale.attendantFeeCents]).sort((a, b) => Number(a[0]) - Number(b[0])), [[5, 201, 201], [15, 202, 202], [10000, 1400, 1400]]);
+  assert.deepEqual(view.sales.map(sale => [sale.amountCents, sale.feeCents, sale.attendantFeeCents]).sort((a, b) => Number(a[0]) - Number(b[0])), [[600, 272, 272], [1500, 380, 380], [10000, 1400, 1400]]);
   assert.ok(view.sales.every(sale => sale.commissionBps === 10000 && sale.commissionMode === 'gross-share-less-fees'));
   await approve(view.sales);
   assert.equal((await (await submit(tampered)).json()).duplicate, true);
@@ -117,8 +116,8 @@ test('API arredonda 12% + R$ 2 por venda, ignora taxas adulteradas e mantém ide
   assert.equal((await submit(changed)).status, 409);
   view = await portal();
   assert.equal(view.sales.length, 3);
-  assert.equal(view.finance.availableCents, 8217);
-  assert.equal(view.finance.gatewayFeeCents, 1803);
+  assert.equal(view.finance.availableCents, 10048);
+  assert.equal(view.finance.gatewayFeeCents, 2052);
 
   assert.equal((await submit(batch(['3000', '3000.01']), 'fixture_partner_over_limit')).status, 400);
   assert.equal((await submit(batch(['0'], 'pix'), 'fixture_partner_under_min')).status, 400);
@@ -225,7 +224,7 @@ test('backup anterior sem account_kind restaura contas como atendentes e conserv
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partners-legacy-'));
   const source = await PortalStore.open(join(directory, 'legacy.sqlite'));
   const restored = await PortalStore.open(':memory:');
-  t.after(() => { source.close(); restored.close(); removeTempDir(directory); });
+  t.after(() => { source.close(); restored.close(); rmSync(directory, { recursive: true, force: true }); });
   const account = await source.createAttendant('Conta anterior aos parceiros', 5000, attendantToken);
   const auth = await source.authenticate(attendantToken);
   await source.recordSales(auth, batch(), 'fixture_partner_legacy_sale');

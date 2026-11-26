@@ -140,8 +140,8 @@ test('comprovante repetido aparece na análise e na confirmação, deixando a de
   await page.getByLabel('Filtrar por atendente').selectOption(b.id);
   const warning = page.locator('.review-sale').getByLabel('Alerta de comprovante repetido'); await expect(warning).toContainText('1 outro(s)');
   await warning.getByRole('button', { name: 'Conferir lançamentos relacionados' }).click(); await expect(warning).toContainText(a.name); await expect(warning).toContainText('Aprovada');
-  await page.getByRole('button', { name: 'Aprovar venda', exact: true }).click();
-  const modal = page.getByRole('dialog', { name: 'Aprovar venda', exact: true }); await expect(modal.getByLabel('Alerta de comprovante repetido')).toBeVisible();
+  await page.getByRole('button', { name: 'Aprovar pendência histórica', exact: true }).click();
+  const modal = page.getByRole('dialog', { name: 'Aprovar pendência histórica', exact: true }); await expect(modal.getByLabel('Alerta de comprovante repetido')).toBeVisible();
   await modal.getByRole('button', { name: 'Voltar', exact: true }).click();
   await page.getByRole('button', { name: 'Recusar venda', exact: true }).click(); await page.getByLabel('Motivo da recusa', { exact: true }).fill('Mesmo comprovante de outra venda.');
   await page.getByRole('button', { name: 'Confirmar recusa', exact: true }).click(); await expect(page.getByRole('status')).toContainText('Venda recusada');

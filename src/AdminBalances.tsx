@@ -30,7 +30,7 @@ export default function AdminBalances({ attendants, selected, select }: { attend
         <div><dt>PIX já pagos</dt><dd>{money(item.finance.paidPayoutNetCents)}</dd></div>
         <div className={`balance-available ${item.finance.availableCents < 0 ? 'negative' : ''}`}><dt>Saldo disponível para repasse</dt><dd>{money(item.finance.availableCents)}</dd></div>
       </dl>
-      {item.finance.pendingSalesCount > 0 && <p>{item.finance.pendingSalesCount} venda(s) em análise: {money(item.finance.pendingSalesCents)}. Esses valores aguardam aprovação.</p>}
+      {item.finance.pendingSalesCount > 0 && <p>{item.finance.pendingSalesCount} pendência(s) histórica(s): {money(item.finance.pendingSalesCents)}. Esses registros aguardam revisão histórica.</p>}
       {item.finance.availableCents > 0 && item.finance.pendingPayoutCents === 0 && <p>Há saldo disponível para um repasse manual da administração.</p>}
       {item.finance.availableCents < 0 && <p>O saldo ficou negativo após os custos e pagamentos registrados. Confira as vendas, os custos e os repasses.</p>}
     </article>)}</div>

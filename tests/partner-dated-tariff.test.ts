@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { mkdtempSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createClient } from '@libsql/client';
@@ -12,6 +11,7 @@ import { createArchive, restoreArchive } from '../server/backups.ts';
 import { REQUESTED_PARTNER_TARIFF } from '../server/partner-tariff-migration.ts';
 import { accountCheckouts, businessToday, checkoutFee, PARTNER_CHECKOUT, partnerTariffAt, saleEarnings } from '../src/domain.ts';
 import { readFinancialReport } from '../server/admin-controls.ts';
+import { disposeTestStore } from './test-cleanup.ts';
 const receipt={name:'fixture.png',mime:'image/png',base64:'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a9XcAAAAASUVORK5CYII='};
 const input=(date:string,amount='100')=>({date,sales:[{amount,checkoutId:'main',time:'12:00',note:'Venda sintética',receipt}]});
 const rules=[{effectiveFrom:'2026-11-13',feeBps:1400,fixedFeeCents:200}];
@@ -57,14 +57,14 @@ for(const driver of ['sqlite','libsql'] as const)test(driver+': migração isola
   const profile=await store.profile({id:partner.id});assert.deepEqual(profile.partnerFeeRules,rules);
   await store.saveProfile({id:partner.id},{name:'Parceiro',email:'',phone:'',pixType:'email',pixKey:'fixture@example.test',pixOwner:'Parceiro',partnerFeeRules:[]});assert.deepEqual((await store.profile({id:partner.id})).partnerFeeRules,rules);
   const portal=await store.portal({id:partner.id},'all');assert.equal(portal.checkouts[0].feeBps,1400);assert.equal(portal.finance.commissionCents,8600+8400);assert.equal(portal.finance.availableCents,8600+8400-1000);
-  const admin=(await store.adminDashboard()).attendants.find(a=>a.id===partner.id)!;assert.deepEqual(admin.partnerFeeRules,rules);assert.equal(admin.finance.transactionFeeCents,1400+1600);assert.equal(admin.business!.gatewayCostCents,1596);
+  const admin=(await store.adminDashboard()).attendants.find(a=>a.id===partner.id)!;assert.deepEqual(admin.partnerFeeRules,rules);assert.equal(admin.finance.transactionFeeCents,1400+1600);assert.equal(admin.business!.gatewayCostCents,800);
   const report=await readFinancialReport(store,'2026-11-12','2026-11-13',partner.id);assert.equal(report.totals.gatewayFeeCents,3000);
   await store.recordSales({id:partner.id},input('2026-11-12'),'fixture_dated_backdated');await store.recordSales({id:partner.id},input('2026-11-13'),'fixture_dated_new');
   const sales=await store.sales({id:partner.id});assert.ok(sales.filter(s=>s.date==='2026-11-12').every(s=>s.feeCents===1400));assert.ok(sales.filter(s=>s.date==='2026-11-13'&&s.amountCents===10000).every(s=>s.feeCents===1600));assert.equal(saleEarnings(sales.find(s=>s.date==='2026-11-13'&&s.amountCents===10000)!),8400);
   const audit=await store.sql.prepare("SELECT * FROM audit_events WHERE action IN ('partner.tariff_changed','partner.dated_sale_repriced') ORDER BY id").all();assert.equal(audit.length,4);
   assert.ok(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id=?').get(REQUESTED_PARTNER_TARIFF.migration));store.close();store=await open();assert.deepEqual(await store.sql.prepare("SELECT * FROM audit_events WHERE action IN ('partner.tariff_changed','partner.dated_sale_repriced') ORDER BY id").all(),audit);
   const recovered=await PortalStore.open(':memory:');try{await restoreArchive(await createArchive(store),recovered);assert.deepEqual((await recovered.profile({id:partner.id})).partnerFeeRules,rules);assert.deepEqual((await recovered.sales({id:partner.id})).map(row=>({...row})),(await store.sales({id:partner.id})).map(row=>({...row})));}finally{recovered.close();}
- }finally{store.close();removeTempDir(dir);}
+ }finally{await disposeTestStore(store,dir);}
 });
 
 test('não escolhe entre nomes duplicados, não aplica a novos cadastros e não altera um atendente comum chamado Parceiro',async()=>{
@@ -118,5 +118,5 @@ for (const driver of ['sqlite', 'libsql'] as const) test(driver + ': Capital rec
   const audit=await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all();
   await store.sql.transaction(db=>applyRequestedPartnerTariff(db));
   assert.deepEqual(await store.sql.prepare('SELECT * FROM audit_events ORDER BY id').all(),audit);
- } finally {store.close();removeTempDir(dir);}
+  } finally {await disposeTestStore(store,dir);}
 });

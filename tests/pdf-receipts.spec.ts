@@ -41,7 +41,7 @@ for (const kind of ['partner', 'attendant']) test(`${kind}: botão PDF, rascunho
   await page.getByRole('button', { name: 'Ver comprovante', exact: true }).click();await expect(group).toBeVisible();await expect(page.getByRole('img', { name: 'Comprovante da venda', exact: true })).toHaveCount(0);
   const adminDownload = page.waitForEvent('download');await group.getByRole('link', { name: 'Baixar PDF', exact: true }).click();expect(await readFile((await (await adminDownload).path())!)).toEqual(bytes);
   await page.screenshot({ path: info.outputPath(`pdf-admin-${kind}.png`), fullPage: true });await page.getByRole('button', { name: 'Fechar janela', exact: true }).click();
-  await page.getByRole('button', { name: 'Aprovar venda', exact: true }).click();await page.getByRole('button', { name: 'Confirmar aprovação', exact: true }).click();await expect(page.locator('.review-sale')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Aprovar pendência histórica', exact: true }).click();await page.getByRole('button', { name: 'Confirmar aprovação histórica', exact: true }).click();await expect(page.locator('.review-sale')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 

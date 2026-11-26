@@ -380,13 +380,16 @@ function validateProfile(value) {
 var demoCheckouts = [{ id: "main", name: "Checkout principal", ...CHECKOUT_PIX_TARIFF }, { id: "pix", name: "PIX manual", ...MANUAL_PIX_TARIFF }, { id: "buckpay", name: "Checkout Buckpay", ...BUCKPAY_TARIFF }];
 
 // src/partner-business.ts
-var PARTNER_PROVIDER_FEE_BPS = 599;
-var PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
+var PARTNER_PROVIDER_FEE_BPS = 300;
+var PARTNER_PROVIDER_FIXED_FEE_CENTS = 100;
+var LEGACY_PARTNER_PROVIDER_FEE_BPS = 599;
+var LEGACY_PARTNER_PROVIDER_FIXED_FEE_CENTS = 199;
 function partnerGatewayCost(amountCents, profile) {
   if (!Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) throw new Error("Valor inv\xE1lido para calcular o custo do gateway.");
-  const basisPoints = profile?.basisPoints ?? PARTNER_PROVIDER_FEE_BPS;
-  const fixedCents = profile?.fixedCents ?? PARTNER_PROVIDER_FIXED_FEE_CENTS;
-  const rounding = profile?.rounding ?? "nearest";
+  const current = profile?.basisPoints === LEGACY_PARTNER_PROVIDER_FEE_BPS && profile.fixedCents === LEGACY_PARTNER_PROVIDER_FIXED_FEE_CENTS ? { ...profile, basisPoints: PARTNER_PROVIDER_FEE_BPS, fixedCents: PARTNER_PROVIDER_FIXED_FEE_CENTS } : profile;
+  const basisPoints = current?.basisPoints ?? PARTNER_PROVIDER_FEE_BPS;
+  const fixedCents = current?.fixedCents ?? PARTNER_PROVIDER_FIXED_FEE_CENTS;
+  const rounding = current?.rounding ?? "nearest";
   const variable = rounding === "up" ? Math.floor((amountCents * basisPoints + 9999) / 1e4) : Math.floor((amountCents * basisPoints + 5e3) / 1e4);
   return variable + fixedCents;
 }
@@ -592,7 +595,7 @@ var PortalStore = class _PortalStore {
     this.gatewayConfig = config;
     const limits2 = config.active.amountLimits?.pix;
     if (!limits2) return;
-    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ? WHERE id = 'partner' OR id LIKE 'exclusive_%'").run(limits2.minCents ?? 1, limits2.maxCents);
+    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?").run(Math.max(600, Number(limits2.minCents ?? 600)), limits2.maxCents);
   }
   setGatewaySyncView(view) {
     this.gatewaySyncView = view;
@@ -703,6 +706,10 @@ var PortalStore = class _PortalStore {
           await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(PARTNER_GATEWAY_SEED.feeMigration);
         }
       }
+      if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("checkout-amount-contract-v1")) {
+        await store.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL").run(CHECKOUT_PIX_TARIFF.minAmountCents, CHECKOUT_PIX_TARIFF.maxAmountCents);
+        await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("checkout-amount-contract-v1");
+      }
       if (!await store.sql.prepare("SELECT id FROM schema_migrations WHERE id = ?").get("attendant-gross-share-50-v1")) {
         await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS);
         await store.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run("attendant-gross-share-50-v1");
@@ -763,7 +770,7 @@ var PortalStore = class _PortalStore {
     await this.sql.prepare("INSERT INTO schema_migrations VALUES (?)").run(migration);
   }
   async recordPartnerGatewayCosts() {
-    const migration = "partner-provider-cost-599-199-2026-11-11-v1";
+    const migration = "partner-provider-cost-300-100-2026-11-24-v1";
     if (await this.sql.prepare("SELECT id FROM schema_migrations WHERE id=?").get(migration)) return;
     const fee = `CAST((amount_cents * ${PARTNER_PROVIDER_FEE_BPS} + 5000) / 10000 AS INTEGER) + ${PARTNER_PROVIDER_FIXED_FEE_CENTS}`;
     const where = "gateway_cost_cents IS NULL AND attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner')";
@@ -2119,6 +2126,7 @@ function gatewaySyncView(config, status) {
   };
 }
 var isIntegerOrNull = (value) => value === null || Number.isSafeInteger(value);
+var MIN_SYNC_TOKEN_LENGTH = 32;
 function cost(value) {
   if (value === null || value === void 0) return null;
   if (!value || typeof value !== "object") throw new Error("Custo de gateway invalido.");
@@ -2182,14 +2190,14 @@ var GatewayConfigSync = class {
     this.apply = apply;
   }
   status() {
-    if (!this.url || !this.token) return { configured: false, state: "not_configured", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null };
+    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return { configured: false, state: "not_configured", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null };
     return { configured: true, state: this.lastError ? this.snapshot ? "stale" : "error" : "synced", revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: this.lastError };
   }
   view() {
     return gatewaySyncView(this.snapshot, this.status());
   }
   async refresh() {
-    if (!this.url || !this.token) return;
+    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return;
     if (this.running) return this.running;
     if (Date.now() < this.nextAttempt) return;
     this.nextAttempt = Date.now() + 3e4;

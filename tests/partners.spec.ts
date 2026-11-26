@@ -60,15 +60,15 @@ test('administrador cadastra parceiro com link individual e venda de R$ 100 libe
   await expect(preview).not.toContainText('50%');
   await partnerPage.getByLabel('Print da venda 1', { exact: true }).setInputFiles(receipt);
   await partnerPage.getByRole('button', { name: 'Salvar e Enviar Vendas', exact: true }).click();
-  await expect(partnerPage.locator('.pending-sales-notice')).toContainText('1 venda(s) em análise');
+  await expect(partnerPage.locator('.pending-sales-notice')).toContainText('1 pendência(s) histórica(s)');
   await expect(partnerPage.locator('.metric.balance')).toContainText('0,00');
 
-  await page.getByRole('button', { name: 'Aprovar vendas', exact: true }).click();
+  await page.getByRole('button', { name: 'Vendas e pendências históricas', exact: true }).click();
   await page.getByRole('combobox', { name: 'Filtrar por atendente', exact: true }).selectOption(account.profile.id);
   await expect(page.locator('.review-sale')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Aprovar venda', exact: true }).click();
+  await page.getByRole('button', { name: 'Aprovar pendência histórica', exact: true }).click();
   await page.getByLabel('Observação da aprovação (opcional)', { exact: true }).fill('Comprovante sintético conferido');
-  await page.getByRole('button', { name: 'Confirmar aprovação', exact: true }).click();
+  await page.getByRole('button', { name: 'Confirmar aprovação histórica', exact: true }).click();
   await expect(page.locator('.review-sale')).toHaveCount(0);
 
   await partnerPage.getByRole('button', { name: 'Atualizar vendas', exact: true }).click();

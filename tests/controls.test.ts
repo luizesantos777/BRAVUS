@@ -2,7 +2,6 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, writeFileSync, statSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { once } from 'node:events';
@@ -21,6 +20,7 @@ import type { AdminPayout, AdminSale } from '../src/domain.ts';
 import { loadDatabasePushKeys } from '../server/push.ts';
 import { createClient } from '@libsql/client';
 import { libsqlDatabase } from '../server/turso-database.ts';
+import { disposeTestStore, disposeTestStores } from './test-cleanup.ts';
 
 const adminKey = 'fixture_controls_admin_012345678901234567890123456789';
 const token = 'fixture_controls_attendant_012345678901234567890123456789';
@@ -29,7 +29,7 @@ const receipt = { name: 'print.png', mime: 'image/png', base64: 'iVBORw0KGgoAAAA
 async function fixture(t: TestContext) {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-controls-')), store = await PortalStore.open(':memory:');
   const account = await store.createAttendant('Ana', 5000, token), auth = { id: account.id };
-  t.after(() => { store.close(); removeTempDir(directory); });
+  t.after(() => disposeTestStore(store, directory));
   async function sale(amount = '100', checkoutId = 'main', requestKey = 'fixture_controls_batch_01') {
     await store.recordSales(auth, { date: businessToday(), sales: [{ amount, checkoutId, time: '12:00', note: '', receipt }] }, requestKey);
     return (await store.sales(auth)).find(sale => sale.status === 'pending')!;
@@ -119,9 +119,7 @@ test('backup privado faz recuperação real e preserva vendas, comprovantes, tok
   await store.setCosts(auth.id, businessToday(), 1000, 0, actor);
   const keys = await loadDatabasePushKeys(store, {}), folder = join(directory, 'backups'), service = new BackupService(store, privateFolder(folder));
   const record = await service.run('daily'); assert.equal(record.status, 'verified'); assert.ok(record.verifiedAt); assert.ok(record.sizeBytes > 0);
-  // No Windows os bits de modo não refletem as ACLs NTFS; a checagem estrita vale para POSIX.
-  const fileMode = statSync(join(folder, record.id + '.json.gz')).mode & 0o777, dirMode = statSync(folder).mode & 0o777;
-  if (process.platform === 'win32') { assert.ok(fileMode & 0o200); assert.ok(dirMode & 0o200); } else { assert.equal(fileMode, 0o600); assert.equal(dirMode, 0o700); }
+  if (process.platform !== 'win32') { assert.equal(statSync(join(folder, record.id + '.json.gz')).mode & 0o777, 0o600); assert.equal(statSync(folder).mode & 0o777, 0o700); }
   assert.deepEqual(await service.run('daily'), record); assert.equal((await service.status()).records.length, 1);
   const bytes = await service.download(record.id), restored = await PortalStore.open(':memory:');
   try {
@@ -136,8 +134,7 @@ test('backup privado faz recuperação real e preserva vendas, comprovantes, tok
   } finally { restored.close(); }
   const input = join(directory, 'download.json.gz'), output = join(directory, 'recovered.sqlite'); writeFileSync(input, bytes, { mode: 0o600 });
   execFileSync(process.execPath, ['server/manage.ts', 'restore-backup', '--input', input, '--output', output]);
-  const restoredMode = statSync(output).mode & 0o777;
-  if (process.platform === 'win32') assert.ok(restoredMode & 0o200); else assert.equal(restoredMode, 0o600);
+  if (process.platform !== 'win32') assert.equal(statSync(output).mode & 0o777, 0o600);
   const before = readFileSync(output);
   assert.notEqual(spawnSync(process.execPath, ['server/manage.ts', 'restore-backup', '--input', input, '--output', output]).status, 0);
   assert.deepEqual(readFileSync(output), before);
@@ -195,7 +192,7 @@ test('Blob autoriza somente leitura da cópia exata por dois minutos e mantém o
 
 test('libSQL mantém a visão do backup e os relatórios entre instâncias e impede cópias simultâneas', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-controls-libsql-')), file = join(directory, 'source.sqlite'), stores: PortalStore[] = [];
-  t.after(() => { for (const store of stores) store.close(); removeTempDir(directory); });
+  t.after(() => disposeTestStores(stores, directory));
   for (let index = 0; index < 2; index++) {
     const client = createClient({ url: 'file:' + file, timeout: 0 }); await client.execute('PRAGMA journal_mode = WAL');
     stores.push(await PortalStore.open(libsqlDatabase(client)));

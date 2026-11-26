@@ -6,9 +6,7 @@ O checkout está preparado para `https://biocamisas.shop/checkout`, com a marca 
 
 ## Arquivos
 
-- [Baixar atualização para o projeto existente](./BioCamisas_Atualizacao.zip): somente os arquivos alterados e novos, nos seus caminhos originais.
-- [Baixar código completo](./BioCamisas_Checkout_Completo.zip): base completa do checkout, funis e loja, com a atualização incorporada. A exportação original não contém todas as imagens e PDFs; preserve os recursos já publicados.
-- [Ver alterações em texto](./BioCamisas_Atualizacao.patch).
+- Os pacotes antigos de atualização foram retirados desta pasta porque continham referências a gateways removidos. Use o código atual do repositório para gerar um novo pacote de publicação; os arquivos históricos ficam fora da árvore ativa, em uma pasta de recuperação na Área de Trabalho.
 - [Guia de publicação e domínio](./BIOCAMISAS.md).
 - [Prévia local no celular](./checkout-mobile.png) e [no computador](./checkout-desktop.png), com dados sintéticos.
 
@@ -28,4 +26,4 @@ Depois de adicionar o domínio no Sites, copie os registros indicados para **Hos
 - Página de cartão Bio Camisas e painel compartilhado verificados. Uma troca de gateway pelo painel Bio Camisas foi observada também pela API BRAVUS no mesmo banco de teste.
 - Todos os provedores foram simulados. Nenhuma cobrança real, credencial de produção ou alteração no DNS foi realizada.
 
-Os arquivos de código não incluem dependências, builds, bancos locais ou segredos. `manifesto.json` contém o inventário e os hashes dos arquivos entregues.
+Os arquivos de código não incluem dependências, builds, bancos locais ou segredos. `manifesto.json` contém o inventário dos arquivos de mídia e documentação que continuam nesta entrega.

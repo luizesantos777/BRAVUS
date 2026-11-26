@@ -5,7 +5,6 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -119,7 +118,7 @@ test('API da Vercel executa vendas, aprovação, ADS e repasse em libSQL persist
 });
 test('handler aceita corpo já interpretado pela Vercel e aplica o limite de envio', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-cloud-body-'));
-  const store = await PortalStore.open(join(directory, 'body.sqlite')); t.after(() => { store.close(); removeTempDir(directory); });
+  const store = await PortalStore.open(join(directory, 'body.sqlite')); t.after(() => { store.close(); rmSync(directory, { recursive: true, force: true }); });
   const handler = createVercelHandler({ environment: () => env, openStore: async () => store });
   const call = await serve(t, async (request, response) => {
     (request as typeof request & { body?: unknown }).body = request.headers['x-fixture-large'] ? { name: 'x'.repeat(4 * 1024 * 1024) } : { name: 'Atendente pelo corpo da Vercel', token };

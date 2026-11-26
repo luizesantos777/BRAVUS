@@ -11,3 +11,5 @@ playwright-report/
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+.vercel
+.env*

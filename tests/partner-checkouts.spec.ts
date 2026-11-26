@@ -20,11 +20,11 @@ test('parceiro vê um único gateway de 12% + R$ 2, recupera rascunho e os outro
   const portal = await (await page.request.get('/api/portal', { headers })).json(), id = portal.checkouts[0].id;
   await page.goto(`/#/atendente/${token}`);
   await expect(page.getByRole('heading', { name: 'Portal do Parceiro.', exact: true })).toBeVisible();
-  await expect(page.locator('.brand-intro-content p')).toHaveText('Acompanhe suas vendas e pagamentos.');
-  await expect(page).toHaveTitle('Lucro Certo — Portal do Parceiro BRAVUS');
+  await expect(page.locator('.brand-intro-content p')).toHaveText('Seu próximo resultado começa aqui. Acompanhe vendas, saldo e repasses.');
+  await expect(page).toHaveTitle('Lucro Certo Pay — Portal do Parceiro Lucro Certo Pay');
   const summary = page.locator('.financial-panel');
   await expect(summary).toContainText('EXTRATO FINANCEIRO DO PARCEIRO');
-  await expect(summary).not.toContainText('12%'); await expect(summary).not.toContainText('12,00%'); await expect(page.getByLabel('Taxas das vendas do parceiro', { exact: true })).toHaveCount(0);
+  await expect(summary).toContainText('12%'); await expect(summary).not.toContainText('12,00%'); await expect(page.getByLabel('Taxas das vendas do parceiro', { exact: true })).toHaveCount(0);
   await expect(summary).not.toContainText('50%'); await expect(summary).not.toContainText('COMISSÕES');
   await expect(summary).not.toContainText('BRAVUS após taxas'); await expect(summary).not.toContainText('Repasse por gasto');
   await expect(page.getByLabel('ADS próprio do parceiro', { exact: true })).toContainText('Sem desconto no repasse');
@@ -52,9 +52,9 @@ test('parceiro vê um único gateway de 12% + R$ 2, recupera rascunho e os outro
   const normal = `fixture_${info.project.name}_primary_01234567890123456789`;
   await page.goto(`/#/atendente/${normal}`);
   await expect(page.getByRole('heading', { name: 'Portal do Atendente.', exact: true })).toBeVisible();
-  await expect(page.locator('.brand-intro-content p')).toHaveText('Acompanhe suas vendas, comissões e repasses.');
+  await expect(page.locator('.brand-intro-content p')).toHaveText('Seu próximo resultado começa aqui. Acompanhe vendas, saldo e repasses.');
   await expect(publicCheckout.getByRole('link', { name: 'Abrir checkout' })).toBeVisible();
-  await expect(publicCheckout).not.toContainText(/1\.000,00|3\.000,00|%/);
+  await expect(publicCheckout).toContainText('3.000,00'); await expect(publicCheckout).not.toContainText(/1\.000,00|%/);
   await expect(select.locator('option:not([disabled])')).toHaveCount(3); await expect(page.locator('.manual-pix-card')).toBeVisible();
   await page.goto('/#/admin');
   await page.getByLabel('Chave administrativa').fill('fixture_browser_admin_012345678901234567890123456789');

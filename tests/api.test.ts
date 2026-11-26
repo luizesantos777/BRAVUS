@@ -3,8 +3,7 @@ import test from 'node:test';
 import type { TestContext } from 'node:test';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, readFileSync, statSync } from 'node:fs';
-import { removeTempDir } from './test-cleanup.ts';
+import { mkdtempSync, rmSync, readFileSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -159,7 +158,7 @@ test('checkout aprovado automaticamente notifica o admin uma vez e não repete n
   assert.equal((await submit()).status, 200); assert.equal(deliveries.length, 1);
 });
 test('token inválido não abre dados; dados e comprovantes são isolados por atendente', async t => {
-  const { call, submit } = await fixture(t);
+  const { call, submit, store } = await fixture(t);
   assert.equal((await call('/api/portal', 'invalid_token_123456')).status, 401);
   assert.equal((await submit()).status, 200);
   const own = await (await call('/api/portal')).json();
@@ -177,7 +176,7 @@ test('envio repetido não duplica vendas e alterações no mesmo envio são reje
   const changed = batch(); changed.sales[0].amount = '400,00'; assert.equal((await submit(changed)).status, 409);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 1);
 });
-test('sincronização aplica os limites da gateway ativa apenas aos checkouts de parceiro e preserva os legados', async () => {
+test('sincronização aplica mínimo e teto da gateway ativa a todos os checkouts legados', async () => {
   const store = await PortalStore.open(':memory:');
   try {
     await store.adminSetCheckout('main', { name: 'Principal antigo', fee: '15', fixedFee: '1.99', minimum: '1' });
@@ -191,12 +190,7 @@ test('sincronização aplica os limites da gateway ativa apenas aos checkouts de
       fallback: { enabled: false, autoSwitch: true, order: [], ticketRouting: { enabled: false, rules: [] } },
     };
     await store.setGatewayConfig(config);
-    const checkouts = await store.checkouts();
-    const limits = (id: string) => checkouts.find(row => row.id === id)!;
-    assert.deepEqual([limits('main').minAmountCents, limits('main').maxAmountCents], [100, 100000]);
-    assert.deepEqual([limits('pix').minAmountCents, limits('pix').maxAmountCents], [100, null]);
-    assert.deepEqual([limits('buckpay').minAmountCents, limits('buckpay').maxAmountCents], [1, 100000]);
-    assert.deepEqual([limits('partner').minAmountCents, limits('partner').maxAmountCents], [600, 300000]);
+    assert.ok((await store.checkouts()).every(checkout => checkout.minAmountCents === 600 && checkout.maxAmountCents === 300000));
   } finally { store.close(); }
 });
 test('gateway exclusivo restringe só o parceiro, rejeita outras opções na API e preserva a confirmação de envios anteriores', async t => {
@@ -262,7 +256,7 @@ test('migração do parceiro configura 12% uma vez, registra auditoria e conserv
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].id, checkoutId);
     assert.deepEqual(await store.sales(auth), previousSales);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('gateway do parceiro já configurado com teto de R$ 1.000 migra para R$ 3.000 e regra de parceiro sem alterar o histórico', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-limit-')), file = join(directory, 'portal.sqlite');
@@ -285,7 +279,7 @@ test('gateway do parceiro já configurado com teto de R$ 1.000 migra para R$ 3.0
     const renewed = await store.rotateToken(partner.id);
     store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.checkoutsFor(auth))[0].maxAmountCents, 300000); assert.equal(await auditCount(), 2);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('tarifa de 12% atualiza o gateway de 3 mil já existente sem recalcular vendas ou duplicar envios antigos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-fee-')), file = join(directory, 'portal.sqlite');
@@ -311,7 +305,7 @@ test('tarifa de 12% atualiza o gateway de 3 mil já existente sem recalcular ven
     store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.checkoutsFor(auth))[0].feeBps, 1200);
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'checkout.updated' AND target_id = ?").get(checkoutId))!.count), 1);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('cadastro exclusivo já existente passa a receber R$ 86 em R$ 100, preservando snapshots, token e demais atendentes', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-partner-settlement-')), file = join(directory, 'portal.sqlite');
@@ -342,7 +336,7 @@ test('cadastro exclusivo já existente passa a receber R$ 86 em R$ 100, preserva
     const renewed = await store.rotateToken(partner.id); store.close(); store = undefined; store = await PortalStore.open(file);
     assert.equal((await store.authenticate(renewed.token)).id, partner.id); assert.equal((await store.profile(auth)).accountKind, 'partner');
     assert.equal(Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'attendant.rule_updated' AND target_id = ?").get(partner.id))!.count), 1);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('parceiro com gateway exclusivo mantém sua regra de recebimento e não expõe a opção a outros parceiros', async t => {
   const { call, submit, store } = await fixture(t, { defaultCheckoutRates: true, approveSales: false });
@@ -475,10 +469,10 @@ test('Buckpay é cadastrado uma vez em banco existente sem alterar tarifas perso
     const buckpay = (await store.checkouts()).filter(checkout => checkout.id === 'buckpay');
     assert.equal(buckpay.length, 1); assert.equal(buckpay[0].feeBps, 800); assert.equal(buckpay[0].fixedFeeCents, 200);
     assert.deepEqual(await store.sales(auth), sales);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador', async t => {
-  const { call, submit } = await fixture(t);
+  const { call, submit, store } = await fixture(t);
   const payload = batch();
   payload.sales = [10, 10].map(amount => ({ ...payload.sales[0], amount: String(amount), checkoutId: 'pix', feeCents: 0, feeBps: 0, fixedFeeCents: 0 }));
   assert.equal((await submit(payload)).status, 200);
@@ -487,6 +481,7 @@ test('API calcula a tarifa PIX por venda e ignora taxas enviadas pelo navegador'
   assert.equal(portal.finance.feeCents, 240); assert.equal(portal.finance.availableCents, -40);
   assert.equal((await submit(payload)).status, 200);
   assert.equal((await (await call('/api/portal')).json()).finance.feeCents, 240);
+  await store.adminSetCheckout('pix', { name: 'PIX manual', fee: '6.99', fixedFee: '1.69', minimum: '5' });
   const invalid = batch(); invalid.sales[0].checkoutId = 'pix'; invalid.sales[0].amount = '4,99';
   assert.equal((await submit(invalid, 'fixture_pix_below_minimum')).status, 400);
   assert.equal((await (await call('/api/portal')).json()).sales.length, 2);
@@ -585,7 +580,7 @@ test('banco persistente mantém dados no reinício e guarda somente hash do toke
     assert.equal((await store.profile((await store.authenticate(tokenA)))).saleAlertTemplate, '{nome}: {valor}');
     assert.equal((await store.profile((await store.authenticate(tokenA)))).photoUrl, `data:image/png;base64,${image.base64}`); store.close();
     assert.equal(readFileSync(file).includes(Buffer.from(tokenA)), false);
-  } finally { removeTempDir(directory); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 test('atualização do banco configura PIX uma vez e preserva taxas já registradas nas vendas', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-pix-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -599,14 +594,14 @@ test('atualização do banco configura PIX uma vez e preserva taxas já registra
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.sales({ id: account.id }))[0].feeCents, 0);
     const pix = (await store.checkouts()).find(checkout => checkout.id === 'pix')!;
-    assert.equal(pix.feeBps, 699); assert.equal(pix.fixedFeeCents, 169); assert.equal(pix.minAmountCents, 500);
+    assert.equal(pix.feeBps, 699); assert.equal(pix.fixedFeeCents, 169); assert.equal(pix.minAmountCents, 1);
     (await store.recordSales({ id: account.id }, payload, 'fixture_after_pix_upgrade'));
     assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 2266]);
     (await store.adminSetCheckout('pix', { name: 'PIX manual', fee: '7', fixedFee: '2' }));
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.fixedFeeCents, 200);
     assert.equal((await store.checkouts()).find(checkout => checkout.id === 'pix')!.feeBps, 700);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('atualização do checkout preserva vendas antigas e mantém faixas ajustadas após reiniciar', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-checkout-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -631,7 +626,7 @@ test('atualização do checkout preserva vendas antigas e mantém faixas ajustad
     assert.equal(logs.includes(tokenA), false);
     assert.deepEqual((await store.checkouts()).find(item => item.id === 'main')!.higherTier, { aboveAmountCents: 40000, feeBps: 2500, fixedFeeCents: 199 });
     assert.deepEqual((await store.sales({ id: account.id })).map(sale => sale.feeCents).sort((a, b) => a - b), [0, 1699, 15199]);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('operador cria token e convite privados pelo comando de administração', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-invite-')), database = join(directory, 'portal.sqlite'), output = join(directory, 'invite.json');
@@ -645,7 +640,7 @@ test('operador cria token e convite privados pelo comando de administração', a
     const auth = (await store.authenticate(token));
     assert.equal((await store.profile(auth)).commissionBps, 2999);
     assert.equal(auth.id, invitation.attendantId); store.close();
-  } finally { removeTempDir(directory); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('administração exige chave própria; criação, rotação e revogação preservam histórico', async t => {
@@ -770,7 +765,7 @@ test('chave administrativa persiste com permissão privada e backup contém vend
     const copy = await PortalStore.open(output), auth = await copy.authenticate(tokenA), sale = (await copy.sales(auth))[0];
     assert.equal(sale.amountCents, 30000); assert.ok((await copy.receipt(auth, sale.receiptId)).bytes.length > 0);
     copy.close(); store.close();
-  } finally { removeTempDir(directory); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('foto e alerta são salvos por atendente, persistem e a foto aparece no ranking', async t => {
@@ -906,7 +901,7 @@ test('push expirado é removido sem desfazer a venda; credenciais VAPID persiste
     assert.deepEqual(loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: keys.privateKey }), keys);
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey }));
     assert.throws(() => loadPushKeys(file, { BRAVUS_PUSH_PUBLIC_KEY: keys.publicKey, BRAVUS_PUSH_PRIVATE_KEY: webpush.generateVAPIDKeys().privateKey }));
-  } finally { removeTempDir(directory); }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('só o administrador aprova ou recusa vendas; saldo e ranking usam apenas as aprovadas', async t => {
@@ -1015,7 +1010,7 @@ test('migração mantém vendas anteriores aprovadas e persiste decisões e novo
     store.close(); store = await PortalStore.open(file);
     const reviewed = (await store.sales({ id: account.id })).find(sale => sale.id === pending.id)!;
     assert.equal(reviewed.status, 'rejected'); assert.equal(reviewed.reviewNote, 'Print ilegível'); assert.ok(reviewed.reviewedAt);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 3.000', async () => {
@@ -1032,7 +1027,7 @@ test('limite novo do checkout preserva taxas de vendas antigas acima de R$ 3.000
     assert.equal((await store.sales({ id: account.id }))[0].status, 'approved');
     assert.equal((await store.checkouts()).find(item => item.id === 'main')!.higherTier, null);
     await assert.rejects(async () => (await store!.recordSales({ id: account.id }, payload, 'fixture_sale_after_maximum')), /valor máximo/);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('padrão de 50% divide taxas do gateway e do saque em 50% para cada parte sem aceitar valores manipulados', async t => {
@@ -1099,7 +1094,7 @@ test('migração para repasses manuais libera a reserva antiga do MG, preserva P
     assert.deepEqual((await store.payouts(paidAuth))[0], paid);
     const events = async () => Number((await store.sql.prepare("SELECT COUNT(*) AS count FROM audit_events WHERE action = 'payout.cancelled' AND target_id = ?").get(request.id))!.count);
     assert.equal(await events(), 1); store.close(); store = await PortalStore.open(path); assert.equal(await events(), 1); assert.equal((await store.portal(auth)).finance.availableCents, 1947);
-  } finally { store.close(); removeTempDir(directory); }
+  } finally { store.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 test('migração mantém regras e saques históricos e aplica 50% apenas aos próximos lançamentos', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bravus-earnings-upgrade-')), file = join(directory, 'portal.sqlite');
@@ -1126,7 +1121,7 @@ test('migração mantém regras e saques históricos e aplica 50% apenas aos pr�
     store.db.prepare('UPDATE attendants SET commission_bps = 6000 WHERE id = ?').run(account.id);
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.profile(auth)).commissionBps, 6000); assert.equal((await store.portal(auth)).finance.availableCents, 4180);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('migração remove tarifas antecipadas de pedidos em análise sem alterar repasses já pagos', async () => {
@@ -1156,7 +1151,7 @@ test('migração remove tarifas antecipadas de pedidos em análise sem alterar r
     store.close(); store = await PortalStore.open(file);
     assert.equal((await store.portal(auth)).finance.withdrawalFeeCents, 750);
     assert.equal((await store.portal(auth)).finance.availableCents, balance);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('migração mantém taxas inteiras históricas e salva o rateio das próximas vendas e repasses', async () => {
@@ -1184,5 +1179,5 @@ test('migração mantém taxas inteiras históricas e salva o rateio das próxim
     const saved = (await store.sales(auth)).find(item => item.id === next.id)!;
     assert.equal(saved.feeCents, 1699); assert.equal(saved.attendantFeeCents, 850);
     assert.equal((await store.portal(auth)).finance.availableCents, 4451);
-  } finally { store?.close(); removeTempDir(directory); }
+  } finally { store?.close(); rmSync(directory, { recursive: true, force: true }); }
 });

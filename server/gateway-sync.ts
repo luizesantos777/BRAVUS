@@ -58,6 +58,7 @@ export function gatewaySyncView(config: GatewayConfigSnapshot | null, status: Ga
 }
 
 const isIntegerOrNull = (value: unknown) => value === null || Number.isSafeInteger(value);
+const MIN_SYNC_TOKEN_LENGTH = 32;
 
 function cost(value: unknown): GatewayCostProfile | null {
   if (value === null || value === undefined) return null;
@@ -129,10 +130,13 @@ export class GatewayConfigSync {
   private lastError: string | null = null;
   private fetchedAt: string | null = null;
   constructor(url: string, token: string, apply: (config: GatewayConfigSnapshot) => Promise<void> | void) { this.url = url; this.token = token; this.apply = apply; }
-  status(): GatewaySyncStatus { if (!this.url || !this.token) return { configured: false, state: 'not_configured', revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null }; return { configured: true, state: this.lastError ? (this.snapshot ? 'stale' : 'error') : 'synced', revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: this.lastError }; }
+  status(): GatewaySyncStatus {
+    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return { configured: false, state: 'not_configured', revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: null };
+    return { configured: true, state: this.lastError ? (this.snapshot ? 'stale' : 'error') : 'synced', revision: this.snapshot?.revision ?? null, fetchedAt: this.fetchedAt, error: this.lastError };
+  }
   view(): GatewaySyncView { return gatewaySyncView(this.snapshot, this.status()); }
   async refresh() {
-    if (!this.url || !this.token) return;
+    if (!this.url || this.token.length < MIN_SYNC_TOKEN_LENGTH) return;
     if (this.running) return this.running;
     if (Date.now() < this.nextAttempt) return;
     this.nextAttempt = Date.now() + 30000;

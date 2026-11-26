@@ -27,6 +27,49 @@ export function notificationErrorMessage(cause: unknown) {
 function workerPath() {
   return new URL(publicAssetUrl('notifications-worker.js'));
 }
+type AudioWindow = Window & { webkitAudioContext?: typeof AudioContext };
+let moneyDropAudio: AudioContext | null = null;
+function audioContext() {
+  if (typeof window === 'undefined') return null;
+  const Constructor = window.AudioContext ?? (window as AudioWindow).webkitAudioContext;
+  if (!Constructor) return null;
+  try { return moneyDropAudio ??= new Constructor(); } catch { return null; }
+}
+/** Unlocks the browser audio session after a user gesture when possible. */
+export function unlockMoneyDropSound() {
+  const context = audioContext();
+  if (context?.state === 'suspended') void context.resume().catch(() => undefined);
+}
+/** Plays a short, low-volume cash/coin cue when the admin page is open. */
+export function playMoneyDropSound() {
+  const context = audioContext();
+  if (!context) return;
+  const ready = context.state === 'suspended' ? context.resume() : Promise.resolve();
+  void ready.then(() => {
+    const now = context.currentTime, master = context.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.18, now + 0.015);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 0.72);
+    master.connect(context.destination);
+    const notes = [
+      { at: 0, duration: 0.13, from: 760, to: 1040 },
+      { at: 0.14, duration: 0.14, from: 980, to: 1320 },
+      { at: 0.31, duration: 0.30, from: 1320, to: 820 },
+    ];
+    for (const note of notes) {
+      const oscillator = context.createOscillator(), gain = context.createGain(), start = now + note.at, end = start + note.duration;
+      oscillator.type = 'triangle';
+      oscillator.frequency.setValueAtTime(note.from, start);
+      oscillator.frequency.exponentialRampToValueAtTime(note.to, end);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.55, start + 0.012);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      oscillator.connect(gain).connect(master);
+      oscillator.start(start);
+      oscillator.stop(end + 0.02);
+    }
+  }).catch(() => undefined);
+}
 async function endpointId(endpoint: string) {
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(endpoint));
   return [...new Uint8Array(bytes)].map(byte => byte.toString(16).padStart(2, '0')).join('');

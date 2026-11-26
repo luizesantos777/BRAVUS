@@ -74,7 +74,11 @@ export class PortalStore {
     this.gatewayConfig = config;
     const limits = config.active.amountLimits?.pix;
     if (!limits) return;
-    await this.sql.prepare("UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ? WHERE id = 'partner' OR id LIKE 'exclusive_%'").run(limits.minCents ?? 1, limits.maxCents);
+    // The checkout UI is shared by attendants and partners. Keep every
+    // displayed link aligned with the active PIX gateway, including legacy
+    // rows created before the automatic checkout flow was enabled.
+    await this.sql.prepare('UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?')
+      .run(Math.max(600, Number(limits.minCents ?? 600)), limits.maxCents);
   }
   setGatewaySyncView(view: GatewaySyncView) { this.gatewaySyncView = view; }
   gatewayConfigSnapshot() { return this.gatewayConfig; }
@@ -179,6 +183,12 @@ export class PortalStore {
           await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(PARTNER_GATEWAY_SEED.feeMigration);
         }
       }
+      // Normalize every legacy link to the public PIX contract. A later
+      // checkout sync may raise the active Poseidon ceiling to R$ 10.000,00.
+      if (!await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('checkout-amount-contract-v1')) {
+        await store.sql.prepare('UPDATE checkouts SET min_amount_cents = ?, max_amount_cents = ?, tier_above_cents = NULL, tier_fee_bps = NULL, tier_fixed_fee_cents = NULL').run(CHECKOUT_PIX_TARIFF.minAmountCents, CHECKOUT_PIX_TARIFF.maxAmountCents);
+        await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('checkout-amount-contract-v1');
+      }
       if (!(await store.sql.prepare('SELECT id FROM schema_migrations WHERE id = ?').get('attendant-gross-share-50-v1'))) {
         (await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE account_kind = 'attendant'").run(DEFAULT_COMMISSION_BPS));
         (await store.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run('attendant-gross-share-50-v1'));
@@ -241,7 +251,7 @@ export class PortalStore {
     await this.sql.prepare('INSERT INTO schema_migrations VALUES (?)').run(migration);
   }
   private async recordPartnerGatewayCosts() {
-    const migration = 'partner-provider-cost-599-199-2026-11-11-v1';
+    const migration = 'partner-provider-cost-300-100-2026-11-24-v1';
     if (await this.sql.prepare('SELECT id FROM schema_migrations WHERE id=?').get(migration)) return;
     const fee = `CAST((amount_cents * ${PARTNER_PROVIDER_FEE_BPS} + 5000) / 10000 AS INTEGER) + ${PARTNER_PROVIDER_FIXED_FEE_CENTS}`;
     const where = "gateway_cost_cents IS NULL AND attendant_id IN (SELECT id FROM attendants WHERE account_kind='partner')";

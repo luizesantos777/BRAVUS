@@ -8,6 +8,7 @@ import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PortalStore } from '../server/store.ts';
+import { readFinancialReport } from '../server/admin-controls.ts';
 import { createPortalServer } from '../server/http.ts';
 import type { GatewayConfigSnapshot } from '../server/gateway-sync.ts';
 import { businessToday } from '../src/domain.ts';
@@ -90,7 +91,7 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
     confirmed.set(sale.orderId, sale);
     return sale.orderId;
   };
-  const submit = (orderId: string, extra = {}, suppliedProof = proof) => call('/api/integrations/checkout-sales', '', { method: 'POST', body: JSON.stringify({ orderId, proof: suppliedProof, ...extra }) });
+  const submit = (orderId: string, extra = {}, suppliedProof = proof, credential = '') => call('/api/integrations/checkout-sales', credential, { method: 'POST', body: JSON.stringify({ orderId, proof: suppliedProof, ...extra }) });
 
   const orderId = register(a.id, 'buckpay', 350_000);
   assert.equal((await submit(orderId, { accountId: b.id, amountCents: 1000 })).status, 400);
@@ -112,6 +113,22 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   assert.equal((await store.sales({ id: b.id })).length, 0);
   assert.deepEqual(Buffer.from((await store.receipt({ id: a.id }, attendantSale.receiptId)).bytes), pdfReceiptBytes());
 
+  const today = businessToday(), accountlessOrder = randomUUID();
+  confirmed.set(accountlessOrder, { orderId: accountlessOrder, amountCents: 12_500, provider: 'poseidon', date: today, time: '11:15', receipt });
+  assert.equal((await submit(accountlessOrder)).status, 401);
+  assert.equal((await submit(accountlessOrder, {}, proof, tokenB)).status, 200);
+  const legacyOrder = randomUUID();
+  await store.recordSales({ id: b.id }, { date: today, sales: [{ amount: '75', checkoutId: 'main', time: '10:23', note: 'Pedido ' + legacyOrder, receipt }] }, legacyOrder);
+  confirmed.set(legacyOrder, { orderId: legacyOrder, amountCents: 7500, provider: 'poseidon', date: today, time: '10:23', receipt });
+  const recovered = await submit(legacyOrder, {}, proof, tokenB);
+  assert.equal(recovered.status, 200);
+  assert.equal((await recovered.json()).duplicate, true);
+  const recoveredSale = (await store.sales({ id: b.id })).find(sale => sale.amountCents === 7500)!;
+  assert.equal(recoveredSale.status, 'approved');
+  const closeout = await readFinancialReport(store, today, today, b.id);
+  assert.equal(closeout.totals.count, 2);
+  assert.equal(closeout.totals.grossCents, 20_000);
+
   const original = confirmed.get(orderId)!;
   confirmed.set(orderId, { ...original, accountId: b.id });
   assert.equal((await submit(orderId)).status, 409);
@@ -132,11 +149,12 @@ test('checkout confirmado é aprovado uma única vez para a conta verificada e c
   assert.equal((await submit(register(b.id, 'poseidon', 2_147_483_648))).status, 503);
   assert.equal((await submit(register(b.id, 'poseidon', 0))).status, 503);
 
+  const beforeFailure = Object.fromEntries(await Promise.all(['batches', 'sales', 'receipts'].map(async table => [table, Number((await store.sql.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE attendant_id = ?`).get(b.id))?.count)])));
   const failureOrder = register(b.id, 'poseidon', 100_00);
   await store.sql.exec("CREATE TEMP TRIGGER fail_approval BEFORE INSERT ON audit_events WHEN NEW.action = 'sale.approved' BEGIN SELECT RAISE(ABORT, 'synthetic approval failure'); END;");
   assert.equal((await submit(failureOrder)).status, 500);
   for (const table of ['batches', 'sales', 'receipts']) {
-    assert.equal(Number((await store.sql.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE attendant_id = ?`).get(b.id))?.count), 0);
+    assert.equal(Number((await store.sql.prepare(`SELECT COUNT(*) AS count FROM ${table} WHERE attendant_id = ?`).get(b.id))?.count), beforeFailure[table]);
   }
   await store.sql.exec('DROP TRIGGER fail_approval');
   assert.equal((await submit(failureOrder)).status, 200);

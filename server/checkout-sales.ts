@@ -8,7 +8,7 @@ const uuidV4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]
 export type CheckoutSaleProof = { orderId: string; proof: string };
 export type VerifiedCheckoutSale = {
   orderId: string;
-  accountId: string;
+  accountId?: string;
   amountCents: number;
   provider: string;
   date: string;
@@ -27,7 +27,7 @@ export function parseCheckoutSaleProof(value: unknown): CheckoutSaleProof | null
 export function parseVerifiedCheckoutSale(value: unknown, expectedOrderId: string): VerifiedCheckoutSale | null {
   if (!value || typeof value !== 'object') return null;
   const { orderId, accountId, amountCents, provider, date, time, receipt } = value as Record<string, unknown>;
-  if (orderId !== expectedOrderId || typeof accountId !== 'string' || !uuidV4.test(accountId)) return null;
+  if (orderId !== expectedOrderId || accountId !== undefined && (typeof accountId !== 'string' || !uuidV4.test(accountId))) return null;
   if (typeof amountCents !== 'number' || !Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) return null;
   if (typeof provider !== 'string' || !/^[a-z0-9_]{1,40}$/.test(provider) || typeof date !== 'string' || !validDate(date) || date > businessToday()) return null;
   if (typeof time !== 'string' || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !receipt || typeof receipt !== 'object') return null;

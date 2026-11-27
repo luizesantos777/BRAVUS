@@ -74,7 +74,8 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
           if (verified === null) throw new PortalError(404, 'Pagamento confirmado não encontrado.');
           const sale = parseVerifiedCheckoutSale(verified, claim.orderId);
           if (!sale) throw new PortalError(503, 'O checkout retornou uma confirmação inválida.');
-          const result = await store.recordCheckoutSale(sale);
+          const accountId = sale.accountId ?? (await store.authenticate(request.headers.authorization?.startsWith('Bearer ') ? request.headers.authorization.slice(7) : '')).id;
+          const result = await store.recordCheckoutSale({ ...sale, accountId }, url.searchParams.get('checkout') ?? '');
           if (!result.duplicate && options.push && adminHash) await Promise.allSettled([
             options.push.notifyAdminCheckoutSale(adminHash.toString('hex'), sale),
           ]);
@@ -150,7 +151,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
             else throw new PortalError(404, 'Recurso administrativo não encontrado.');
             return;
           }
-          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|cancel))?$/);
+          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|rate|cancel))?$/);
           if (url.pathname === '/api/admin/dashboard' && request.method === 'GET') {
             if (options.backups && url.searchParams.get('refresh') !== '1') await options.backups.run('daily').catch(() => undefined);
             json(response, 200, (await store.adminDashboard()));
@@ -170,6 +171,7 @@ export function createPortalHandler(store: PortalStore, options: PortalHttpOptio
             json(response, 200, (await store.adminCosts(route[2], date)));
           }
           else if (route?.[1] === 'attendants' && route[3] === 'costs' && request.method === 'POST') { (await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
+          else if (route?.[1] === 'attendants' && route[3] === 'rate' && request.method === 'PATCH') json(response, 200, await store.adminSetRate(route[2], await readJson(request, options.bodyLimit), actor));
           else if (route?.[1] === 'attendants' && !route[3] && request.method === 'PATCH') { (await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }
           else if (route?.[1] === 'attendants' && !route[3] && request.method === 'DELETE') json(response, 200, await store.deleteRevokedAccount(route[2], actor));
           else if (route?.[1] === 'checkouts' && !route[3] && request.method === 'PATCH') { (await store.adminSetCheckout(route[2], await readJson(request, options.bodyLimit), actor)); json(response, 200, { saved: true }); }

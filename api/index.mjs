@@ -988,6 +988,43 @@ var PortalStore = class _PortalStore {
     if (!await this.sql.prepare("SELECT id FROM attendants WHERE id = ?").get(id)) throw new PortalError(404, "Atendente n\xE3o encontrado.");
     return (await this.costs({ id })).find((cost2) => cost2.date === date) ?? { date, adsCents: 0, withdrawalFeeCents: 0 };
   }
+  async adminSetRate(id, input, actor = systemActor) {
+    const data = this.adminFields(input);
+    return this.withTransaction(async (store) => {
+      const current = await store.sql.prepare("SELECT id, name, account_kind AS accountKind, commission_bps AS commissionBps, partner_fee_rules AS partnerFeeRules FROM attendants WHERE id = ?").get(id);
+      if (!current) throw new PortalError(404, "Atendente n\xE3o encontrado.");
+      if (current.accountKind === "partner") {
+        const fee = typeof data.fee === "string" ? data.fee : invalid("Informe o percentual e a taxa fixa do parceiro.");
+        const fixedFee = typeof data.fixedFee === "string" ? data.fixedFee : invalid("Informe o percentual e a taxa fixa do parceiro.");
+        let feeBps, fixedFeeCents;
+        try {
+          feeBps = percentageToBps(fee);
+          fixedFeeCents = /^0+(?:[.,]0{1,2})?$/.test(fixedFee.trim()) ? 0 : amountToCents(fixedFee);
+        } catch (error) {
+          return invalid(error.message);
+        }
+        const effectiveFrom = businessToday();
+        const previousRules = JSON.parse(String(current.partnerFeeRules));
+        const rules = previousRules.filter((rule) => rule.effectiveFrom !== effectiveFrom);
+        rules.push({ effectiveFrom, feeBps, fixedFeeCents });
+        rules.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+        const serializedRules = JSON.stringify(rules);
+        await store.sql.prepare("UPDATE attendants SET partner_fee_rules = ? WHERE id = ?").run(serializedRules, id);
+        await store.audit(actor, "partner.tariff_changed", id, String(current.name), { rules: String(current.partnerFeeRules) }, { rules: serializedRules, effectiveFrom, feeBps, fixedFeeCents });
+        return { saved: true };
+      }
+      const commission = typeof data.commission === "string" ? data.commission : invalid("Informe a comiss\xE3o do atendente.");
+      let commissionBps;
+      try {
+        commissionBps = percentageToBps(commission);
+      } catch (error) {
+        return invalid(error.message);
+      }
+      await store.sql.prepare("UPDATE attendants SET commission_bps = ? WHERE id = ?").run(commissionBps, id);
+      await store.audit(actor, "attendant.rule_updated", id, String(current.name), { commissionBps: Number(current.commissionBps) }, { commissionBps });
+      return { saved: true };
+    });
+  }
   async adminSetCheckout(id, input, actor = systemActor) {
     const data = this.adminFields(input);
     return this.withTransaction(async (store) => {
@@ -1134,7 +1171,7 @@ var PortalStore = class _PortalStore {
     await this.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, review_note, reviewed_at, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gross-share-less-fees', ?, ?)").run(id, profile.id, batchId, date, time, checkout.id, checkout.name, amountCents, feeCents, profile.commissionBps, 0, note, receiptId, createdAt, approved ? "approved" : "pending", approved ? approvalNote : "", approved ? createdAt : null, allocatedSaleFee(feeCents, profile.accountKind), profile.accountKind === "partner" ? partnerGatewayCost(amountCents, this.gatewayConfig?.active.cost) : null);
     return id;
   }
-  async recordCheckoutSale(sale) {
+  async recordCheckoutSale(sale, requestedCheckoutId = "") {
     const requestKey = `sites:${sale.orderId}`;
     const payloadHash = createHash("sha256").update(JSON.stringify([sale.accountId, sale.amountCents, sale.provider, sale.date, sale.time])).digest("hex");
     return this.withTransaction(async (store) => {
@@ -1143,13 +1180,32 @@ var PortalStore = class _PortalStore {
         if (previous.payload_hash !== payloadHash) throw new PortalError(409, "Este pagamento j\xE1 foi recebido com outros dados.");
         return { processed: true, duplicate: true, saleId: String(previous.sale_id) };
       }
+      const legacySales = await store.sql.prepare(`SELECT s.id, s.date, s.time, s.amount_cents AS amountCents, s.status, s.review_note AS reviewNote
+        FROM batches b JOIN sales s ON s.batch_id = b.id
+        WHERE b.attendant_id = ? AND b.request_key = ?`).all(sale.accountId, sale.orderId);
+      if (legacySales.length) {
+        if (legacySales.length !== 1) throw new PortalError(409, "O pedido j\xE1 est\xE1 associado a mais de uma venda no portal.");
+        const existing = legacySales[0];
+        if (existing.date !== sale.date || existing.time !== sale.time || Number(existing.amountCents) !== sale.amountCents) {
+          throw new PortalError(409, "O pagamento confirmado n\xE3o corresponde aos dados da venda existente.");
+        }
+        if (existing.status === "rejected") throw new PortalError(409, "A venda existente foi recusada ou cancelada. Revise-a manualmente antes de sincronizar novamente.");
+        if (existing.status === "pending") {
+          const reviewedAt = (/* @__PURE__ */ new Date()).toISOString();
+          const updated = await store.sql.prepare("UPDATE sales SET status = 'approved', review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(approvalNote, reviewedAt, String(existing.id));
+          if (!updated.changes) throw new PortalError(409, "A venda foi analisada em outra sess\xE3o. Atualize a lista antes de sincronizar novamente.");
+          const owner = await store.sql.prepare("SELECT name FROM attendants WHERE id = ?").get(sale.accountId);
+          await store.audit({ id: "checkout-sites", name: "Checkout Lucro Certo Pay" }, "sale.approved", String(existing.id), String(owner?.name ?? ""), { status: "pending", note: String(existing.reviewNote) }, { status: "approved", note: approvalNote, orderId: sale.orderId, provider: sale.provider });
+        }
+        return { processed: true, duplicate: true, saleId: String(existing.id) };
+      }
       const auth = { id: sale.accountId };
       const profile = await store.profile(auth).catch((error) => {
         if (error instanceof PortalError && error.status === 401) throw new PortalError(404, "Conta do pagamento n\xE3o encontrada.");
         throw error;
       });
       const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
-      const checkout = profile.accountKind === "partner" || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id) ? checkouts[0] : checkouts.find((item) => item.id === (sale.provider === "buckpay" ? "buckpay" : "main"));
+      const checkout = profile.accountKind === "partner" || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id) ? checkouts[0] : requestedCheckoutId ? checkouts.find((item) => item.id === requestedCheckoutId) : checkouts.find((item) => item.id === (sale.provider === "buckpay" ? "buckpay" : "main"));
       if (!checkout) throw new PortalError(503, "Tarifa do checkout indispon\xEDvel.");
       const feeCents = checkoutTariffFee(sale.amountCents, checkout);
       const receipt = store.receiptInput(sale.receipt);
@@ -1456,7 +1512,7 @@ function parseCheckoutSaleProof(value) {
 function parseVerifiedCheckoutSale(value, expectedOrderId) {
   if (!value || typeof value !== "object") return null;
   const { orderId, accountId, amountCents, provider, date, time, receipt } = value;
-  if (orderId !== expectedOrderId || typeof accountId !== "string" || !uuidV4.test(accountId)) return null;
+  if (orderId !== expectedOrderId || accountId !== void 0 && (typeof accountId !== "string" || !uuidV4.test(accountId))) return null;
   if (typeof amountCents !== "number" || !Number.isSafeInteger(amountCents) || amountCents <= 0 || amountCents > MAX_CONFIRMED_CHECKOUT_CENTS) return null;
   if (typeof provider !== "string" || !/^[a-z0-9_]{1,40}$/.test(provider) || typeof date !== "string" || !validDate(date) || date > businessToday()) return null;
   if (typeof time !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time) || !receipt || typeof receipt !== "object") return null;
@@ -1567,7 +1623,8 @@ function createPortalHandler(store, options = {}) {
           if (verified === null) throw new PortalError(404, "Pagamento confirmado n\xE3o encontrado.");
           const sale = parseVerifiedCheckoutSale(verified, claim.orderId);
           if (!sale) throw new PortalError(503, "O checkout retornou uma confirma\xE7\xE3o inv\xE1lida.");
-          const result = await store.recordCheckoutSale(sale);
+          const accountId = sale.accountId ?? (await store.authenticate(request.headers.authorization?.startsWith("Bearer ") ? request.headers.authorization.slice(7) : "")).id;
+          const result = await store.recordCheckoutSale({ ...sale, accountId }, url.searchParams.get("checkout") ?? "");
           if (!result.duplicate && options.push && adminHash) await Promise.allSettled([
             options.push.notifyAdminCheckoutSale(adminHash.toString("hex"), sale)
           ]);
@@ -1656,7 +1713,7 @@ function createPortalHandler(store, options = {}) {
             else throw new PortalError(404, "Recurso administrativo n\xE3o encontrado.");
             return;
           }
-          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|cancel))?$/);
+          const route = url.pathname.match(/^\/api\/admin\/(attendants|payouts|checkouts|sales)\/([a-zA-Z0-9_-]+)(?:\/(token|costs|rate|cancel))?$/);
           if (url.pathname === "/api/admin/dashboard" && request.method === "GET") {
             if (options.backups && url.searchParams.get("refresh") !== "1") await options.backups.run("daily").catch(() => void 0);
             json(response, 200, await store.adminDashboard());
@@ -1676,7 +1733,8 @@ function createPortalHandler(store, options = {}) {
           } else if (route?.[1] === "attendants" && route[3] === "costs" && request.method === "POST") {
             await store.adminSetCosts(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
-          } else if (route?.[1] === "attendants" && !route[3] && request.method === "PATCH") {
+          } else if (route?.[1] === "attendants" && route[3] === "rate" && request.method === "PATCH") json(response, 200, await store.adminSetRate(route[2], await readJson(request, options.bodyLimit), actor));
+          else if (route?.[1] === "attendants" && !route[3] && request.method === "PATCH") {
             await store.setAttendantActive(route[2], await readJson(request, options.bodyLimit), actor);
             json(response, 200, { saved: true });
           } else if (route?.[1] === "attendants" && !route[3] && request.method === "DELETE") json(response, 200, await store.deleteRevokedAccount(route[2], actor));

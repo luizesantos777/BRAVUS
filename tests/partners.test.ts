@@ -99,6 +99,29 @@ test('parceiro recebe R$ 86 por venda de R$ 100; tarifas e divisão dos atendent
   assert.equal(common.finance.availableCents, 3350);
 });
 
+test('admin altera comissão e tarifa do parceiro sem reescrever vendas anteriores', async t => {
+  const { store, call, submit, attendant, invitation } = await fixture(t);
+  const attendantBatch = (amount: string) => ({ date: businessToday(), sales: [{ amount, checkoutId: 'main', time: '12:00', note: 'Venda sintética', receipt }] });
+  const partnerBatch = (amount: string) => ({ date: businessToday(), sales: [{ amount, checkoutId: 'main', time: '12:00', note: 'Venda sintética do parceiro', receipt }] });
+  await submit(partnerBatch('100'), 'fixture_partner_rate_old');
+  await submit(attendantBatch('100'), 'fixture_attendant_rate_old', attendantToken);
+
+  assert.equal((await call(`/api/admin/attendants/${attendant.id}/rate`, attendantToken, { method: 'PATCH', body: JSON.stringify({ commission: '37,5' }) })).status, 401);
+  assert.equal((await call(`/api/admin/attendants/${attendant.id}/rate`, adminKey, { method: 'PATCH', body: JSON.stringify({ commission: '37,5' }) })).status, 200);
+  assert.equal((await call(`/api/admin/attendants/${invitation.attendantId}/rate`, adminKey, { method: 'PATCH', body: JSON.stringify({ fee: '16', fixedFee: '3,25' }) })).status, 200);
+  assert.equal((await call(`/api/admin/attendants/${attendant.id}/rate`, adminKey, { method: 'PATCH', body: JSON.stringify({ commission: '101' }) })).status, 400);
+
+  await submit(partnerBatch('100'), 'fixture_partner_rate_new');
+  await submit(attendantBatch('80'), 'fixture_attendant_rate_new', attendantToken);
+  const partnerSales = await store.sales({ id: invitation.attendantId });
+  assert.deepEqual(partnerSales.map(sale => [sale.amountCents, sale.feeCents]).sort((a, b) => a[1] - b[1]), [[10000, 1400], [10000, 1925]]);
+  const attendantSales = await store.sales({ id: attendant.id });
+  assert.deepEqual(attendantSales.map(sale => [sale.amountCents, sale.commissionBps]).sort((a, b) => a[0] - b[0]), [[8000, 3750], [10000, 5000]]);
+  const dashboard = await store.adminDashboard();
+  assert.equal(dashboard.attendants.find(account => account.id === invitation.attendantId)!.partnerFeeRules?.at(-1)?.feeBps, 1600);
+  assert.equal(dashboard.attendants.find(account => account.id === attendant.id)!.commissionBps, 3750);
+});
+
 test('API arredonda 12% + R$ 2 por venda, ignora taxas adulteradas e mantém idempotência e limites', async t => {
   const { portal, submit, approve } = await fixture(t);
   const payload = batch(['6', '15', '100']);

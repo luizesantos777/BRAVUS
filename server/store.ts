@@ -7,7 +7,7 @@ import { openDatabase } from './database.ts';
 import type { SqlDatabase, TursoConnection } from './database.ts';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { accountCheckouts, allocatedSaleFee, PARTNER_CHECKOUT, withdrawalFees, amountToCents, businessToday, calculateFinance, calculateMarketing, checkoutFee, checkoutTariffFee, BUCKPAY_TARIFF, CHECKOUT_PIX_TARIFF, DEFAULT_SALE_ALERT, DEFAULT_COMMISSION_BPS, ATTENDANT_WITHDRAWAL_FEE_CENTS, inPeriod, MANUAL_PIX_TARIFF, MAX_RECEIPT_BYTES, percentageToBps, saleEarnings, validateProfile, validateSaleCancellation, validateSaleReview, validatePayoutAmount, validDate } from '../src/domain.ts';
-import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, GatewaySyncView, Invitation, PartnerAdsCost, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
+import type { AccountKind, AdminAttendant, AdminCost, AdminDashboard, AdminSale, AdminSalesPage, AdminPayout, Checkout, DailyCost, GatewaySyncView, Invitation, PartnerAdsCost, PartnerFeeRule, Period, Portal, Profile, Payout, RankingEntry, ReceiptInput, Sale, SaleBatch } from '../src/domain.ts';
 import type { AuditAction, AuditValues } from '../src/admin-domain.ts';
 import { appendAudit, controlsSchema } from './controls-schema.ts';
 import { exclusiveCheckoutId, isExclusiveCheckout, PARTNER_GATEWAY_SEED } from './partner-checkouts.ts';
@@ -444,6 +444,38 @@ export class PortalStore {
     if (!(await this.sql.prepare('SELECT id FROM attendants WHERE id = ?').get(id))) throw new PortalError(404, 'Atendente não encontrado.');
     return (await this.costs({ id })).find(cost => cost.date === date) ?? { date, adsCents: 0, withdrawalFeeCents: 0 };
   }
+  async adminSetRate(id: string, input: unknown, actor = systemActor) {
+    const data = this.adminFields(input);
+    return this.withTransaction(async store => {
+      const current = await store.sql.prepare('SELECT id, name, account_kind AS accountKind, commission_bps AS commissionBps, partner_fee_rules AS partnerFeeRules FROM attendants WHERE id = ?').get(id);
+      if (!current) throw new PortalError(404, 'Atendente não encontrado.');
+      if (current.accountKind === 'partner') {
+        const fee = typeof data.fee === 'string' ? data.fee : invalid('Informe o percentual e a taxa fixa do parceiro.');
+        const fixedFee = typeof data.fixedFee === 'string' ? data.fixedFee : invalid('Informe o percentual e a taxa fixa do parceiro.');
+        let feeBps: number, fixedFeeCents: number;
+        try {
+          feeBps = percentageToBps(fee);
+          fixedFeeCents = /^0+(?:[.,]0{1,2})?$/.test(fixedFee.trim()) ? 0 : amountToCents(fixedFee);
+        } catch (error) { return invalid((error as Error).message); }
+        const effectiveFrom = businessToday();
+        const previousRules = JSON.parse(String(current.partnerFeeRules)) as PartnerFeeRule[];
+        const rules = previousRules.filter(rule => rule.effectiveFrom !== effectiveFrom);
+        rules.push({ effectiveFrom, feeBps, fixedFeeCents });
+        rules.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+        const serializedRules = JSON.stringify(rules);
+        await store.sql.prepare('UPDATE attendants SET partner_fee_rules = ? WHERE id = ?').run(serializedRules, id);
+        await store.audit(actor, 'partner.tariff_changed', id, String(current.name), { rules: String(current.partnerFeeRules) }, { rules: serializedRules, effectiveFrom, feeBps, fixedFeeCents });
+        return { saved: true };
+      }
+      const commission = typeof data.commission === 'string' ? data.commission : invalid('Informe a comissão do atendente.');
+      let commissionBps: number;
+      try { commissionBps = percentageToBps(commission); }
+      catch (error) { return invalid((error as Error).message); }
+      await store.sql.prepare('UPDATE attendants SET commission_bps = ? WHERE id = ?').run(commissionBps, id);
+      await store.audit(actor, 'attendant.rule_updated', id, String(current.name), { commissionBps: Number(current.commissionBps) }, { commissionBps });
+      return { saved: true };
+    });
+  }
   async adminSetCheckout(id: string, input: unknown, actor = systemActor) {
     const data = this.adminFields(input);
     return this.withTransaction(async store => {
@@ -576,7 +608,7 @@ export class PortalStore {
     await this.sql.prepare("INSERT INTO sales (id, attendant_id, batch_id, date, time, checkout_id, checkout_name, amount_cents, fee_cents, commission_bps, goal_cents, note, receipt_id, created_at, status, review_note, reviewed_at, commission_mode, attendant_fee_cents, gateway_cost_cents) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'gross-share-less-fees', ?, ?)").run(id, profile.id, batchId, date, time, checkout.id, checkout.name, amountCents, feeCents, profile.commissionBps, 0, note, receiptId, createdAt, approved ? 'approved' : 'pending', approved ? approvalNote : '', approved ? createdAt : null, allocatedSaleFee(feeCents, profile.accountKind), profile.accountKind === 'partner' ? partnerGatewayCost(amountCents, this.gatewayConfig?.active.cost) : null);
     return id;
   }
-  async recordCheckoutSale(sale: VerifiedCheckoutSale): Promise<{ processed: true; duplicate: boolean; saleId: string }> {
+  async recordCheckoutSale(sale: VerifiedCheckoutSale & { accountId: string }, requestedCheckoutId = ''): Promise<{ processed: true; duplicate: boolean; saleId: string }> {
     // The manual submission API does not accept the colon used in this namespace.
     const requestKey = `sites:${sale.orderId}`;
     const payloadHash = createHash('sha256').update(JSON.stringify([sale.accountId, sale.amountCents, sale.provider, sale.date, sale.time])).digest('hex');
@@ -585,6 +617,25 @@ export class PortalStore {
       if (previous) {
         if (previous.payload_hash !== payloadHash) throw new PortalError(409, 'Este pagamento já foi recebido com outros dados.');
         return { processed: true, duplicate: true, saleId: String(previous.sale_id) };
+      }
+      const legacySales = await store.sql.prepare(`SELECT s.id, s.date, s.time, s.amount_cents AS amountCents, s.status, s.review_note AS reviewNote
+        FROM batches b JOIN sales s ON s.batch_id = b.id
+        WHERE b.attendant_id = ? AND b.request_key = ?`).all(sale.accountId, sale.orderId);
+      if (legacySales.length) {
+        if (legacySales.length !== 1) throw new PortalError(409, 'O pedido já está associado a mais de uma venda no portal.');
+        const existing = legacySales[0];
+        if (existing.date !== sale.date || existing.time !== sale.time || Number(existing.amountCents) !== sale.amountCents) {
+          throw new PortalError(409, 'O pagamento confirmado não corresponde aos dados da venda existente.');
+        }
+        if (existing.status === 'rejected') throw new PortalError(409, 'A venda existente foi recusada ou cancelada. Revise-a manualmente antes de sincronizar novamente.');
+        if (existing.status === 'pending') {
+          const reviewedAt = new Date().toISOString();
+          const updated = await store.sql.prepare("UPDATE sales SET status = 'approved', review_note = ?, reviewed_at = ? WHERE id = ? AND status = 'pending'").run(approvalNote, reviewedAt, String(existing.id));
+          if (!updated.changes) throw new PortalError(409, 'A venda foi analisada em outra sessão. Atualize a lista antes de sincronizar novamente.');
+          const owner = await store.sql.prepare('SELECT name FROM attendants WHERE id = ?').get(sale.accountId);
+          await store.audit({ id: 'checkout-sites', name: 'Checkout Lucro Certo Pay' }, 'sale.approved', String(existing.id), String(owner?.name ?? ''), { status: 'pending', note: String(existing.reviewNote) }, { status: 'approved', note: approvalNote, orderId: sale.orderId, provider: sale.provider });
+        }
+        return { processed: true, duplicate: true, saleId: String(existing.id) };
       }
 
       // A payment already attributed by the checkout belongs to that account even after revocation.
@@ -596,7 +647,9 @@ export class PortalStore {
       const checkouts = accountCheckouts(await store.checkoutsFor(auth), profile.accountKind, profile.partnerFeeRules, sale.date);
       const checkout = profile.accountKind === 'partner' || checkouts.length === 1 && isExclusiveCheckout(checkouts[0].id)
         ? checkouts[0]
-        : checkouts.find(item => item.id === (sale.provider === 'buckpay' ? 'buckpay' : 'main'));
+        : requestedCheckoutId
+          ? checkouts.find(item => item.id === requestedCheckoutId)
+          : checkouts.find(item => item.id === (sale.provider === 'buckpay' ? 'buckpay' : 'main'));
       if (!checkout) throw new PortalError(503, 'Tarifa do checkout indisponível.');
       // The trusted checkout has already charged this amount. A manual-entry ceiling does not apply to imports.
       const feeCents = checkoutTariffFee(sale.amountCents, checkout);

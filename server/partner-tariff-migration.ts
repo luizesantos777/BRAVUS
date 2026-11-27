@@ -18,10 +18,21 @@ export const CAPITAL_PARTNER_TARIFF = {
   accountCreatedBefore: '2026-11-18T03:00:00.000Z',
 } as const;
 
+// Solicitado em 27/11/2026: parceiro Techninho passa para 17% + R$ 2,00 em
+// todas as vendas dele (retroativo, com repricing do histórico — mesmo padrão
+// da tarifa do capital). O nome exato evita colisão com contas homônimas.
+export const TECNINHO_PARTNER_TARIFF = {
+  migration: 'named-techninho-17-percent-200-all-sales-v1',
+  name: 'techninho', effectiveFrom: '0001-01-01', feeBps: 1700, fixedFeeCents: 200,
+  allSales: true,
+  accountCreatedBefore: '2999-12-31T23:59:59.999Z',
+} as const;
+
 /** Called inside initialize's write transaction, after earlier default migrations. */
 export async function applyRequestedPartnerTariff(db: SqlDatabase) {
   await applyTariff(db, REQUESTED_PARTNER_TARIFF);
   await applyTariff(db, CAPITAL_PARTNER_TARIFF);
+  await applyTariff(db, TECNINHO_PARTNER_TARIFF);
 }
 
 async function applyTariff(db: SqlDatabase, rule: { migration: string; name: string; effectiveFrom: string; feeBps: number; fixedFeeCents: number; accountCreatedBefore: string; allSales?: boolean }) {

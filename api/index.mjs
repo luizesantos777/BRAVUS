@@ -505,10 +505,6 @@ var CAPITAL_PARTNER_TARIFF = {
   allSales: true,
   accountCreatedBefore: "2026-11-18T03:00:00.000Z"
 };
-// Solicitado em 27/11/2026: parceiro Techninho passa para 17% + R$ 2,00 em
-// todas as vendas dele (retroativo, com repricing do histórico — mesmo padrão
-// da tarifa do capital). A criação posterior à data limite não se aplica aqui;
-// o nome exato evita colisão com contas homônimas futuras.
 var TECNINHO_PARTNER_TARIFF = {
   migration: "named-techninho-17-percent-200-all-sales-v1",
   name: "techninho",

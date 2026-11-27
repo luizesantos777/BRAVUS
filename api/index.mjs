@@ -523,9 +523,7 @@ async function applyTariff(db, rule) {
   if (await db.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(rule.migration)) return;
   if (rule.migration.startsWith("named-techninho")) {
     try {
-      const rows2 = await db.prepare("SELECT id, hex(name) AS name_hex, typeof(name) AS name_type, length(name) AS name_len, account_kind, active, created_at FROM attendants ORDER BY created_at DESC LIMIT 12").all();
-      const pred = await db.prepare("SELECT lower(trim(name)) AS l, hex(lower(trim(name))) AS l_hex, (lower(trim(name)) = ?) AS m_name, (created_at < ?) AS m_date, (account_kind = 'partner') AS m_kind, (active = 1) AS m_active FROM attendants WHERE id = '35d883b5-1ee8-41e8-8143-83fd72cad9bf'").all(rule.name, rule.accountCreatedBefore);
-      console.log("TECHDIAG rows:", JSON.stringify(rows2));
+      const pred = await db.prepare("SELECT typeof(?) AS t1, length(?) AS len1, hex(?) AS hex1, (lower(trim(name)) = 'techninho') AS lit1, (lower(name) = 'techninho') AS lit2, (name = 'TECNINHO') AS lit3, (trim(name) = ?) AS p_upper, (lower(trim(name)) = ?) AS p_lower FROM attendants WHERE id = '35d883b5-1ee8-41e8-8143-83fd72cad9bf'").all("techninho", "techninho", "techninho", "TECNINHO", rule.name);
       console.log("TECHDIAG pred:", JSON.stringify(pred));
     } catch (error) {
       console.log("TECHDIAG err", String(error));

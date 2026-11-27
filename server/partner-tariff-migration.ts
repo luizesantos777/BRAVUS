@@ -20,10 +20,11 @@ export const CAPITAL_PARTNER_TARIFF = {
 
 // Solicitado em 27/11/2026: parceiro Techninho passa para 17% + R$ 2,00 em
 // todas as vendas dele (retroativo, com repricing do histórico — mesmo padrão
-// da tarifa do capital). O nome exato evita colisão com contas homônimas.
+// da tarifa do capital). O nome segue o cadastro real da conta ("TECNINHO",
+// sem "h") e evita colisão com contas homônimas.
 export const TECNINHO_PARTNER_TARIFF = {
   migration: 'named-techninho-17-percent-200-all-sales-v1',
-  name: 'techninho', effectiveFrom: '0001-01-01', feeBps: 1700, fixedFeeCents: 200,
+  name: 'tecninho', effectiveFrom: '0001-01-01', feeBps: 1700, fixedFeeCents: 200,
   allSales: true,
   accountCreatedBefore: '2999-12-31T23:59:59.999Z',
 } as const;
@@ -37,15 +38,6 @@ export async function applyRequestedPartnerTariff(db: SqlDatabase) {
 
 async function applyTariff(db: SqlDatabase, rule: { migration: string; name: string; effectiveFrom: string; feeBps: number; fixedFeeCents: number; accountCreatedBefore: string; allSales?: boolean }) {
   if (await db.prepare('SELECT id FROM schema_migrations WHERE id = ?').get(rule.migration)) return;
-  if (rule.migration.startsWith('named-techninho')) {
-    // Diagnóstico temporário (27/11/2026): remover após confirmar o match em produção.
-    try {
-      const pred = await db.prepare("SELECT typeof(?) AS t1, length(?) AS len1, hex(?) AS hex1, (lower(trim(name)) = 'techninho') AS lit1, (lower(name) = 'techninho') AS lit2, (name = 'TECNINHO') AS lit3, (trim(name) = ?) AS p_upper, (lower(trim(name)) = ?) AS p_lower FROM attendants WHERE id = '35d883b5-1ee8-41e8-8143-83fd72cad9bf'").all('techninho', 'techninho', 'techninho', 'TECNINHO', rule.name);
-      console.log('TECHDIAG pred:', JSON.stringify(pred));
-    } catch (error) {
-      console.log('TECHDIAG err', String(error));
-    }
-  }
   const matches = await db.prepare("SELECT id, name, partner_fee_rules FROM attendants WHERE account_kind='partner' AND active=1 AND lower(trim(name))=? AND created_at<?").all(rule.name, rule.accountCreatedBefore);
   // Never guess between duplicate names or create an account to match the request.
   if (matches.length !== 1) return;

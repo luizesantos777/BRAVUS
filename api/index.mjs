@@ -507,7 +507,7 @@ var CAPITAL_PARTNER_TARIFF = {
 };
 var TECNINHO_PARTNER_TARIFF = {
   migration: "named-techninho-17-percent-200-all-sales-v1",
-  name: "techninho",
+  name: "tecninho",
   effectiveFrom: "0001-01-01",
   feeBps: 1700,
   fixedFeeCents: 200,
@@ -521,14 +521,6 @@ async function applyRequestedPartnerTariff(db) {
 }
 async function applyTariff(db, rule) {
   if (await db.prepare("SELECT id FROM schema_migrations WHERE id = ?").get(rule.migration)) return;
-  if (rule.migration.startsWith("named-techninho")) {
-    try {
-      const pred = await db.prepare("SELECT typeof(?) AS t1, length(?) AS len1, hex(?) AS hex1, (lower(trim(name)) = 'techninho') AS lit1, (lower(name) = 'techninho') AS lit2, (name = 'TECNINHO') AS lit3, (trim(name) = ?) AS p_upper, (lower(trim(name)) = ?) AS p_lower FROM attendants WHERE id = '35d883b5-1ee8-41e8-8143-83fd72cad9bf'").all("techninho", "techninho", "techninho", "TECNINHO", rule.name);
-      console.log("TECHDIAG pred:", JSON.stringify(pred));
-    } catch (error) {
-      console.log("TECHDIAG err", String(error));
-    }
-  }
   const matches = await db.prepare("SELECT id, name, partner_fee_rules FROM attendants WHERE account_kind='partner' AND active=1 AND lower(trim(name))=? AND created_at<?").all(rule.name, rule.accountCreatedBefore);
   if (matches.length !== 1) return;
   const account = matches[0], oldRules = String(account.partner_fee_rules), actor = { id: "system", name: "Sistema / altera\xE7\xE3o solicitada" };

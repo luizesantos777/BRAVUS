@@ -98,12 +98,14 @@ export function partnerTariffLabel(rules: PartnerFeeRule[] = [], date = business
   const tariff = partnerTariffAt(rules, date);
   return new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 2 }).format(tariff.feeBps / 100) + '% + ' + money(tariff.fixedFeeCents);
 }
-/** A partner's dated rule overrides the default only from its effective date. */
+/** Uma tarifa datada individual (parceiro ou atendente) substitui a taxa do checkout apenas a partir da vigência. */
 export function accountCheckouts(checkouts: Checkout[], accountKind?: AccountKind, rules: PartnerFeeRule[] = [], date = businessToday()): Checkout[] {
-  if (accountKind !== 'partner') return checkouts.filter(checkout => checkout.id !== PARTNER_CHECKOUT.id);
-  const checkout = checkouts.find(item => item.id.startsWith('exclusive_')) ?? checkouts.find(item => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT;
+  const base = accountKind === 'partner'
+    ? [checkouts.find(item => item.id.startsWith('exclusive_')) ?? checkouts.find(item => item.id === PARTNER_CHECKOUT.id) ?? PARTNER_CHECKOUT]
+    : checkouts.filter(checkout => checkout.id !== PARTNER_CHECKOUT.id);
+  if (accountKind !== 'partner' && !rules.length) return base;
   const tariff = partnerTariffAt(rules, date);
-  return [{ ...checkout, feeBps: tariff.feeBps, fixedFeeCents: tariff.fixedFeeCents, higherTier: null }];
+  return base.map(checkout => ({ ...checkout, feeBps: tariff.feeBps, fixedFeeCents: tariff.fixedFeeCents, higherTier: null }));
 }
 export function withdrawalFees(accountKind?: AccountKind) { return accountKind === 'partner' ? { withdrawalFeeCents: 0, gatewayFeeCents: 0 } : { withdrawalFeeCents: ATTENDANT_WITHDRAWAL_FEE_CENTS, gatewayFeeCents: GATEWAY_WITHDRAWAL_FEE_CENTS }; }
 export function attendantSaleFee(sale: Pick<Sale, 'feeCents' | 'attendantFeeCents'>): number { return sale.attendantFeeCents ?? sale.feeCents; }

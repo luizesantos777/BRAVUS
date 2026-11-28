@@ -120,6 +120,24 @@ test('admin altera comissão e tarifa do parceiro sem reescrever vendas anterior
   const dashboard = await store.adminDashboard();
   assert.equal(dashboard.attendants.find(account => account.id === invitation.attendantId)!.partnerFeeRules?.at(-1)?.feeBps, 1600);
   assert.equal(dashboard.attendants.find(account => account.id === attendant.id)!.commissionBps, 3750);
+  // Tarifa de venda do atendente: mesmo modelo datado do parceiro, independente da comissão.
+  assert.equal((await call(`/api/admin/attendants/${attendant.id}/rate`, adminKey, { method: 'PATCH', body: JSON.stringify({}) })).status, 400);
+  assert.equal((await call(`/api/admin/attendants/${attendant.id}/rate`, adminKey, { method: 'PATCH', body: JSON.stringify({ fee: '12', fixedFee: '2,00' }) })).status, 200);
+  const soldBefore = await store.sales({ id: attendant.id });
+  await submit(attendantBatch('60'), 'fixture_attendant_tariff_new', attendantToken);
+  const salesNow = await store.sales({ id: attendant.id });
+  const newTariffSale = salesNow.find(sale => sale.amountCents === 6000)!;
+  assert.equal(newTariffSale.commissionBps, 3750);
+  assert.equal(newTariffSale.feeCents, 920);
+  for (const sale of soldBefore) {
+    const same = salesNow.find(item => item.id === sale.id)!;
+    assert.deepEqual([same.amountCents, same.feeCents, same.commissionBps], [sale.amountCents, sale.feeCents, sale.commissionBps]);
+  }
+  const dashboardAfter = await store.adminDashboard();
+  const tariffed = dashboardAfter.attendants.find(account => account.id === attendant.id)!;
+  assert.equal(tariffed.partnerFeeRules?.at(-1)?.feeBps, 1200);
+  assert.equal(tariffed.partnerFeeRules?.at(-1)?.fixedFeeCents, 200);
+  assert.equal(tariffed.commissionBps, 3750);
 });
 
 test('API arredonda 12% + R$ 2 por venda, ignora taxas adulteradas e mantém idempotência e limites', async t => {

@@ -467,12 +467,32 @@ export class PortalStore {
         await store.audit(actor, 'partner.tariff_changed', id, String(current.name), { rules: String(current.partnerFeeRules) }, { rules: serializedRules, effectiveFrom, feeBps, fixedFeeCents });
         return { saved: true };
       }
-      const commission = typeof data.commission === 'string' ? data.commission : invalid('Informe a comissão do atendente.');
-      let commissionBps: number;
-      try { commissionBps = percentageToBps(commission); }
-      catch (error) { return invalid((error as Error).message); }
-      await store.sql.prepare('UPDATE attendants SET commission_bps = ? WHERE id = ?').run(commissionBps, id);
-      await store.audit(actor, 'attendant.rule_updated', id, String(current.name), { commissionBps: Number(current.commissionBps) }, { commissionBps });
+      // A comissão continua independente; a tarifa da venda usa o mesmo modelo
+      // datado do parceiro (vale para vendas futuras, histórico preservado).
+      const hasCommission = typeof data.commission === 'string';
+      const hasTariff = typeof data.fee === 'string' && typeof data.fixedFee === 'string';
+      if (!hasCommission && !hasTariff) return invalid('Informe a comissão ou a tarifa da venda (percentual e taxa fixa).');
+      let commissionBps = Number(current.commissionBps), feeBps = 0, fixedFeeCents = 0;
+      try {
+        if (hasCommission) commissionBps = percentageToBps(data.commission as string);
+        if (hasTariff) {
+          feeBps = percentageToBps(data.fee as string);
+          fixedFeeCents = /^0+(?:[.,]0{1,2})?$/.test((data.fixedFee as string).trim()) ? 0 : amountToCents(data.fixedFee as string);
+        }
+      } catch (error) { return invalid((error as Error).message); }
+      const before = { commissionBps: Number(current.commissionBps), tariff: String(current.partnerFeeRules) };
+      if (hasCommission) await store.sql.prepare('UPDATE attendants SET commission_bps = ? WHERE id = ?').run(commissionBps, id);
+      const after: { commissionBps?: number; feeBps?: number; fixedFeeCents?: number; tariff?: string } = { commissionBps: hasCommission ? commissionBps : undefined };
+      if (hasTariff) {
+        const effectiveFrom = businessToday();
+        const rules = (JSON.parse(String(current.partnerFeeRules)) as PartnerFeeRule[]).filter(rule => rule.effectiveFrom !== effectiveFrom);
+        rules.push({ effectiveFrom, feeBps, fixedFeeCents });
+        rules.sort((a, b) => a.effectiveFrom.localeCompare(b.effectiveFrom));
+        const serializedRules = JSON.stringify(rules);
+        await store.sql.prepare('UPDATE attendants SET partner_fee_rules = ? WHERE id = ?').run(serializedRules, id);
+        after.tariff = serializedRules; after.feeBps = feeBps; after.fixedFeeCents = fixedFeeCents;
+      }
+      await store.audit(actor, 'attendant.rule_updated', id, String(current.name), before, after);
       return { saved: true };
     });
   }

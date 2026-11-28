@@ -51,7 +51,7 @@ export default function Admin() {
   const [liveError, setLiveError] = useState(''), [reviewReset, setReviewReset] = useState(0), refreshVersion = useRef(0), backupDay = useRef(businessToday());
   const [createOpen, setCreateOpen] = useState(false), [invitation, setInvitation] = useState<Invitation | null>(null), [showLink, setShowLink] = useState(false);
   const [name, setName] = useState(''), [commission, setCommission] = useState(String(DEFAULT_COMMISSION_BPS / 100)), [chosenToken, setChosenToken] = useState('');
-  const [rateAccount, setRateAccount] = useState<AdminDashboard['attendants'][number] | null>(null), [rateCommission, setRateCommission] = useState(''), [partnerFee, setPartnerFee] = useState(''), [partnerFixedFee, setPartnerFixedFee] = useState('');
+  const [rateAccount, setRateAccount] = useState<AdminDashboard['attendants'][number] | null>(null), [rateCommission, setRateCommission] = useState(''), [partnerFee, setPartnerFee] = useState(''), [partnerFixedFee, setPartnerFixedFee] = useState(''), [attendantFee, setAttendantFee] = useState(''), [attendantFixedFee, setAttendantFixedFee] = useState('');
   const [accountKind, setAccountKind] = useState<AccountKind>('attendant');
   const [payoutAttendant, setPayoutAttendant] = useState('');
   const [costId, setCostId] = useState(''), [costDate, setCostDate] = useState(businessToday()), [ads, setAds] = useState('0'), [fee, setFee] = useState('0'), [costReady, setCostReady] = useState(false);
@@ -65,7 +65,12 @@ export default function Admin() {
       const tariff = partnerTariffAt(item.partnerFeeRules, businessToday());
       setPartnerFee((tariff.feeBps / 100).toFixed(2));
       setPartnerFixedFee((tariff.fixedFeeCents / 100).toFixed(2));
-    } else setRateCommission((item.commissionBps / 100).toFixed(2));
+    } else {
+      setRateCommission((item.commissionBps / 100).toFixed(2));
+      const tariff = item.partnerFeeRules?.length ? partnerTariffAt(item.partnerFeeRules, businessToday()) : null;
+      setAttendantFee(tariff ? (tariff.feeBps / 100).toFixed(2) : '');
+      setAttendantFixedFee(tariff ? (tariff.fixedFeeCents / 100).toFixed(2) : '');
+    }
     setError('');
   }
   async function copyCheckoutLink(url: string) {
@@ -133,9 +138,9 @@ export default function Admin() {
   </main><footer className="portal-footer"><span><span className="footer-brand">Lucro Certo Pay BRASIL</span> · Administração</span><a href={back}>Portal do Atendente</a></footer>
     {rateAccount && client && <Modal title={`Alterar taxa · ${rateAccount.name}`} close={() => { if (!busy) setRateAccount(null); }}>
       <p className="dialog-description">A alteração vale para novas vendas a partir de hoje. Vendas já registradas mantêm seus valores e regras.</p>
-      <form className="admin-form" onSubmit={async event => { event.preventDefault(); const rate = rateAccount.accountKind === 'partner' ? { fee: partnerFee, fixedFee: partnerFixedFee } : { commission: rateCommission }; if (await action(() => client.setRate(rateAccount.id, rate), 'Taxa atualizada.')) setRateAccount(null); }}><fieldset disabled={busy}>
-        {rateAccount.accountKind === 'partner' ? <div className="form-grid"><label>Taxa percentual (%)<input required inputMode="decimal" value={partnerFee} onChange={event => setPartnerFee(event.target.value)} /></label><label>Taxa fixa por venda (R$)<input required inputMode="decimal" value={partnerFixedFee} onChange={event => setPartnerFixedFee(event.target.value)} /></label></div> : <label>Comissão do atendente (%)<input required inputMode="decimal" value={rateCommission} onChange={event => setRateCommission(event.target.value)} /></label>}
-        <p className="section-description">{rateAccount.accountKind === 'partner' ? `A nova tarifa entra em vigor em ${new Intl.DateTimeFormat('pt-BR').format(new Date(businessToday() + 'T12:00:00Z'))}.` : 'A comissão é aplicada ao valor bruto e registrada em cada nova venda.'}</p>
+      <form className="admin-form" onSubmit={async event => { event.preventDefault(); if (rateAccount.accountKind !== 'partner' && Boolean(attendantFee.trim()) !== Boolean(attendantFixedFee.trim())) { setError('Preencha o percentual e a taxa fixa da venda juntos, ou deixe os dois em branco.'); return; } const rate = rateAccount.accountKind === 'partner' ? { fee: partnerFee, fixedFee: partnerFixedFee } : { commission: rateCommission, ...(attendantFee.trim() || attendantFixedFee.trim() ? { fee: attendantFee, fixedFee: attendantFixedFee } : {}) }; if (await action(() => client.setRate(rateAccount.id, rate), 'Taxa atualizada.')) setRateAccount(null); }}><fieldset disabled={busy}>
+        {rateAccount.accountKind === 'partner' ? <div className="form-grid"><label>Taxa percentual (%)<input required inputMode="decimal" value={partnerFee} onChange={event => setPartnerFee(event.target.value)} /></label><label>Taxa fixa por venda (R$)<input required inputMode="decimal" value={partnerFixedFee} onChange={event => setPartnerFixedFee(event.target.value)} /></label></div> : <div className="form-grid"><label>Comissão do atendente (%)<input required inputMode="decimal" value={rateCommission} onChange={event => setRateCommission(event.target.value)} /></label><label>Taxa percentual da venda (%)<input inputMode="decimal" value={attendantFee} placeholder="em branco = mantém a taxa do checkout" onChange={event => setAttendantFee(event.target.value)} /></label><label>Taxa fixa da venda por venda (R$)<input inputMode="decimal" value={attendantFixedFee} placeholder="em branco = mantém a taxa do checkout" onChange={event => setAttendantFixedFee(event.target.value)} /></label></div>}
+        <p className="section-description">{rateAccount.accountKind === 'partner' ? `A nova tarifa entra em vigor em ${new Intl.DateTimeFormat('pt-BR').format(new Date(businessToday() + 'T12:00:00Z'))}.` : 'A comissão é aplicada ao valor bruto de cada nova venda. A tarifa da venda, quando informada, substitui a taxa do checkout nas próximas vendas, preservando o histórico.'}</p>
         <div className="dialog-actions"><button type="button" className="button secondary" onClick={() => setRateAccount(null)}>Cancelar</button><button className="button primary">Salvar taxa</button></div>
       </fieldset></form>
     </Modal>}
